@@ -1,0 +1,389 @@
+<title>Salla Syria — Escape Hatch: Moving One Merchant to Its Own Database</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+/>
+<style>
+  :root {
+    --ground: #f6f5f1;
+    --surface: #ffffff;
+    --plate: #fbfbf9;
+    --ink: #16211d;
+    --muted: #63736d;
+    --faint: #8a9992;
+    --rule: #dce2df;
+    --rule-strong: #c3cdc9;
+    --accent: #0f6b55;
+    --accent-soft: #e3efea;
+    --badge-ink: #f7fbf9;
+    --f-display: "Newsreader", "Iowan Old Style", Georgia, serif;
+    --f-body: "IBM Plex Sans", "Segoe UI", Tahoma, system-ui, sans-serif;
+    --f-mono:
+      "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+    --measure: 68ch;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 15px;
+    line-height: 1.62;
+    padding-inline: 24px;
+  }
+  .doc {
+    max-width: 940px;
+    margin: 0 auto;
+    padding-block: 56px 72px;
+    display: flex;
+    flex-direction: column;
+    gap: 48px;
+  }
+  p { margin: 0; max-width: var(--measure); }
+  ul, ol { margin: 0; padding-inline-start: 1.15em; }
+  li { margin-block: 0.3em; max-width: var(--measure); }
+  .mono-inline { font-family: var(--f-mono); font-size: 13px; }
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 500;
+    font-size: clamp(1.9rem, 4.6vw, 2.7rem);
+    line-height: 1.1;
+    letter-spacing: -0.015em;
+    margin: 0 0 12px;
+  }
+  .standfirst {
+    font-family: var(--f-display);
+    font-size: 1.08rem;
+    color: var(--muted);
+    max-width: 60ch;
+  }
+  section { display: flex; flex-direction: column; gap: 16px; }
+  .shead {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    border-top: 1.5px solid var(--ink);
+    padding-top: 12px;
+  }
+  .shead .num {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--accent);
+    padding-top: 5px;
+  }
+  .shead h2 {
+    font-family: var(--f-display);
+    font-weight: 500;
+    font-size: 1.5rem;
+    margin: 0;
+  }
+  pre.code {
+    font-family: var(--f-mono);
+    font-size: 12.5px;
+    line-height: 1.55;
+    background: var(--plate);
+    border: 1px solid var(--rule-strong);
+    border-radius: 2px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    white-space: pre;
+    margin: 0;
+  }
+  .caption {
+    font-size: 12.5px;
+    color: var(--faint);
+    font-family: var(--f-mono);
+    max-width: none;
+  }
+  .footnote {
+    border-top: 1px solid var(--rule-strong);
+    padding-top: 12px;
+    font-size: 13.5px;
+    color: var(--muted);
+    max-width: 76ch;
+  }
+  .footnote b { color: var(--ink); font-weight: 600; }
+  .steplist { display: flex; flex-direction: column; gap: 4px; }
+  .step {
+    display: grid;
+    grid-template-columns: 150px 1fr;
+    gap: 6px 18px;
+    padding-block: 9px;
+    border-top: 1px solid var(--rule);
+    align-items: baseline;
+  }
+  .step:last-child { border-bottom: 1px solid var(--rule); }
+  .step b {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    color: var(--accent);
+  }
+  .step span { color: var(--muted); font-size: 14px; }
+</style>
+
+<div class="doc">
+  <header>
+    <p class="eyebrow">Appendix &middot; Escape Hatch &middot; September 2026</p>
+    <h1>Moving One Merchant to Its Own Database</h1>
+    <p class="standfirst">
+      The Option A verdict already promises this: if one merchant ever grows
+      exceptionally large, or a contract demands a private database, that one
+      store can be lifted out of the shared SQLite file and into its own —
+      without rebuilding anything. This appendix is the exact mechanism.
+    </p>
+  </header>
+
+  <section>
+    <div class="shead">
+      <span class="num">1</span>
+      <h2>Why It Works Without Rebuilding Anything</h2>
+    </div>
+    <p>
+      The shared schema was already built for this exit, three properties do
+      all the work:
+    </p>
+    <ul>
+      <li>
+        <b>store_id on every store-owned table.</b> All 11 non-platform tables
+        (<span class="mono-inline">subscriptions, categories, products,
+        product_images, customers, customer_addresses, shipping_rates,
+        orders, order_items</span>) already carry <span class="mono-inline"
+        >store_id</span>. A single merchant's full dataset is therefore a
+        closed set of <span class="mono-inline">WHERE store_id = ?</span>
+        rows — no query needs to change to select "everything one merchant
+        owns."
+      </li>
+      <li>
+        <b>Composite FKs already scope every child-of-child link to the same
+        store.</b> Every cross-table reference below <span class="mono-inline"
+        >stores</span> is <span class="mono-inline">FOREIGN KEY (store_id,
+        ref_id) REFERENCES parent(store_id, id)</span>, backed by a <span
+        class="mono-inline">UNIQUE(store_id, id)</span> key on the parent.
+        Because the FK itself is store-scoped, a row copied out of the shared
+        DB can never accidentally resolve against a different store's parent
+        row on the target — the constraint that protects tenant isolation on
+        the shared DB is the same constraint that guarantees a clean, closed
+        copy on the isolated DB.
+      </li>
+      <li>
+        <b>Snapshots make orders self-contained.</b> <span class="mono-inline"
+        >orders</span> and <span class="mono-inline">order_items</span> carry
+        their buyer, delivery and price fields as snapshots taken at purchase
+        time. Moving a store's orders never depends on also having a live,
+        unmodified copy of <span class="mono-inline">customers</span> or
+        <span class="mono-inline">products</span> in perfect sync — history is
+        already frozen inside the order rows themselves.
+      </li>
+    </ul>
+    <p>
+      Net effect: isolating a merchant is a <b>data-copy operation</b>, not a
+      schema change. The target database is created from the exact same
+      <span class="mono-inline">CREATE TABLE</span> / index / trigger DDL as
+      the shared database (see structure doc, section 3) — same 12 tables,
+      same columns, same constraints, same UUIDs preserved on copy. Nothing is
+      renamed, added, or restructured.
+    </p>
+  </section>
+
+  <section>
+    <div class="shead">
+      <span class="num">2</span>
+      <h2>Copy Order — Parent → Child</h2>
+    </div>
+    <p>
+      Run against an <span class="mono-inline">ATTACH</span>ed target
+      database with <span class="mono-inline">PRAGMA foreign_keys = OFF</span>
+      for the duration of the copy (re-enable and verify per section 3
+      immediately after). Every statement preserves the source
+      <span class="mono-inline">id</span> — no regeneration, so every
+      composite FK still resolves identically on the target.
+    </p>
+    <pre class="code">-- one merchant's store_id, fixed for the whole run
+-- :sid = the store's id, :oid = that store's owner_id (stores.owner_id)
+
+-- 0. target file, same DDL as the shared database (section 3 of the structure doc)
+ATTACH DATABASE 'store_&lt;slug&gt;.db' AS target;
+PRAGMA foreign_keys = OFF;
+
+-- 1. users — only the owning row (subscriptions/orders/etc. never reference
+--    users directly, but stores.owner_id does, and the FK is ON DELETE RESTRICT
+--    so the owner row must exist on the target before stores is copied)
+INSERT INTO target.users
+SELECT * FROM main.users
+WHERE id = (SELECT owner_id FROM main.stores WHERE id = :sid);
+
+-- 2. plans — every plan this store's subscription history has ever used
+--    (plans is platform-wide and has no store_id; copy only rows actually
+--    referenced by this store's subscriptions, not the whole table)
+INSERT INTO target.plans
+SELECT * FROM main.plans
+WHERE id IN (
+  SELECT DISTINCT plan_id FROM main.subscriptions WHERE store_id = :sid
+);
+
+-- 3. stores — the tenant row itself, order_counter carried over as-is so
+--    numbering continues from exactly where it left off, no reset
+INSERT INTO target.stores
+SELECT * FROM main.stores WHERE id = :sid;
+
+-- 4. subscriptions — full billing history, active + cancelled + expired,
+--    not just the current period
+INSERT INTO target.subscriptions
+SELECT * FROM main.subscriptions WHERE store_id = :sid;
+
+-- 5. categories — parent rows before child rows if you enforce order
+--    manually; FK is deferred-safe here since foreign_keys is OFF, so one
+--    statement is enough regardless of self-referencing parent_id order
+INSERT INTO target.categories
+SELECT * FROM main.categories WHERE store_id = :sid;
+
+-- 6. products
+INSERT INTO target.products
+SELECT * FROM main.products WHERE store_id = :sid;
+
+-- 7. product_images
+INSERT INTO target.product_images
+SELECT * FROM main.product_images WHERE store_id = :sid;
+
+-- 8. customers
+INSERT INTO target.customers
+SELECT * FROM main.customers WHERE store_id = :sid;
+
+-- 9. customer_addresses
+INSERT INTO target.customer_addresses
+SELECT * FROM main.customer_addresses WHERE store_id = :sid;
+
+-- 10. shipping_rates
+INSERT INTO target.shipping_rates
+SELECT * FROM main.shipping_rates WHERE store_id = :sid;
+
+-- 11. orders — snapshot fields travel with the row untouched
+INSERT INTO target.orders
+SELECT * FROM main.orders WHERE store_id = :sid;
+
+-- 12. order_items — last, since it references both orders and products
+INSERT INTO target.order_items
+SELECT * FROM main.order_items WHERE store_id = :sid;
+
+PRAGMA foreign_keys = ON;</pre>
+    <p class="caption">
+      12 statements for 12 tables &nbsp;&middot;&nbsp; users and plans are
+      filtered to only the rows this store actually needs, never copied in
+      full &nbsp;&middot;&nbsp; all UUIDs/ULIDs preserved verbatim &nbsp;&middot;&nbsp;
+      source rows are left untouched by this step — deletion from the shared
+      DB happens only after verification and cutover (section 5)
+    </p>
+  </section>
+
+  <section>
+    <div class="shead">
+      <span class="num">3</span>
+      <h2>Verification SQL</h2>
+    </div>
+    <p><b>Per-table row count match</b> — run once against <span class="mono-inline">main</span> (shared) and once against <span class="mono-inline">target</span> (isolated), diff the two result sets:</p>
+    <pre class="code">SELECT 'users'               AS tbl, COUNT(*) FROM users               WHERE id = :oid
+UNION ALL SELECT 'plans',            COUNT(*) FROM plans               WHERE id IN (SELECT DISTINCT plan_id FROM subscriptions WHERE store_id = :sid)
+UNION ALL SELECT 'stores',           COUNT(*) FROM stores              WHERE id = :sid
+UNION ALL SELECT 'subscriptions',    COUNT(*) FROM subscriptions       WHERE store_id = :sid
+UNION ALL SELECT 'categories',       COUNT(*) FROM categories          WHERE store_id = :sid
+UNION ALL SELECT 'products',         COUNT(*) FROM products            WHERE store_id = :sid
+UNION ALL SELECT 'product_images',   COUNT(*) FROM product_images      WHERE store_id = :sid
+UNION ALL SELECT 'customers',        COUNT(*) FROM customers           WHERE store_id = :sid
+UNION ALL SELECT 'customer_addresses', COUNT(*) FROM customer_addresses WHERE store_id = :sid
+UNION ALL SELECT 'shipping_rates',   COUNT(*) FROM shipping_rates      WHERE store_id = :sid
+UNION ALL SELECT 'orders',           COUNT(*) FROM orders              WHERE store_id = :sid
+UNION ALL SELECT 'order_items',      COUNT(*) FROM order_items         WHERE store_id = :sid;</pre>
+    <p>
+      Run this identical query against <span class="mono-inline">main</span>
+      and <span class="mono-inline">target</span>; every row of the two
+      12-row result sets must match exactly. Any mismatch blocks cutover.
+    </p>
+    <p><b>Referential integrity on the target</b> — must return zero rows:</p>
+    <pre class="code">PRAGMA foreign_keys = ON;
+PRAGMA foreign_key_check;</pre>
+    <p>
+      A non-empty result means a copied child row points at a parent that
+      either wasn't copied or lost its <span class="mono-inline">store_id</span>
+      match — most likely a missed <span class="mono-inline">plans</span> or
+      <span class="mono-inline">users</span> row. Fix the missing parent row
+      and re-run; do not proceed to cutover while this returns anything.
+    </p>
+    <p><b>Spot-check the two preserved invariants:</b></p>
+    <pre class="code">-- order_counter carried over exactly, not reset to 1000
+SELECT order_counter FROM target.stores WHERE id = :sid;
+-- must equal:
+SELECT order_counter FROM main.stores WHERE id = :sid;
+
+-- order_number sequence still gapless and unique per store on the target
+SELECT COUNT(*), COUNT(DISTINCT order_number) FROM target.orders WHERE store_id = :sid;
+-- the two counts must be equal (no duplicate order_number values)</pre>
+  </section>
+
+  <section>
+    <div class="shead">
+      <span class="num">4</span>
+      <h2>App Routing — store_id &rarr; DB File Factory</h2>
+    </div>
+    <p>
+      The Connection Contract (structure doc, section 3) already centralizes
+      every connection behind one factory. The escape hatch adds exactly one
+      responsibility to that factory and touches nothing else in the app:
+    </p>
+    <pre class="code">function getConnection(store_id) {
+  const dbPath = storeDbOverrides.has(store_id)
+    ? storeDbOverrides.get(store_id)   // e.g. 'store_&lt;slug&gt;.db'
+    : SHARED_DB_PATH;                  // default for every other store
+
+  const conn = open(dbPath);
+  conn.exec('PRAGMA foreign_keys = ON');
+  conn.exec('PRAGMA busy_timeout = 5000');
+  return conn;
+}</pre>
+    <p class="caption">
+      storeDbOverrides is a small store_id &rarr; file-path lookup (table, config
+      row, or env-driven map) &nbsp;&middot;&nbsp; default remains the one shared
+      SQLite file for every store not in the map
+    </p>
+    <p>
+      Every call site already asks the factory for a connection and already
+      carries <span class="mono-inline">store_id</span> on the request (that's
+      the tenancy model). No handler, query, migration, or repository class
+      changes: they still filter by <span class="mono-inline">store_id</span>
+      exactly as before, they simply now run against whichever file the
+      factory handed back for that store. Isolating a second or third merchant
+      later is only another entry in the same map — still no code change
+      beyond the factory added once.
+    </p>
+  </section>
+
+  <section>
+    <div class="shead">
+      <span class="num">5</span>
+      <h2>Cutover</h2>
+    </div>
+    <div class="steplist">
+      <div class="step"><b>1. Pause</b><span>Block new writes for this store_id only — reject or queue checkout/admin writes at the app layer for that store while every other store keeps writing to the shared DB uninterrupted.</span></div>
+      <div class="step"><b>2. Final sync</b><span>Re-run the section 2 copy for this store_id to catch any row written between the first copy and the pause, then re-run every check in section 3 until all counts match and both PRAGMA checks are clean.</span></div>
+      <div class="step"><b>3. Switch</b><span>Add store_id to storeDbOverrides so the connection factory starts returning the isolated file. No deploy of app code, no schema migration — one config/map change.</span></div>
+      <div class="step"><b>4. Unpause</b><span>Resume writes for this store; they now land in the isolated database through the same store_id-filtered code paths.</span></div>
+      <div class="step"><b>5. Rollback window</b><span>Keep the store's rows in the shared database untouched and read-only (do not delete) for an agreed window. If anything is wrong post-cutover, remove the storeDbOverrides entry to route the store back to the shared DB with zero data loss. Only after the window closes clean, delete the store's rows from the shared database.</span></div>
+    </div>
+  </section>
+
+  <p class="footnote">
+    <b>Nothing else changes.</b> Default remains one shared SQLite database
+    for every store. This procedure is dormant until a specific store_id is
+    added to the override map — no new tables, no renamed tables, no schema
+    drift between the shared DB and any isolated DB it ever produces.
+  </p>
+</div>

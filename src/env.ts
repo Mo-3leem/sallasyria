@@ -1,0 +1,54 @@
+import type { D1Database, R2Bucket } from "@cloudflare/workers-types";
+
+// Worker bindings. Additional bindings arrive only with their phase —
+// never speculatively.
+export interface Env {
+  DB: D1Database;
+  // R2 is REQUIRED in every environment (B8): local dev emulates it, prod
+  // binds the private bucket. No code path may assume its absence.
+  R2: R2Bucket;
+  ENVIRONMENT?: string;
+  // Cloudflare Turnstile secret for public-mutation bot defense (B5).
+  // Absent in development (documented bypass); required elsewhere.
+  TURNSTILE_SECRET?: string;
+  // Bootstrap admin password (B7 seed only). While set, admin requests pay
+  // one extra password check for rotation enforcement; unset it after every
+  // admin has rotated (the value is a live credential until then).
+  ADMIN_BOOTSTRAP_PASSWORD?: string;
+  // HMAC secret for short-lived image URLs (B8). Absent outside development
+  // = fail-closed 503 on upload/serve paths that need signing.
+  URL_SIGNING_SECRET?: string;
+}
+
+// Authenticated identity shape (populated by B2 requireAuth). Lives here —
+// not in middleware/auth.ts — so every module shares ONE context type and
+// helper signatures never fight Hono generics.
+export interface AuthUser {
+  id: string;
+  role: string;
+  phone: string;
+  email: string | null;
+  name: string;
+}
+
+// Request-scoped values middleware may set. Fields are optional at the type
+// level because routes run before/after auth; requireAuth guarantees user +
+// sessionId are present downstream of it (currentUser casts accordingly), and
+// resolveStore guarantees storeId downstream of it (storeScope casts).
+export interface AppVariables {
+  user?: AuthUser;
+  sessionId?: string;
+  storeId?: string;
+}
+
+export type AppEnv = {
+  Bindings: Env;
+  Variables: AppVariables;
+};
+
+// Centralized config read so route code never touches raw env values.
+// Throws AppError-free plain Errors only at startup paths; request paths
+// must use fail()/AppError instead (see src/http/).
+export function appConfig(env: Env): { environment: string } {
+  return { environment: env.ENVIRONMENT ?? "development" };
+}

@@ -1,0 +1,1213 @@
+<title>Salla Syria Database Structure</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+/>
+<style>
+  :root {
+    --ground: #f6f5f1;
+    --surface: #ffffff;
+    --plate: #fbfbf9;
+    --ink: #16211d;
+    --muted: #63736d;
+    --faint: #8a9992;
+    --rule: #dce2df;
+    --rule-strong: #c3cdc9;
+    --accent: #0f6b55;
+    --accent-soft: #e3efea;
+    --badge-ink: #f7fbf9;
+    --f-display: "Newsreader", "Iowan Old Style", Georgia, serif;
+    --f-body: "IBM Plex Sans", "Segoe UI", Tahoma, system-ui, sans-serif;
+    --f-mono:
+      "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+    --measure: 68ch;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #101714;
+      --surface: #18211d;
+      --plate: #f7f8f6;
+      --ink: #e7edea;
+      --muted: #93a29b;
+      --faint: #74847d;
+      --rule: #273229;
+      --rule-strong: #384740;
+      --accent: #58c3a4;
+      --accent-soft: #1b2c26;
+      --badge-ink: #0d1512;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #101714;
+    --surface: #18211d;
+    --plate: #f7f8f6;
+    --ink: #e7edea;
+    --muted: #93a29b;
+    --faint: #74847d;
+    --rule: #273229;
+    --rule-strong: #384740;
+    --accent: #58c3a4;
+    --accent-soft: #1b2c26;
+    --badge-ink: #0d1512;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 15px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+    padding-inline: 24px;
+    padding-block: 0;
+  }
+  .doc {
+    max-width: 940px;
+    margin: 0 auto;
+    padding-block: 56px 72px;
+    display: flex;
+    flex-direction: column;
+    gap: 56px;
+  }
+  p {
+    margin: 0;
+    max-width: var(--measure);
+  }
+  ul,
+  ol {
+    margin: 0;
+    padding-inline-start: 1.15em;
+  }
+  li {
+    margin-block: 0.3em;
+    max-width: var(--measure);
+  }
+  .mono-inline {
+    font-family: var(--f-mono);
+    font-size: 13px;
+  }
+  .masthead {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 500;
+    font-size: clamp(2.05rem, 5.2vw, 3.05rem);
+    line-height: 1.08;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    margin: 0;
+  }
+  .standfirst {
+    font-family: var(--f-display);
+    font-size: 1.12rem;
+    line-height: 1.55;
+    color: var(--muted);
+    max-width: 58ch;
+  }
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border-block: 1px solid var(--rule);
+    margin: 6px 0 0;
+  }
+  .fact {
+    background: var(--ground);
+    padding: 14px 16px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .fact dt {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .fact dd {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  .fact dd.count {
+    color: var(--accent);
+  }
+  section {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .shead {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    border-top: 1.5px solid var(--ink);
+    padding-top: 12px;
+  }
+  .shead .num {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+    padding-top: 5px;
+  }
+  .shead h2 {
+    font-family: var(--f-display);
+    font-weight: 500;
+    font-size: 1.62rem;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+  h3 {
+    font-family: var(--f-body);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+  .groups {
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+  }
+  .group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .entities {
+    display: flex;
+    flex-direction: column;
+  }
+  .entity {
+    display: grid;
+    grid-template-columns: 190px 1fr;
+    gap: 8px 22px;
+    padding-block: 11px;
+    border-top: 1px solid var(--rule);
+    align-items: baseline;
+  }
+  .entity:last-child {
+    border-bottom: 1px solid var(--rule);
+  }
+  .entity code {
+    font-family: var(--f-mono);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+  .entity span {
+    color: var(--muted);
+  }
+  .snap {
+    color: var(--accent);
+    font-weight: 600;
+    padding-inline-start: 1px;
+  }
+  .footnote {
+    border-top: 1px solid var(--rule-strong);
+    padding-top: 12px;
+    font-size: 13.5px;
+    color: var(--muted);
+    max-width: 76ch;
+  }
+  .footnote b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .plate {
+    background: var(--plate);
+    border: 1px solid var(--rule-strong);
+    border-radius: 2px;
+    padding: 10px;
+    overflow-x: auto;
+    max-width: 100%;
+  }
+  .plate pre.mermaid {
+    margin: 0;
+    background: transparent;
+    min-width: 700px;
+  }
+  .caption {
+    font-size: 12.5px;
+    color: var(--faint);
+    font-family: var(--f-mono);
+    max-width: none;
+  }
+  .rels {
+    display: flex;
+    flex-direction: column;
+  }
+  .rel {
+    display: grid;
+    grid-template-columns: 230px 1fr;
+    gap: 6px 22px;
+    padding-block: 10px;
+    border-top: 1px solid var(--rule);
+    align-items: baseline;
+  }
+  .rel:last-child {
+    border-bottom: 1px solid var(--rule);
+  }
+  .rel code {
+    font-family: var(--f-mono);
+    font-size: 12.5px;
+    color: var(--accent);
+  }
+  .rel span {
+    color: var(--muted);
+  }
+  .decisions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
+    gap: 26px 34px;
+  }
+  .decision {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    border-top: 1px solid var(--rule-strong);
+    padding-top: 13px;
+  }
+  .decision h4 {
+    font-family: var(--f-display);
+    font-size: 1.06rem;
+    font-weight: 600;
+    margin: 0;
+  }
+  .decision p {
+    color: var(--muted);
+    font-size: 14.5px;
+  }
+  .rules {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 0 34px;
+    list-style: none;
+    padding: 0;
+  }
+  .rules li {
+    display: grid;
+    grid-template-columns: 168px 1fr;
+    gap: 4px 16px;
+    padding-block: 9px;
+    border-top: 1px solid var(--rule);
+    margin: 0;
+    max-width: none;
+    align-items: baseline;
+  }
+  .rules li b {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+  .rules li span {
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .scope-col {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .taglist {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+  }
+  .tag {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    padding: 4px 9px;
+    border-radius: 2px;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .scope-note {
+    font-size: 13.5px;
+    color: var(--faint);
+  }
+  .status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px 16px;
+    border-top: 1.5px solid var(--ink);
+    padding-top: 18px;
+  }
+  .status .label {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .badge {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    padding: 6px 12px;
+    border-radius: 2px;
+    background: var(--accent);
+    color: var(--badge-ink);
+  }
+  @media (max-width: 560px) {
+    body {
+      padding-inline: 18px;
+      font-size: 14.5px;
+    }
+    .doc {
+      padding-block: 40px 56px;
+      gap: 44px;
+    }
+    .entity,
+    .rel,
+    .rules li {
+      grid-template-columns: 1fr;
+      gap: 3px;
+    }
+    .entity code,
+    .rel code {
+      font-size: 13px;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+  @media print {
+    body {
+      background: #ffffff;
+      padding-inline: 0;
+    }
+    .doc {
+      max-width: 100%;
+      gap: 34px;
+      padding-block: 0 0;
+    }
+    section {
+      break-inside: avoid;
+    }
+    .plate {
+      border-color: #c3cdc9;
+    }
+  }
+</style>
+
+<div class="doc">
+  <header class="masthead">
+    <p class="eyebrow">
+      Database Structure Document &middot; Final &middot; September 2026
+    </p>
+    <h1>Salla Syria &mdash; MVP Database Structure</h1>
+    <p class="standfirst">
+      A deliberately lightweight twelve-table design for a multi-tenant
+      e-commerce platform: one shared database serving many independent Syrian
+      online stores.
+    </p>
+    <dl class="facts">
+      <div class="fact">
+        <dt>Database</dt>
+        <dd>SQLite</dd>
+      </div>
+      <div class="fact">
+        <dt>Backend</dt>
+        <dd>Hono</dd>
+      </div>
+      <div class="fact">
+        <dt>Frontend</dt>
+        <dd>Next.js</dd>
+      </div>
+      <div class="fact">
+        <dt>Architecture</dt>
+        <dd>Multi-Tenant SaaS</dd>
+      </div>
+      <div class="fact">
+        <dt>MVP Tables</dt>
+        <dd class="count">12</dd>
+      </div>
+    </dl>
+  </header>
+
+  <section>
+    <div class="shead">
+      <span class="num">1</span>
+      <h2>Database Architecture Overview</h2>
+    </div>
+    <p>
+      Salla Syria is a multi-tenant e-commerce SaaS platform. Merchants sign up,
+      create their own online store, and sell to their own customers &mdash; all
+      running on one shared system.
+    </p>
+    <p>
+      The platform uses <strong>a single shared SQLite database</strong>. Every
+      store&rsquo;s data is kept separate by a store identifier (<span
+        class="mono-inline"
+        >store_id</span
+      >) carried on every store-owned table, so one merchant can never see or
+      affect another merchant&rsquo;s data.
+    </p>
+    <p>
+      Platform users sign in to create and manage their stores, and platform
+      administrators oversee all stores from the same system. Each store then
+      owns its own product catalog, customer list, orders, and delivery pricing
+      &mdash; fully independent of every other store on the platform.
+    </p>
+  </section>
+
+  <section>
+    <div class="shead">
+      <span class="num">2</span>
+      <h2>Main Entities</h2>
+    </div>
+    <div class="groups">
+      <div class="group">
+        <h3>Platform &amp; Store</h3>
+        <div class="entities">
+          <div class="entity">
+            <code>users</code
+            ><span
+              >Platform accounts for store owners and platform administrators
+              &mdash; name, phone for sign-in, optional email, role, and active
+              status.</span
+            >
+          </div>
+          <div class="entity">
+            <code>stores</code
+            ><span
+              >An individual online store &mdash; the tenant, with its owner,
+              web address, currency, status, and its own order-number
+              counter.</span
+            >
+          </div>
+          <div class="entity">
+            <code>plans</code
+            ><span
+              >The subscription plans the platform offers to merchants, with
+              monthly and yearly pricing and included limits.</span
+            >
+          </div>
+          <div class="entity">
+            <code>subscriptions</code
+            ><span
+              >A store&rsquo;s plan and billing period, with status, start date,
+              end date, cancellation date, and payment reference. Earlier
+              periods are kept as history, and only one subscription per store
+              may be active at a time.</span
+            >
+          </div>
+        </div>
+      </div>
+      <div class="group">
+        <h3>Catalog</h3>
+        <div class="entities">
+          <div class="entity">
+            <code>categories</code
+            ><span
+              >How a store organises its products for browsing &mdash; name, web
+              address, optional parent category, and display order.</span
+            >
+          </div>
+          <div class="entity">
+            <code>products</code
+            ><span
+              >The items a store sells, with price, stock, and availability.
+              Removed products are retired with a deletion date rather than
+              erased.</span
+            >
+          </div>
+          <div class="entity">
+            <code>product_images</code
+            ><span
+              >The product photo gallery, shown in a set display order. Carries
+              its own store reference and is retired by the same soft-deletion
+              rule as products.</span
+            >
+          </div>
+        </div>
+      </div>
+      <div class="group">
+        <h3>Customers</h3>
+        <div class="entities">
+          <div class="entity">
+            <code>customers</code
+            ><span
+              >The buyers of one store, recorded at checkout by name, phone, and
+              optional email. No buyer login in this release.</span
+            >
+          </div>
+          <div class="entity">
+            <code>customer_addresses</code
+            ><span
+              >Saved delivery addresses so returning buyers do not retype them
+              &mdash; store reference, recipient, phone, governorate, city,
+              address, and a default flag.</span
+            >
+          </div>
+        </div>
+      </div>
+      <div class="group">
+        <h3>Orders &amp; Fulfillment</h3>
+        <div class="entities">
+          <div class="entity">
+            <code>shipping_rates</code
+            ><span
+              >A store&rsquo;s delivery method and cost for each Syrian
+              governorate, unique per governorate within the store.</span
+            >
+          </div>
+          <div class="entity">
+            <code>orders</code
+            ><span
+              >A placed order: store, order number, customer, order progress,
+              payment state, payment reference, totals, tracking number, plus
+              buyer name<span class="snap">*</span>, buyer phone<span
+                class="snap"
+                >*</span
+              >, delivery method<span class="snap">*</span>, delivery cost<span
+                class="snap"
+                >*</span
+              >, delivery governorate<span class="snap">*</span> and delivery
+              address<span class="snap">*</span>.</span
+            >
+          </div>
+          <div class="entity">
+            <code>order_items</code
+            ><span
+              >The purchased lines: store, order, quantity, plus product
+              name<span class="snap">*</span>, chosen options<span class="snap"
+                >*</span
+              >, unit price<span class="snap">*</span> and line total<span
+                class="snap"
+                >*</span
+              >.</span
+            >
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="footnote">
+      <span class="snap">*</span> <b>Snapshot fields.</b> These values are
+      copied into the order at the moment of purchase and are never changed
+      afterwards. If a product is later renamed, repriced or retired &mdash; or
+      a customer updates their phone number or address &mdash; every past order
+      still shows exactly what was bought, at what price, and where it was
+      delivered.
+    </p>
+  </section>
+
+  <section>
+    <div class="shead">
+      <span class="num">3</span>
+      <h2>Database ERD</h2>
+    </div>
+    <div class="plate">
+      <pre class="mermaid">
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#EAF2EE","primaryBorderColor":"#0F6B55","primaryTextColor":"#16211D","lineColor":"#7A8A83","textColor":"#16211D","fontFamily":"IBM Plex Mono, monospace","fontSize":"12px","attributeBackgroundColorOdd":"#FBFBF9","attributeBackgroundColorEven":"#F1F5F3"}}}%%
+erDiagram
+    USERS ||--o{ STORES : owns
+    PLANS ||--o{ SUBSCRIPTIONS : "priced in"
+    STORES ||--o{ SUBSCRIPTIONS : has
+    STORES ||--o{ CATEGORIES : has
+    STORES ||--o{ PRODUCTS : has
+    STORES ||--o{ PRODUCT_IMAGES : has
+    STORES ||--o{ CUSTOMERS : has
+    STORES ||--o{ CUSTOMER_ADDRESSES : has
+    STORES ||--o{ SHIPPING_RATES : defines
+    STORES ||--o{ ORDERS : receives
+    STORES ||--o{ ORDER_ITEMS : has
+    CATEGORIES |o--o{ CATEGORIES : "parent of"
+    CATEGORIES |o--o{ PRODUCTS : groups
+    PRODUCTS ||--o{ PRODUCT_IMAGES : has
+    PRODUCTS |o--o{ ORDER_ITEMS : "snapshotted in"
+    CUSTOMERS ||--o{ CUSTOMER_ADDRESSES : has
+    CUSTOMERS ||--o{ ORDERS : places
+    ORDERS ||--|{ ORDER_ITEMS : contains
+
+    USERS {
+        TEXT id PK "UUIDv7 / ULID"
+        TEXT phone UK "NOT NULL"
+        TEXT email UK "nullable"
+        TEXT name "NOT NULL"
+        TEXT password_hash "NOT NULL"
+        TEXT role "NOT NULL DEFAULT 'merchant' CHECK(role IN ('merchant', 'admin'))"
+        INTEGER is_active "NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1))"
+        TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+        TEXT updated_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+    }
+
+    STORES {
+        TEXT id PK "UUIDv7 / ULID"
+        TEXT owner_id FK "REFERENCES users(id) ON DELETE RESTRICT ON UPDATE CASCADE"
+        TEXT slug UK "NOT NULL"
+        TEXT name "NOT NULL"
+        TEXT currency "NOT NULL DEFAULT 'SYP'"
+        TEXT status "NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'archived'))"
+        INTEGER order_counter "NOT NULL DEFAULT 1000 - per-store order numbers, atomic UPDATE...RETURNING only, see section 5"
+        TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+        TEXT updated_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+    }
+
+    PLANS {
+        TEXT id PK "UUIDv7 / ULID"
+        TEXT code UK "NOT NULL"
+        TEXT name "NOT NULL"
+        INTEGER price_monthly "NOT NULL DEFAULT 0 CHECK(price_monthly >= 0)"
+        INTEGER price_yearly "NOT NULL DEFAULT 0 CHECK(price_yearly >= 0)"
+        INTEGER max_products "nullable = unlimited"
+        TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+        TEXT updated_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+    }
+
+    SUBSCRIPTIONS {
+        TEXT id PK "UUIDv7 / ULID"
+        TEXT store_id FK "REFERENCES stores(id) ON DELETE RESTRICT ON UPDATE CASCADE - one active per store, see enforcement note"
+        TEXT plan_id FK "REFERENCES plans(id) ON DELETE RESTRICT ON UPDATE CASCADE"
+        TEXT status "NOT NULL CHECK(status IN ('active', 'cancelled', 'expired', 'trialing'))"
+        TEXT billing_period "NOT NULL CHECK(billing_period IN ('monthly', 'yearly'))"
+        INTEGER price_amount "NOT NULL DEFAULT 0 CHECK(price_amount >= 0)"
+        TEXT starts_at "NOT NULL"
+        TEXT ends_at "nullable"
+        TEXT cancelled_at "nullable - set iff status = 'cancelled', see enforcement note"
+        TEXT payment_reference "nullable"
+        TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+        TEXT updated_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+    }
+
+    CATEGORIES {
+        TEXT id PK "UUIDv7 / ULID - UNIQUE(store_id, id) supporting key for composite child FKs"
+        TEXT store_id FK "REFERENCES stores(id) ON DELETE CASCADE ON UPDATE CASCADE"
+        TEXT parent_id FK "nullable REFERENCES categories(store_id, id), same store, ON DELETE SET NULL"
+        TEXT name "NOT NULL"
+        TEXT slug "NOT NULL - UNIQUE(store_id, slug)"
+        INTEGER sort_order "NOT NULL DEFAULT 0"
+        INTEGER is_active "NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1))"
+        TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+        TEXT updated_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+    }
+
+    PRODUCTS {
+        TEXT id PK "UUIDv7 / ULID - UNIQUE(store_id, id) supporting key for composite child FKs"
+        TEXT store_id FK "REFERENCES stores(id) ON DELETE CASCADE ON UPDATE CASCADE"
+        TEXT category_id FK "nullable REFERENCES categories(store_id, id), same store, ON DELETE SET NULL"
+        TEXT name "NOT NULL"
+        TEXT slug "NOT NULL - UNIQUE(store_id, slug) WHERE deleted_at IS NULL"
+        INTEGER price "NOT NULL CHECK(price >= 0)"
+        INTEGER stock_quantity "nullable = untracked CHECK(stock_quantity >= 0)"
+        INTEGER is_active "NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1))"
+        TEXT deleted_at "nullable - soft deletion marker, NULL means live"
+        TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+        TEXT updated_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+    }
+
+    PRODUCT_IMAGES {
+        TEXT id PK "UUIDv7 / ULID"
+        TEXT store_id FK "REFERENCES stores(id) ON DELETE CASCADE ON UPDATE CASCADE"
+        TEXT product_id FK "composite FOREIGN KEY (store_id, product_id) REFERENCES products(store_id, id), same store, ON DELETE CASCADE"
+        TEXT url "NOT NULL"
+        TEXT alt_text "nullable"
+        INTEGER sort_order "NOT NULL DEFAULT 0"
+        TEXT deleted_at "nullable - soft deletion marker, NULL means live"
+        TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+        TEXT updated_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+    }
+
+    CUSTOMERS {
+        TEXT id PK "UUIDv7 / ULID - UNIQUE(store_id, id) supporting key for composite child FKs"
+        TEXT store_id FK "REFERENCES stores(id) ON DELETE CASCADE ON UPDATE CASCADE"
+        TEXT name "NOT NULL"
+        TEXT phone "NOT NULL - UNIQUE(store_id, phone), normalize to +963... in app"
+        TEXT email "nullable, not unique"
+        TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+        TEXT updated_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+    }
+
+    CUSTOMER_ADDRESSES {
+        TEXT id PK "UUIDv7 / ULID"
+        TEXT store_id FK "REFERENCES stores(id) ON DELETE CASCADE ON UPDATE CASCADE"
+        TEXT customer_id FK "REFERENCES customers(store_id, id), same store, ON DELETE CASCADE"
+        TEXT recipient_name "NOT NULL"
+        TEXT phone "NOT NULL"
+        TEXT governorate "NOT NULL - CHECK IN GOVERNORATES, see enforcement note"
+        TEXT city "nullable"
+        TEXT address_line "NOT NULL"
+        INTEGER is_default "NOT NULL DEFAULT 0 CHECK(is_default IN (0, 1)) - one default per customer, see enforcement note"
+        TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+        TEXT updated_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+    }
+
+    SHIPPING_RATES {
+        TEXT id PK "UUIDv7 / ULID"
+        TEXT store_id FK "REFERENCES stores(id) ON DELETE CASCADE ON UPDATE CASCADE"
+        TEXT governorate "NOT NULL - UNIQUE(store_id, governorate), CHECK IN GOVERNORATES, see note"
+        TEXT shipping_method "NOT NULL"
+        INTEGER cost "NOT NULL DEFAULT 0 CHECK(cost >= 0)"
+        INTEGER is_active "NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1))"
+        TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+        TEXT updated_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+    }
+
+    ORDERS {
+        TEXT id PK "UUIDv7 / ULID - UNIQUE(store_id, id) supporting key for composite child FKs"
+        TEXT store_id FK "REFERENCES stores(id) ON DELETE RESTRICT ON UPDATE CASCADE"
+        TEXT customer_id FK "REFERENCES customers(store_id, id), same store, ON DELETE RESTRICT"
+        INTEGER order_number "NOT NULL - UNIQUE(store_id, order_number), not globally unique"
+        TEXT status "NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'))"
+        INTEGER subtotal "NOT NULL DEFAULT 0 CHECK(subtotal >= 0)"
+        INTEGER discount "NOT NULL DEFAULT 0 CHECK(discount >= 0)"
+        INTEGER total "NOT NULL DEFAULT 0 CHECK(total >= 0)"
+        TEXT payment_method "NOT NULL DEFAULT 'cod' CHECK(payment_method IN ('cod', 'bank_transfer', 'wallet'))"
+        TEXT payment_status "NOT NULL DEFAULT 'pending' CHECK(payment_status IN ('pending', 'paid', 'failed', 'refunded'))"
+        TEXT payment_reference "nullable - transfer or wallet reference"
+        TEXT tracking_number "nullable"
+        TEXT customer_name "snapshot NOT NULL"
+        TEXT customer_phone "snapshot NOT NULL"
+        TEXT shipping_method "snapshot NOT NULL"
+        INTEGER shipping_cost "snapshot NOT NULL DEFAULT 0 CHECK(shipping_cost >= 0)"
+        TEXT shipping_governorate "snapshot NOT NULL - CHECK IN GOVERNORATES, see note"
+        TEXT shipping_address "snapshot NOT NULL"
+        TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+        TEXT updated_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+    }
+
+    ORDER_ITEMS {
+        TEXT id PK "UUIDv7 / ULID"
+        TEXT store_id FK "REFERENCES stores(id) ON DELETE RESTRICT ON UPDATE CASCADE"
+        TEXT order_id FK "REFERENCES orders(store_id, id), same store, ON DELETE CASCADE"
+        TEXT product_id FK "nullable REFERENCES products(store_id, id), same store, ON DELETE SET NULL"
+        INTEGER quantity "NOT NULL DEFAULT 1 CHECK(quantity > 0)"
+        TEXT product_name "snapshot NOT NULL"
+        TEXT selected_options "snapshot nullable"
+        INTEGER unit_price "snapshot NOT NULL CHECK(unit_price >= 0)"
+        INTEGER line_total "snapshot NOT NULL CHECK(line_total >= 0)"
+        TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+        TEXT updated_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+    }
+</pre
+      >
+    </div>
+    <p class="caption">
+      PK = primary key &nbsp;&middot;&nbsp; FK = foreign key
+      &nbsp;&middot;&nbsp; UK = unique &nbsp;&middot;&nbsp; money held as whole
+      numbers in minor units &nbsp;&middot;&nbsp; composite UNIQUE and
+      partial-index rules are stated on the column they apply to but are
+      implemented as separate CREATE UNIQUE INDEX statements, not inline column
+      constraints &nbsp;&middot;&nbsp; every child-of-child foreign key is a
+      composite FOREIGN KEY (store_id, ref_id) REFERENCES parent(store_id, id)
+      backed by a UNIQUE(store_id, id) key on the parent, so a child row can
+      never reference a parent belonging to a different store
+      &nbsp;&middot;&nbsp; every connection must issue PRAGMA foreign_keys = ON
+      at open, otherwise all ON DELETE / ON UPDATE behaviour is silently a
+      no-op
+    </p>
+    <p class="footnote">
+      <b>Enforcement DDL.</b> GOVERNORATES = ('Damascus','Rif Dimashq','Aleppo',
+      'Homs','Hama','Latakia','Idlib','Al-Hasakah','Deir ez-Zor','Raqqa','Daraa',
+      'As-Suwayda','Quneitra','Tartus') &mdash; CHECK(governorate IN
+      GOVERNORATES) applies to customer_addresses.governorate,
+      shipping_rates.governorate and orders.shipping_governorate. Composite
+      foreign keys take the form FOREIGN KEY (store_id, ref_id) REFERENCES
+      parent(store_id, id), backed by UNIQUE(store_id, id) on the parent.
+      Partial-unique rules are separate statements: CREATE UNIQUE INDEX
+      uq_subscriptions_store_active ON subscriptions(store_id) WHERE status =
+      'active'; CREATE UNIQUE INDEX uq_addresses_customer_default ON
+      customer_addresses(customer_id) WHERE is_default = 1.
+      subscriptions.cancelled_at carries CHECK((status = 'cancelled' AND
+      cancelled_at IS NOT NULL) OR (status != 'cancelled' AND cancelled_at IS
+      NULL)).
+    </p>
+    <p class="footnote">
+      <b>Required indexes.</b> SQLite does not auto-index foreign key columns,
+      so the following plain (non-unique) indexes are required besides the
+      UNIQUE constraints above: stores(owner_id), subscriptions(plan_id),
+      subscriptions(store_id), categories(store_id, parent_id),
+      products(store_id, category_id), products(store_id, is_active,
+      deleted_at), product_images(store_id, product_id, sort_order),
+      customer_addresses(store_id, customer_id), orders(store_id, customer_id),
+      orders(store_id, status), orders(store_id, created_at),
+      order_items(store_id, order_id).
+    </p>
+    <p class="footnote">
+      <b>Checkout Transaction Contract.</b> Rules for the Hono checkout handler:
+      (1) increment the counter, insert the order and insert all order items
+      inside one single BEGIN IMMEDIATE transaction, so a later failure rolls
+      the counter back and numbers are never skipped; (2) upsert the customer
+      with INSERT ... ON CONFLICT(store_id, phone) DO UPDATE rather than
+      check-then-insert, so a concurrent double-submit resolves atomically
+      instead of surfacing a constraint error to the buyer; (3) compute every
+      order_items.line_total as quantity * unit_price and orders.total as
+      subtotal - discount + shipping_cost in the same transaction, since the
+      database cannot check totals across the orders/order_items boundary.
+    </p>
+    <p class="footnote">
+      <b>Connection Contract.</b> All database access goes through a single
+      connection factory that runs <code>PRAGMA foreign_keys = ON</code> and
+      <code>PRAGMA busy_timeout = 5000</code> synchronously before returning
+      any connection — never per call-site. A startup check asserts
+      <code>PRAGMA foreign_keys;</code> returns 1, and the checkout transaction
+      retries up to 3 times on <code>SQLITE_BUSY</code> so concurrent checkouts
+      on one shared file queue instead of failing.
+    </p>
+  </section>
+
+  <section>
+    <div class="shead">
+      <span class="num">4</span>
+      <h2>Key Relationships</h2>
+    </div>
+    <div class="rels">
+      <div class="rel">
+        <code>User &rarr; Store</code
+        ><span
+          >A user can own one or more stores. A user with stores cannot be
+          removed.</span
+        >
+      </div>
+      <div class="rel">
+        <code>Store &rarr; Products</code
+        ><span
+          >Each store has its own products; products never cross stores.</span
+        >
+      </div>
+      <div class="rel">
+        <code>Store &rarr; Categories</code
+        ><span>Each store defines its own categories.</span>
+      </div>
+      <div class="rel">
+        <code>Category &rarr; Products</code
+        ><span
+          >A product may sit in one category, or none. Removing a category
+          leaves its products uncategorised.</span
+        >
+      </div>
+      <div class="rel">
+        <code>Product &rarr; Product Images</code
+        ><span
+          >A product has many images in a set display order; each image also
+          carries its store reference.</span
+        >
+      </div>
+      <div class="rel">
+        <code>Store &rarr; Customers</code
+        ><span
+          >Customers belong to a single store &mdash; the merchant owns their
+          customer list.</span
+        >
+      </div>
+      <div class="rel">
+        <code>Customer &rarr; Addresses</code
+        ><span
+          >A customer can have several saved delivery addresses; each address
+          also carries its store reference.</span
+        >
+      </div>
+      <div class="rel">
+        <code>Store &rarr; Shipping Rates</code
+        ><span
+          >Each store sets its own delivery method and cost per governorate, one
+          rate per governorate.</span
+        >
+      </div>
+      <div class="rel">
+        <code>Store &rarr; Orders</code
+        ><span
+          >Every order belongs to exactly one store, and order numbers run in
+          sequence within that store.</span
+        >
+      </div>
+      <div class="rel">
+        <code>Customer &rarr; Orders</code
+        ><span
+          >Every order is linked to the customer who placed it. A customer with
+          orders cannot be removed.</span
+        >
+      </div>
+      <div class="rel">
+        <code>Order &rarr; Order Items</code
+        ><span
+          >An order contains one or more purchased lines; removing an order
+          removes its lines.</span
+        >
+      </div>
+      <div class="rel">
+        <code>Store &rarr; Order Items</code
+        ><span
+          >Each purchased line also carries its store reference, so order data
+          can never cross stores.</span
+        >
+      </div>
+      <div class="rel">
+        <code>Product &rarr; Order Items</code
+        ><span
+          >An order line points back to the product, but keeps its own copy of
+          the details, so retiring a product leaves past orders unchanged.</span
+        >
+      </div>
+      <div class="rel">
+        <code>Store &rarr; Subscription</code
+        ><span
+          >A store has one active subscription at a time, with earlier periods
+          kept as history.</span
+        >
+      </div>
+      <div class="rel">
+        <code>Plan &rarr; Subscription</code
+        ><span
+          >Each subscription is based on one of the platform&rsquo;s plans. A
+          plan in use cannot be removed.</span
+        >
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="shead">
+      <span class="num">5</span>
+      <h2>Important Design Decisions</h2>
+    </div>
+    <div class="decisions">
+      <div class="decision">
+        <h4>Multi-Tenancy</h4>
+        <p>
+          A store identifier on every store-owned table isolates each
+          store&rsquo;s data &mdash; including product images, customer
+          addresses and order lines. One database, many stores, no cross-store
+          visibility.
+        </p>
+      </div>
+      <div class="decision">
+        <h4>Order Snapshots</h4>
+        <p>
+          Orders and order items keep their own copy of the buyer, delivery and
+          price details as they were at the moment of purchase, so past orders
+          stay correct even after products are renamed, repriced, or retired.
+        </p>
+      </div>
+      <div class="decision">
+        <h4>Order Numbering</h4>
+        <p>
+          Each store issues its own customer-facing order numbers from a counter
+          held on the store, and the pair of store and order number is unique.
+          Numbers stay sequential per store. The counter must always be
+          incremented atomically with UPDATE stores SET order_counter =
+          order_counter + 1 WHERE id = ? RETURNING order_counter inside the
+          checkout write transaction &mdash; a separate SELECT followed by
+          UPDATE is never allowed, otherwise two simultaneous checkouts can
+          read the same value and collide.
+        </p>
+      </div>
+      <div class="decision">
+        <h4>Order &amp; Payment State</h4>
+        <p>
+          The order carries two independent state fields: order progress and
+          payment state. They move separately &mdash; a cash-on-delivery order
+          can be delivered and paid, or shipped and still unpaid &mdash; and
+          neither duplicates the other.
+        </p>
+      </div>
+      <div class="decision">
+        <h4>Payment</h4>
+        <p>
+          Payment method, payment state and payment reference are held inside
+          the order itself rather than as a separate payment system &mdash;
+          enough to support cash on delivery, bank transfer, and Syrian digital
+          wallets.
+        </p>
+      </div>
+      <div class="decision">
+        <h4>Shipping</h4>
+        <p>
+          Delivery method and cost are held per governorate for each store,
+          while the order keeps a snapshot of the method, cost, governorate and
+          address the customer actually used.
+        </p>
+      </div>
+      <div class="decision">
+        <h4>Customer Handling</h4>
+        <p>
+          Buyers are recorded at checkout by phone number, with no account or
+          password in this release. Every order is tied to a customer, so each
+          store always has a complete customer list.
+        </p>
+      </div>
+      <div class="decision">
+        <h4>Soft Deletion</h4>
+        <p>
+          Products and product images are retired with a deletion date instead
+          of being erased, so historical orders and reporting stay intact. A
+          retired product releases its web address for reuse.
+        </p>
+      </div>
+      <div class="decision">
+        <h4>Lightweight MVP</h4>
+        <p>
+          The design is limited to the twelve tables needed for the core selling
+          flow, keeping the first release small, quick to build, and
+          straightforward to extend later.
+        </p>
+      </div>
+      <div class="decision">
+        <h4>SQLite</h4>
+        <p>
+          SQLite fits an MVP of this size: the structure is lightweight, the
+          operating cost is near zero, and there is no separate database server
+          to run or maintain.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="shead">
+      <span class="num">6</span>
+      <h2>Data &amp; Consistency Rules</h2>
+    </div>
+    <ul class="rules">
+      <li>
+        <b>Identifiers</b
+        ><span>Globally unique text identifiers on every record.</span>
+      </li>
+      <li>
+        <b>Money</b
+        ><span>Whole numbers in minor units &mdash; never decimals.</span>
+      </li>
+      <li>
+        <b>Timestamps</b
+        ><span
+          >Every table records a creation and an update timestamp, always in
+          UTC. SQLite defaults fire on INSERT only, so every table also needs
+          an AFTER UPDATE trigger refreshing updated_at, e.g. CREATE TRIGGER
+          trg_products_updated_at AFTER UPDATE ON products BEGIN UPDATE
+          products SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE
+          id = NEW.id; END;</span
+        >
+      </li>
+      <li>
+        <b>Foreign key pragma</b
+        ><span
+          >Every connection must issue PRAGMA foreign_keys = ON at open. It is
+          per-connection, not per-database &mdash; without it none of the
+          stated delete/update behaviour is enforced.</span
+        >
+      </li>
+      <li>
+        <b>Foreign keys</b
+        ><span
+          >Every relationship states explicit delete and update behaviour,
+          enforced by the database.</span
+        >
+      </li>
+      <li>
+        <b>Validation</b
+        ><span
+          >Status, payment, quantity and money fields are constrained to valid
+          values.</span
+        >
+      </li>
+      <li>
+        <b>Order history</b
+        ><span>Preserved as snapshots on the order and its lines.</span>
+      </li>
+      <li>
+        <b>Order numbers</b
+        ><span
+          >Unique per store, issued from the store&rsquo;s counter &mdash; never
+          globally unique.</span
+        >
+      </li>
+      <li>
+        <b>Soft deletion</b
+        ><span>Products and product images are retired, never erased.</span>
+      </li>
+      <li>
+        <b>Orders</b
+        ><span
+          >Never deleted; stores and customers with orders cannot be
+          removed.</span
+        >
+      </li>
+      <li>
+        <b>Tenant isolation</b
+        ><span
+          >Enforced through the store identifier on every store-owned
+          table.</span
+        >
+      </li>
+      <li>
+        <b>Store-scoped uniqueness</b
+        ><span
+          >Product and category addresses, customer phone numbers, governorate
+          rates and order numbers are unique within each store.</span
+        >
+      </li>
+      <li>
+        <b>Subscriptions</b
+        ><span
+          >Only one active subscription per store; earlier periods kept as
+          history.</span
+        >
+      </li>
+    </ul>
+  </section>
+
+  <section>
+    <div class="shead">
+      <span class="num">7</span>
+      <h2>MVP Scope</h2>
+    </div>
+    <div class="scope-col">
+      <h3>The approved structure &mdash; 12 tables</h3>
+      <div class="taglist">
+        <span class="tag">users</span><span class="tag">stores</span
+        ><span class="tag">plans</span><span class="tag">subscriptions</span>
+        <span class="tag">categories</span><span class="tag">products</span
+        ><span class="tag">product_images</span
+        ><span class="tag">customers</span>
+        <span class="tag">customer_addresses</span
+        ><span class="tag">shipping_rates</span><span class="tag">orders</span
+        ><span class="tag">order_items</span>
+      </div>
+      <p class="scope-note">
+        The complete approved scope &mdash; nothing beyond these twelve tables
+        is built for the first release.
+      </p>
+    </div>
+  </section>
+
+  <footer class="status">
+    <span class="label">Database Status</span>
+    <span class="badge">READY FOR IMPLEMENTATION</span>
+  </footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<script>
+  if (window.mermaid && !document.querySelector("pre.mermaid svg")) {
+    window.mermaid.initialize({ startOnLoad: true, securityLevel: "loose" });
+  }
+</script>

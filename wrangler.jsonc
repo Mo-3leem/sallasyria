@@ -1,0 +1,56 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sallasyria",
+  "compatibility_date": "2026-09-15",
+  "main": "src/index.ts",
+  // Local development bindings. `wrangler dev` emulates both locally.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sallasyria-db",
+      // Placeholder — replace with the real database_id after running
+      // `wrangler d1 create sallasyria-db` against a real Cloudflare account.
+      // Local development and Phase 1 verification do not require a real id.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      // Local bucket for `wrangler dev`. Production uses the env override
+      // below (bucket must be created once by the operator: see docs/DEPLOY.md).
+      "bucket_name": "sallasyria-images-dev"
+    }
+  ],
+  // Hygiene cron (purges). Fires only on deployed workers, never in `dev`
+  // unless --test-scheduled is passed explicitly.
+  "triggers": {
+    "crons": ["0 3 * * *"]
+  },
+  "env": {
+    "production": {
+      "vars": {
+        "ENVIRONMENT": "production"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "sallasyria-db",
+          // OPERATOR: replace with the real remote id (docs/DEPLOY.md step 2).
+          // Deployments with the zero id fail closed at boot checks, not silently.
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "R2",
+          // OPERATOR: create once (`wrangler r2 bucket create sallasyria-images-prod`),
+          // private by default — objects are served only through signed URLs.
+          "bucket_name": "sallasyria-images-prod"
+        }
+      ]
+    }
+  }
+}
