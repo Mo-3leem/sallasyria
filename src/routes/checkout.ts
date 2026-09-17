@@ -1,10 +1,13 @@
-import { Hono } from "hono";
+import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
 import type { AppEnv } from "../env.js";
 import { classifyDbError, getDb } from "../db.js";
 import { storeScope } from "../db/tenant.js";
 import { AppError } from "../http/errors.js";
 import { ok } from "../http/respond.js";
-import { assertNoImmutableFields, z, zBodyValidator } from "../http/validate.js";
+import { assertNoImmutableFields, z, validationHook } from "../http/validate.js";
+import { failEnvelope, okOf } from "../openapi/envelope.js";
+import { storeIdParams } from "../openapi/params.js";
+import { orderDocSchema, orderItemDocSchema } from "../openapi/orders.js";
 import { GOVERNORATES } from "../lib/governorates.js";
 import { retryTransient } from "../lib/retry.js";
 import { requireTurnstile } from "../middleware/turnstile.js";
@@ -13,7 +16,7 @@ import { resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
 import { checkout } from "../services/checkout.js";
 
-export const checkoutRouter = new Hono<AppEnv>();
+export const checkoutRouter = new OpenAPIHono<AppEnv>();
 
 // NOTE (type-level boundary): zero SQL strings here; scoping only from
 // storeScope(c). Enforced by tests/tenant-conventions.test.ts.
@@ -69,7 +72,44 @@ const FORBIDDEN = ["store_id", "id", "subtotal", "total", "discount", "order_num
 
 export const IDEMPOTENCY_HEADER = "X-Idempotency-Key";
 
-checkoutRouter.post("/", ...buyerCheckout, zBodyValidator(checkoutSchema), async (c) => {
+const checkoutOkSchema = okOf(
+  z.object({ order: orderDocSchema, items: z.array(orderItemDocSchema), replayed: z.boolean() })
+);
+
+const checkoutRoute = createRoute({
+  method: "post",
+  path: "/",
+  summary: "Place an order (atomic checkout)",
+  description:
+    "Public buyer flow (Turnstile + rate limit). Upserts the customer, allocates the next per-store order number, " +
+    "decrements stock, snapshots prices, and claims the Idempotency-Key in one D1 batch. " +
+    "Totals are always computed server-side — client money fields are rejected. " +
+    "Replaying the same key with an identical body returns the original result; a differing body conflicts (422).",
+  middleware: [...buyerCheckout],
+  request: {
+    params: storeIdParams,
+    body: { content: { "application/json": { schema: checkoutSchema } } },
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: checkoutOkSchema } },
+      description: "Replayed order (idempotency key already used)",
+    },
+    201: {
+      content: { "application/json": { schema: checkoutOkSchema } },
+      description: "Order created",
+    },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid body, key, or immutable money field" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Bot verification failed or inactive subscription" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store" },
+    409: { content: { "application/json": { schema: failEnvelope } }, description: "Unavailable product/shipping or insufficient stock" },
+    422: { content: { "application/json": { schema: failEnvelope } }, description: "Idempotency conflict or missing payment reference" },
+    429: { content: { "application/json": { schema: failEnvelope } }, description: "Rate limited" },
+    503: { content: { "application/json": { schema: failEnvelope } }, description: "Checkout busy, retry later" },
+  },
+});
+
+checkoutRouter.openapi(checkoutRoute, async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   assertNoImmutableFields(raw, FORBIDDEN);
   const { storeId } = storeScope(c);
@@ -104,4 +144,4 @@ checkoutRouter.post("/", ...buyerCheckout, zBodyValidator(checkoutSchema), async
     }
     throw err;
   }
-});
+}, validationHook);

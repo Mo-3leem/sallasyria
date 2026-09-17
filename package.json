@@ -33,6 +33,8 @@
     "wrangler": "^4.131.2"
   },
   "dependencies": {
+    "@hono/swagger-ui": "^0.6.1",
+    "@hono/zod-openapi": "^1.6.3",
     "@hono/zod-validator": "^0.9.1",
     "@noble/hashes": "^2.4.0",
     "hono": "^4.13.8",

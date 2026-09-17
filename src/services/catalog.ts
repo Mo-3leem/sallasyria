@@ -375,8 +375,9 @@ export async function updateProduct(
   return getProduct(db, storeId, id);
 }
 
-// Soft retirement (idempotent): sets deleted_at, preserves the row for order
-// history. There is intentionally no hard-delete route in MVP.
+// Soft retirement (idempotent): sets deleted_at AND is_active = 0 atomically
+// in one UPDATE, preserves the row for order history. There is intentionally
+// no hard-delete route in MVP.
 export async function softDeleteProduct(
   db: D1Database,
   storeId: string,
@@ -386,13 +387,15 @@ export async function softDeleteProduct(
   const current = await getProduct(db, storeId, id);
   if (!current) return null;
   await db
-    .prepare("UPDATE products SET deleted_at = ?, updated_at = ? WHERE store_id = ? AND id = ?")
+    .prepare("UPDATE products SET deleted_at = ?, is_active = 0, updated_at = ? WHERE store_id = ? AND id = ?")
     .bind(nowIso, nowIso, storeId, id)
     .run();
   return getProduct(db, storeId, id);
 }
 
-// Restore fails 409 when a live row already holds the slug (partial-unique
+// Restore clears deleted_at AND reactivates (is_active = 1) atomically in
+// one UPDATE — the inverse of softDeleteProduct, which deactivates on
+// delete. Fails 409 when a live row already holds the slug (partial-unique
 // rule proven at DB level); the caller renames first, then retries.
 export async function restoreProduct(
   db: D1Database,
@@ -404,7 +407,7 @@ export async function restoreProduct(
   if (!current) return null;
   try {
     await db
-      .prepare("UPDATE products SET deleted_at = NULL, updated_at = ? WHERE store_id = ? AND id = ?")
+      .prepare("UPDATE products SET deleted_at = NULL, is_active = 1, updated_at = ? WHERE store_id = ? AND id = ?")
       .bind(nowIso, storeId, id)
       .run();
   } catch (err) {

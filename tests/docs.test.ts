@@ -1,0 +1,145 @@
+import { describe, expect, it } from "vitest";
+import { createApp } from "../src/app.js";
+
+// OpenAPI surface tests: the /doc document must stay a valid, complete
+// contract, and /ui must render the Swagger shell. If a route is added or
+// renamed without createRoute() documentation, the endpoint-count assertion
+// below fails loudly instead of letting docs drift silently.
+describe("OpenAPI docs", () => {
+  it("GET /doc returns a valid OpenAPI 3.1 document", async () => {
+    const res = await createApp().request("/doc");
+    expect(res.status).toBe(200);
+    const doc = (await res.json()) as {
+      openapi: string;
+      paths: Record<string, unknown>;
+      components?: { schemas?: Record<string, unknown> };
+    };
+    expect(doc.openapi).toBe("3.1.0");
+    expect(typeof doc.paths).toBe("object");
+  });
+
+  it("documents every API endpoint (no silent drift)", async () => {
+    const res = await createApp().request("/doc");
+    const doc = (await res.json()) as { paths: Record<string, Record<string, unknown>> };
+    const documented = new Set<string>();
+    for (const [path, ops] of Object.entries(doc.paths)) {
+      // The generator is inconsistent: own-router params stay ":id" while
+      // merged mount prefixes become "{storeId}". Normalize both to braces
+      // so the assertion tracks routes, not formatter quirks.
+      const normal = path.replace(/:([A-Za-z0-9_]+)/g, "{$1}");
+      for (const method of Object.keys(ops)) {
+        documented.add(`${method.toUpperCase()} ${normal}`);
+      }
+    }
+    // One entry per route in src/routes (health 2, auth 5, stores 3,
+    // categories 5, products 6, product-images 8, customers 5,
+    // customer-addresses 6, shipping-rates 5, checkout 1, orders 4, admin 7).
+    const expected = [
+      "GET /health",
+      "GET /ready",
+      "POST /auth/login",
+      "POST /auth/logout",
+      "POST /auth/logout-others",
+      "GET /auth/me",
+      "POST /auth/change-password",
+      "GET /stores",
+      "GET /stores/{storeId}",
+      "PATCH /stores/{storeId}",
+      "GET /stores/{storeId}/categories",
+      "GET /stores/{storeId}/categories/{id}",
+      "POST /stores/{storeId}/categories",
+      "PATCH /stores/{storeId}/categories/{id}",
+      "DELETE /stores/{storeId}/categories/{id}",
+      "GET /stores/{storeId}/products",
+      "GET /stores/{storeId}/products/{id}",
+      "POST /stores/{storeId}/products",
+      "PATCH /stores/{storeId}/products/{id}",
+      "DELETE /stores/{storeId}/products/{id}",
+      "POST /stores/{storeId}/products/{id}/restore",
+      "GET /stores/{storeId}/product-images",
+      "GET /stores/{storeId}/product-images/file/{key}",
+      "GET /stores/{storeId}/product-images/{id}",
+      "POST /stores/{storeId}/product-images",
+      "PATCH /stores/{storeId}/product-images/{id}",
+      "DELETE /stores/{storeId}/product-images/{id}",
+      "POST /stores/{storeId}/product-images/{id}/restore",
+      "POST /stores/{storeId}/product-images/upload",
+      "GET /stores/{storeId}/customers",
+      "GET /stores/{storeId}/customers/{id}",
+      "POST /stores/{storeId}/customers",
+      "PATCH /stores/{storeId}/customers/{id}",
+      "DELETE /stores/{storeId}/customers/{id}",
+      "GET /stores/{storeId}/customer-addresses",
+      "GET /stores/{storeId}/customer-addresses/{id}",
+      "POST /stores/{storeId}/customer-addresses",
+      "PATCH /stores/{storeId}/customer-addresses/{id}",
+      "DELETE /stores/{storeId}/customer-addresses/{id}",
+      "POST /stores/{storeId}/customer-addresses/{id}/make-default",
+      "GET /stores/{storeId}/shipping-rates",
+      "GET /stores/{storeId}/shipping-rates/{id}",
+      "POST /stores/{storeId}/shipping-rates",
+      "PATCH /stores/{storeId}/shipping-rates/{id}",
+      "DELETE /stores/{storeId}/shipping-rates/{id}",
+      "POST /stores/{storeId}/checkout",
+      "GET /stores/{storeId}/orders",
+      "GET /stores/{storeId}/orders/{id}",
+      "PATCH /stores/{storeId}/orders/{id}/status",
+      "PATCH /stores/{storeId}/orders/{id}/payment",
+      "GET /admin/subscriptions",
+      "GET /admin/subscriptions/{id}",
+      "POST /admin/subscriptions",
+      "POST /admin/subscriptions/{id}/cancel",
+      "POST /admin/subscriptions/{id}/renew",
+      "POST /admin/users/{id}/password",
+      "POST /admin/maintenance/purge",
+    ];
+    expect(documented.size).toBe(expected.length);
+    for (const route of expected) {
+      expect(documented, `missing from /doc: ${route}`).toContain(route);
+    }
+  });
+
+  it("registers shared component schemas", async () => {
+    const res = await createApp().request("/doc");
+    const doc = (await res.json()) as {
+      components?: { schemas?: Record<string, unknown> };
+    };
+    const names = Object.keys(doc.components?.schemas ?? {});
+    for (const name of ["Category", "Product", "Customer", "Order", "Store", "Subscription"]) {
+      expect(names, `missing component: ${name}`).toContain(name);
+    }
+  });
+
+  it("GET /ui renders the Swagger shell", async () => {
+    const res = await createApp().request("/ui");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html.toLowerCase()).toContain("swagger");
+  });
+
+  it("uses only OpenAPI {param} templates, never Hono :param", async () => {
+    // Regression: the generator emits Hono-style ":id" segments for directly
+    // registered routes. Swagger UI only substitutes "{id}" tokens, so any
+    // ":param" left in a path key is sent literally on the wire (observed in
+    // production as GET /stores/:storeId -> 404 despite a correct value).
+    const res = await createApp().request("/doc");
+    const doc = (await res.json()) as {
+      paths: Record<string, Record<string, { parameters?: { name: string; in: string }[] }>>;
+    };
+    for (const [path, ops] of Object.entries(doc.paths)) {
+      expect(path, `Hono-style param in documented path: ${path}`).not.toMatch(/\/:/);
+      const tokens = [...path.matchAll(/\{([A-Za-z0-9_]+)\}/g)].map((m) => m[1]);
+      for (const [method, op] of Object.entries(ops)) {
+        const declared = (op.parameters ?? [])
+          .filter((p) => p.in === "path")
+          .map((p) => p.name);
+        for (const token of tokens) {
+          expect(
+            declared,
+            `${method.toUpperCase()} ${path}: path param {${token}} has no parameters entry`
+          ).toContain(token);
+        }
+      }
+    }
+  });
+});

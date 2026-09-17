@@ -4,9 +4,12 @@ import type { D1Database, R2Bucket } from "@cloudflare/workers-types";
 // never speculatively.
 export interface Env {
   DB: D1Database;
-  // R2 is REQUIRED in every environment (B8): local dev emulates it, prod
-  // binds the private bucket. No code path may assume its absence.
-  R2: R2Bucket;
+  // R2 is REQUIRED in local dev (emulated) but TEMPORARILY ABSENT in the
+  // production demo (account has no R2/billing — see wrangler.jsonc note).
+  // Hence optional: every touchpoint guards with an explicit 503
+  // storage_unavailable instead of crashing. Restore the binding and this
+  // becomes required again.
+  R2?: R2Bucket;
   ENVIRONMENT?: string;
   // Cloudflare Turnstile secret for public-mutation bot defense (B5).
   // Absent in development (documented bypass); required elsewhere.

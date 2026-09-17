@@ -245,7 +245,11 @@ describe("B3 store updates + gate", () => {
     expect(res.status).toBe(400);
     expect(res.body).toEqual({
       ok: false,
-      error: { code: "validation_failed", message: "Invalid request body." },
+      error: {
+        code: "validation_failed",
+        message: "Request body is invalid.",
+        details: [{ field: "name", message: "Too short." }],
+      },
     });
   });
 

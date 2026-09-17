@@ -1,11 +1,13 @@
-import { Hono } from "hono";
+import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import type { AppEnv } from "../env.js";
 import { getDb } from "../db.js";
 import { resourceId, storeScope } from "../db/tenant.js";
 import { AppError } from "../http/errors.js";
 import { ok } from "../http/respond.js";
-import { assertNoImmutableFields, z, zBodyValidator } from "../http/validate.js";
+import { assertNoImmutableFields, z, validationHook } from "../http/validate.js";
+import { failEnvelope, okOf } from "../openapi/envelope.js";
+import { idParam, storeIdParam, storeIdParams } from "../openapi/params.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
@@ -33,7 +35,7 @@ import {
 } from "../lib/uploads.js";
 import { uuidv7 } from "../lib/ids.js";
 
-export const productImages = new Hono<AppEnv>();
+export const productImages = new OpenAPIHono<AppEnv>();
 
 // NOTE (type-level boundary, same as stores routes): this file contains zero
 // SQL strings and reads scoping only from storeScope(c). All queries live in
@@ -68,6 +70,21 @@ const imagePatchSchema = z.object({
 
 const FORBIDDEN = ["store_id", "id", "deleted_at"] as const;
 
+const imageDocSchema = z
+  .object({
+    id: z.string().openapi({ example: "img_01J..." }),
+    store_id: z.string(),
+    product_id: z.string(),
+    url: z.string().openapi({ example: "https://cdn.example.com/a.jpg" }),
+    alt_text: z.string().nullable(),
+    sort_order: z.number(),
+    deleted_at: z.string().nullable(),
+  })
+  .openapi("ProductImage");
+
+const imageOkSchema = okOf(z.object({ image: imageDocSchema }));
+const idParams = z.object({ storeId: storeIdParam, id: idParam });
+
 // Reads resolve managed (r2://) URLs to short-lived signed links; legacy
 // external https rows pass through untouched. Signing needs
 // URL_SIGNING_SECRET — absent means 503 fail-closed (never an unsigned or
@@ -79,7 +96,36 @@ async function presentImage(c: Context<AppEnv>, row: ProductImageRow): Promise<P
   return { ...row, url: await resolveImageUrl(row.url, storeId, secret) };
 }
 
-productImages.get("/", ...authed, async (c) => {
+// product_id stays a documented-but-optional query string on purpose: the
+// manual missing-check below (with its exact message) remains the enforcer,
+// so behavior is byte-identical to before documentation existed.
+const listImagesRoute = createRoute({
+  method: "get",
+  path: "/",
+  summary: "List a product's images",
+  description: "Images in display order. Managed (r2://) rows resolve to short-lived signed links.",
+  middleware: [...authed],
+  request: {
+    params: z.object({ storeId: storeIdParam }),
+    query: z.object({ product_id: z.string().optional().openapi({ example: "prod_01J..." }) }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: okOf(z.object({ images: z.array(imageDocSchema) })) },
+      },
+      description: "Images of the product (r2:// rows resolved to signed links)",
+    },
+    400: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Missing product_id query",
+    },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store or product" },
+  },
+});
+
+productImages.openapi(listImagesRoute, async (c) => {
   const { storeId } = storeScope(c);
   const productId = c.req.query("product_id");
   if (!productId) {
@@ -87,11 +133,42 @@ productImages.get("/", ...authed, async (c) => {
   }
   const rows = await listImages(getDb(c), storeId, productId);
   return ok(c, { images: await Promise.all(rows.map((r) => presentImage(c, r))) });
-});
+}, validationHook);
 
 // NOTE: registered BEFORE /:id so the static "file" segment can never be
 // captured as a resource id, regardless of router precedence rules.
-productImages.get("/file/:key", resolveStore, async (c) => {
+const fileRoute = createRoute({
+  method: "get",
+  path: "/file/:key",
+  summary: "Serve a private image file",
+  description:
+    "Public bearer-URL reader: the store-bound HMAC signature plus expiry are verified, " +
+    "so links are unforgeable and short-lived. Missing, expired, or tampered links 404 identically.",
+  middleware: [resolveStore],
+  request: {
+    params: z.object({
+      storeId: storeIdParam,
+      key: z.string().openapi({ param: { name: "key", in: "path" }, example: "01J....jpg" }),
+    }),
+    query: z.object({
+      exp: z.string().optional().openapi({ example: "1758000000" }),
+      sig: z.string().optional().openapi({ example: "9f2c..." }),
+    }),
+  },
+  responses: {
+    200: { description: "Image bytes (content-typed, private cache)" },
+    404: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Missing, expired, or tampered link",
+    },
+    503: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Image storage is not configured",
+    },
+  },
+});
+
+productImages.openapi(fileRoute, async (c) => {
   const { storeId } = storeScope(c);
   const key = resourceId(c, "key");
   const expRaw = c.req.query("exp");
@@ -105,7 +182,12 @@ productImages.get("/file/:key", resolveStore, async (c) => {
   if (!(await verifyImageUrl(secret, storeId, key, exp, sig))) {
     throw new AppError("image_not_found", 404, "Image not found.");
   }
-  const object = await c.env.R2.get(`${storeId}/${key}`);
+  // No-R2 production demo: fail closed with 503 (see upload route note).
+  const r2 = c.env.R2;
+  if (!r2) {
+    throw new AppError("storage_unavailable", 503, "Image storage is not configured.");
+  }
+  const object = await r2.get(`${storeId}/${key}`);
   if (!object) {
     throw new AppError("image_not_found", 404, "Image not found.");
   }
@@ -117,52 +199,178 @@ productImages.get("/file/:key", resolveStore, async (c) => {
       "Cache-Control": `private, max-age=${remaining}`,
     },
   });
+}, validationHook);
+
+const getImageRoute = createRoute({
+  method: "get",
+  path: "/:id",
+  summary: "Get one product image",
+  description: "404 for an unknown store or image.",
+  middleware: [...authed],
+  request: { params: idParams },
+  responses: {
+    200: {
+      content: { "application/json": { schema: imageOkSchema } },
+      description: "The image (r2:// rows resolved to a signed link)",
+    },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store or image" },
+    503: { content: { "application/json": { schema: failEnvelope } }, description: "Image serving is not configured" },
+  },
 });
 
-productImages.get("/:id", ...authed, async (c) => {
+productImages.openapi(getImageRoute, async (c) => {
   const { storeId } = storeScope(c);
   const row = await getImage(getDb(c), storeId, resourceId(c));
   if (!row) throw new AppError("image_not_found", 404, "Image not found.");
   return ok(c, { image: await presentImage(c, row) });
+}, validationHook);
+
+const createImageRoute = createRoute({
+  method: "post",
+  path: "/",
+  summary: "Attach an image URL to a product",
+  description: "URL must use https; the product must belong to the same store.",
+  middleware: [...mutating],
+  request: {
+    params: storeIdParams,
+    body: { content: { "application/json": { schema: imageSchema } } },
+  },
+  responses: {
+    201: {
+      content: { "application/json": { schema: imageOkSchema } },
+      description: "Image record created",
+    },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid body or immutable field" },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Inactive subscription" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store or product" },
+  },
 });
 
-productImages.post("/", ...mutating, zBodyValidator(imageSchema), async (c) => {
+productImages.openapi(createImageRoute, async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   assertNoImmutableFields(raw, FORBIDDEN);
   const { storeId } = storeScope(c);
   return ok(c, { image: await createImage(getDb(c), storeId, c.req.valid("json")) }, 201);
+}, validationHook);
+
+const updateImageRoute = createRoute({
+  method: "patch",
+  path: "/:id",
+  summary: "Update a product image",
+  description: "Partial update of URL, alt text, or display order.",
+  middleware: [...mutating],
+  request: {
+    params: idParams,
+    body: { content: { "application/json": { schema: imagePatchSchema } } },
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: imageOkSchema } },
+      description: "Updated image",
+    },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid body or immutable field" },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Inactive subscription" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store or image" },
+  },
 });
 
-productImages.patch("/:id", ...mutating, zBodyValidator(imagePatchSchema), async (c) => {
+productImages.openapi(updateImageRoute, async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   assertNoImmutableFields(raw, FORBIDDEN);
   const { storeId } = storeScope(c);
   const row = await updateImage(getDb(c), storeId, resourceId(c), c.req.valid("json"));
   if (!row) throw new AppError("image_not_found", 404, "Image not found.");
   return ok(c, { image: row });
-});
+}, validationHook);
 
 // Soft retirement (idempotent), mirroring products.
-productImages.delete("/:id", ...mutating, async (c) => {
+const softDeleteImageRoute = createRoute({
+  method: "delete",
+  path: "/:id",
+  summary: "Retire a product image (soft delete)",
+  description: "Marks deleted_at instead of erasing. Idempotent.",
+  middleware: [...mutating],
+  request: { params: idParams },
+  responses: {
+    200: {
+      content: { "application/json": { schema: imageOkSchema } },
+      description: "Retired image",
+    },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Inactive subscription" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store or image" },
+  },
+});
+
+productImages.openapi(softDeleteImageRoute, async (c) => {
   const { storeId } = storeScope(c);
   const row = await softDeleteImage(getDb(c), storeId, resourceId(c));
   if (!row) throw new AppError("image_not_found", 404, "Image not found.");
   return ok(c, { image: row });
+}, validationHook);
+
+const restoreImageRoute = createRoute({
+  method: "post",
+  path: "/:id/restore",
+  summary: "Restore a retired product image",
+  description: "Clears deleted_at.",
+  middleware: [...mutating],
+  request: { params: idParams },
+  responses: {
+    200: {
+      content: { "application/json": { schema: imageOkSchema } },
+      description: "Restored image",
+    },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Inactive subscription" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store or image" },
+  },
 });
 
-productImages.post("/:id/restore", ...mutating, async (c) => {
+productImages.openapi(restoreImageRoute, async (c) => {
   const { storeId } = storeScope(c);
   const row = await restoreImage(getDb(c), storeId, resourceId(c));
   if (!row) throw new AppError("image_not_found", 404, "Image not found.");
-  return ok(c, { image: await presentImage(c, row) });
-});
+  return ok(c, { image: row });
+}, validationHook);
 
 // POST /upload — the ONLY writer of R2-managed image URLs (roadmap B8).
 // Multipart field "file". Enforcement order: size cap (before buffering the
 // whole body into memory twice) -> magic-byte sniff (claimed MIME ignored)
 // -> metadata sanitize -> private R2 put under a random namespaced key ->
 // catalog row with an r2:// reference (resolved to a signed link below).
-productImages.post("/upload", ...mutating, async (c) => {
+// Deliberately NO createRoute body schema: multipart validation here is
+// hand-rolled (File instance checks the schema language cannot express), and
+// a declared schema would either reject valid uploads or duplicate the
+// handler's exact checks. The route IS in the document via responses below.
+const uploadRoute = createRoute({
+  method: "post",
+  path: "/upload",
+  summary: "Upload and sanitize a product image file",
+  description:
+    "Multipart file + product_id. Enforces the 5 MB cap, verifies the real type by magic bytes " +
+    "(claimed MIME ignored), strips metadata, and stores a private R2 object linked to the product. " +
+    "503 without R2 binding.",
+  middleware: [...mutating],
+  request: { params: storeIdParams },
+  responses: {
+    201: {
+      content: { "application/json": { schema: imageOkSchema } },
+      description: "Uploaded, sanitized, and stored image (multipart file + product_id fields)",
+    },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Missing fields or unsupported image" },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Inactive subscription" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store or product" },
+    413: { content: { "application/json": { schema: failEnvelope } }, description: "Image exceeds the size limit" },
+    503: { content: { "application/json": { schema: failEnvelope } }, description: "Image storage is not configured" },
+  },
+});
+
+productImages.openapi(uploadRoute, async (c) => {
   const secret = signingSecretOrThrow(c.env);
   const form = await c.req.parseBody().catch(() => ({}));
   const file = (form as Record<string, unknown>)["file"];
@@ -183,9 +391,15 @@ productImages.post("/upload", ...mutating, async (c) => {
     throw new AppError("validation_failed", 400, "Multipart field 'product_id' is required.");
   }
   const { storeId } = storeScope(c);
+  // No-R2 production demo: fail closed with 503 (never a TypeError-500,
+  // never a fake success). Remove this guard when the binding returns.
+  const r2 = c.env.R2;
+  if (!r2) {
+    throw new AppError("storage_unavailable", 503, "Image storage is not configured.");
+  }
   const fileName = `${uuidv7()}.${extensionFor(sniffed)}`;
   const objectKey = `${storeId}/${fileName}`;
-  await c.env.R2.put(objectKey, clean.bytes, {
+  await r2.put(objectKey, clean.bytes, {
     httpMetadata: { contentType: sniffed },
   });
   const row = await createImage(getDb(c), storeId, {
@@ -193,4 +407,4 @@ productImages.post("/upload", ...mutating, async (c) => {
     url: r2UrlFor(objectKey),
   });
   return ok(c, { image: await presentImage(c, row) }, 201);
-});
+}, validationHook);

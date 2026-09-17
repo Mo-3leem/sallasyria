@@ -298,15 +298,34 @@ describe("B4 products", () => {
   });
 
   it("soft-delete releases the slug; restore conflicts 409 then succeeds", async () => {
+    type Row = {
+      id: string; store_id: string; name: string; slug: string;
+      category_id: string | null; price: number; stock_quantity: number | null;
+      is_active: number; deleted_at: string | null;
+    };
     const created = await api(`${A}/products`, {
       method: "POST",
       body: JSON.stringify({ name: "Temp", slug: "temp-slug", price: 50 }),
     }, jarA);
-    const id = (created.body as { data: { product: { id: string } } }).data.product.id;
+    const fresh = (created.body as { data: { product: Row } }).data.product;
+    const id = fresh.id;
+    expect(fresh.is_active).toBe(1);
+    expect(fresh.deleted_at).toBeNull();
 
     const del = await api(`${A}/products/${id}`, { method: "DELETE" }, jarA);
     expect(del.status).toBe(200);
-    expect(((del.body as { data: { product: { deleted_at: string } } }).data.product.deleted_at)).toBeTruthy();
+    const deleted = (del.body as { data: { product: Row } }).data.product;
+    expect(deleted.deleted_at).toBeTruthy();
+    expect(deleted.is_active).toBe(0);
+
+    // Listing still returns the retired row, with both retirement markers.
+    const listed = await api(`${A}/products`, {}, jarA);
+    const found = (
+      (listed.body as { data: { products: Row[] } }).data.products
+    ).find((p) => p.id === id);
+    expect(found).toBeDefined();
+    expect(found!.deleted_at).toBeTruthy();
+    expect(found!.is_active).toBe(0);
 
     const reuse = await api(`${A}/products`, {
       method: "POST",
@@ -322,7 +341,26 @@ describe("B4 products", () => {
       body: JSON.stringify({ slug: "temp-slug-freed" }),
     }, jarA);
     expect(rename.status).toBe(200);
-    expect((await api(`${A}/products/${id}/restore`, { method: "POST" }, jarA)).status).toBe(200);
+    const beforeRestore = (rename.body as { data: { product: Row } }).data.product;
+
+    const restored = await api(`${A}/products/${id}/restore`, { method: "POST" }, jarA);
+    expect(restored.status).toBe(200);
+    const revived = (restored.body as { data: { product: Row } }).data.product;
+    expect(revived.deleted_at).toBeNull();
+    expect(revived.is_active).toBe(1);
+    // Same row, all other fields untouched by delete → restore.
+    for (const key of ["id", "store_id", "name", "slug", "category_id", "price", "stock_quantity"] as const) {
+      expect(revived[key]).toEqual(beforeRestore[key]);
+    }
+
+    // Restored product is listed as live.
+    const relisted = await api(`${A}/products`, {}, jarA);
+    const live = (
+      (relisted.body as { data: { products: Row[] } }).data.products
+    ).find((p) => p.id === id);
+    expect(live).toBeDefined();
+    expect(live!.deleted_at).toBeNull();
+    expect(live!.is_active).toBe(1);
   });
 
   it("plan product limit enforced; expired store blocked", async () => {

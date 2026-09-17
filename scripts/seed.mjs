@@ -24,7 +24,8 @@
 
 import { execFileSync } from "node:child_process";
 import { writeFileSync, mkdtempSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { scrypt } from "@noble/hashes/scrypt.js";
 import { bytesToHex, randomBytes } from "@noble/hashes/utils.js";
@@ -62,17 +63,54 @@ function hashPassword(password) {
 
 const tmpDir = mkdtempSync(join(tmpdir(), "sallasyria-seed-"));
 
+// Direct node invocation of wrangler's own entrypoint (remote path only):
+// spawning via npx.cmd+shell mangles quoted multi-word arguments (the SQL
+// arrives split on spaces and yargs rejects it as unknown positionals).
+// Bypassing every shell/batch layer passes argv exactly. Local keeps the
+// proven npx path untouched.
+const WRANGLER_JS = join(dirname(fileURLToPath(import.meta.url)), "..", "node_modules", "wrangler", "bin", "wrangler.js");
+
 function execOne(sql) {
-  const file = join(tmpDir, `seed_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.sql`);
-  writeFileSync(file, sql, "utf8");
-  const cmdArgs = ["wrangler", "d1", "execute", "sallasyria-db", remote ? "--remote" : "--local", "--json", "--file", file];
+  // Remote MUST use --command (single statement): remote --file execution
+  // returns a summary row instead of query results, which makes every
+  // existence check vacuously true (seed would report "skipped" while
+  // inserting nothing). --command returns real {results, success} rows.
+  // Local keeps --file (fast, proven, real results).
+  if (!remote) {
+    const file = join(tmpDir, `seed_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.sql`);
+    writeFileSync(file, sql, "utf8");
+    return runWrangler(["wrangler", "d1", "execute", "sallasyria-db", "--local", "--json", "--file", file], sql);
+  }
+  return runWrangler(
+    ["wrangler", "d1", "execute", "sallasyria-db", "--remote", "--env", "production", "--json", "--command", sql],
+    sql
+  );
+}
+
+function runWrangler(cmdArgs, sql) {
   try {
-    const out = execFileSync(npxCmd, cmdArgs, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      shell: isWindows,
-    });
-    const parsed = JSON.parse(out);
+    let out;
+    if (remote) {
+      // cmdArgs[0] is the "wrangler" placeholder: swap the whole spawn to
+      // `node <wrangler.js> <rest...>` with NO shell (exact argv).
+      out = execFileSync(process.execPath, [WRANGLER_JS, ...cmdArgs.slice(1)], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        shell: false,
+      });
+    } else {
+      out = execFileSync(npxCmd, cmdArgs, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        shell: isWindows,
+      });
+    }
+    // Remote wrangler commands prefix stdout with human-readable progress
+    // lines ("├ Checking...") even with --json; local ones print pure JSON.
+    // Parse from the first JSON bracket so both shapes work. A genuinely
+    // failed command still exits non-zero and lands in the catch below.
+    const start = out.search(/[[{]/);
+    const parsed = JSON.parse(start === -1 ? out : out.slice(start));
     if (!Array.isArray(parsed) || !parsed.every((r) => r.success)) {
       throw new Error(JSON.stringify(parsed));
     }

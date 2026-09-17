@@ -43,10 +43,12 @@ describe("error handling", () => {
     expect(JSON.stringify(body)).not.toContain("secrets");
   });
 
-  it("validation failures use the envelope, never raw ZodError JSON", async () => {
+  it("validation failures use the envelope with safe field details, never raw ZodError JSON", async () => {
     // Regression: @hono/zod-validator's default failure mode returns its own
     // {success:false,error:{name,message}} shape, bypassing errorHandler.
-    // zBodyValidator must convert it to the standard envelope instead.
+    // zBodyValidator must convert it to the standard envelope instead, with
+    // field-level details drawn from a fixed allowlist (no Zod internals,
+    // no received values, no patterns).
     const app = new Hono<AppEnv>();
     app.onError(errorHandler);
     app.post("/v", zBodyValidator(z.object({ name: z.string().min(1) })), (c) =>
@@ -60,7 +62,11 @@ describe("error handling", () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
       ok: false,
-      error: { code: "validation_failed", message: "Invalid request body." },
+      error: {
+        code: "validation_failed",
+        message: "Request body is invalid.",
+        details: [{ field: "name", message: "Expected string." }],
+      },
     });
   });
 });

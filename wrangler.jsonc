@@ -12,26 +12,26 @@
       // `wrangler d1 create sallasyria-db` against a real Cloudflare account.
       // Local development and Phase 1 verification do not require a real id.
       "database_id": "00000000-0000-0000-0000-000000000000",
-      "migrations_dir": "migrations"
-    }
+      "migrations_dir": "migrations",
+    },
   ],
   "r2_buckets": [
     {
       "binding": "R2",
       // Local bucket for `wrangler dev`. Production uses the env override
       // below (bucket must be created once by the operator: see docs/DEPLOY.md).
-      "bucket_name": "sallasyria-images-dev"
-    }
+      "bucket_name": "sallasyria-images-dev",
+    },
   ],
   // Hygiene cron (purges). Fires only on deployed workers, never in `dev`
   // unless --test-scheduled is passed explicitly.
   "triggers": {
-    "crons": ["0 3 * * *"]
+    "crons": ["0 3 * * *"],
   },
   "env": {
     "production": {
       "vars": {
-        "ENVIRONMENT": "production"
+        "ENVIRONMENT": "production",
       },
       "d1_databases": [
         {
@@ -39,18 +39,18 @@
           "database_name": "sallasyria-db",
           // OPERATOR: replace with the real remote id (docs/DEPLOY.md step 2).
           // Deployments with the zero id fail closed at boot checks, not silently.
-          "database_id": "00000000-0000-0000-0000-000000000000",
-          "migrations_dir": "migrations"
-        }
+          "database_id": "dd9e0c8c-3c96-42ce-b522-1fe3c04d945f",
+          "migrations_dir": "migrations",
+        },
       ],
-      "r2_buckets": [
-        {
-          "binding": "R2",
-          // OPERATOR: create once (`wrangler r2 bucket create sallasyria-images-prod`),
-          // private by default — objects are served only through signed URLs.
-          "bucket_name": "sallasyria-images-prod"
-        }
-      ]
-    }
-  }
+      // NOTE (manager-demo, temporary): no r2_buckets block here on purpose.
+      // The account has no R2/billing, so referencing sallasyria-images-prod
+      // fails deployment (code 10085). Production runs WITHOUT an R2 binding
+      // until billing exists; R2-touching routes answer 503 storage_unavailable
+      // (fail-closed, never fake success). Local dev keeps its emulated bucket
+      // below. TO RESTORE: `wrangler r2 bucket create sallasyria-images-prod`
+      // then re-add:
+      //   "r2_buckets": [{ "binding": "R2", "bucket_name": "sallasyria-images-prod" }],
+    },
+  },
 }

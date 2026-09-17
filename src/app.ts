@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { OpenAPIHono } from "@hono/zod-openapi";
 import { requestId } from "hono/request-id";
 import type { AppEnv } from "./env.js";
 import { errorHandler } from "./http/errors.js";
@@ -17,11 +17,15 @@ import { shippingRates } from "./routes/shipping-rates.js";
 import { checkoutRouter } from "./routes/checkout.js";
 import { orders } from "./routes/orders.js";
 import { admin } from "./routes/admin.js";
+import { registerDocs } from "./routes/docs.js";
 
 // Application factory (exported for tests via app.request(); src/index.ts
 // wires the same instance to the Worker entrypoint).
+// NOTE: OpenAPIHono extends Hono — routing, middleware, onError and notFound
+// behave identically; it additionally merges createRoute() definitions from
+// mounted sub-routers into the /doc OpenAPI document.
 export function createApp() {
-  const app = new Hono<AppEnv>();
+  const app = new OpenAPIHono<AppEnv>();
 
   app.onError(errorHandler);
   app.notFound((c) => fail(c, "not_found", "Route does not exist.", 404));
@@ -42,6 +46,7 @@ export function createApp() {
   app.route("/stores/:storeId/checkout", checkoutRouter);
   app.route("/stores/:storeId/orders", orders);
   app.route("/admin", admin);
+  registerDocs(app);
 
   // B8+ mount points attach here. Nothing else
   // exists yet by design — no route file, no public surface.
