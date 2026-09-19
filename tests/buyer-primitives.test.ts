@@ -126,4 +126,27 @@ describe("requireTurnstile", () => {
     );
     expect(denied.status).toBe(403);
   });
+
+  it("rejects an oversized token without calling siteverify", async () => {
+    let calls = 0;
+    const countingFetch = (async () => {
+      calls++;
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    const env: Env = { DB: {} as Env["DB"], R2: {} as Env["R2"], ENVIRONMENT: "production", TURNSTILE_SECRET: "s3cr3t" };
+    const { app } = probeApp(env, countingFetch);
+    const res = await app.request(
+      "/pub",
+      { method: "POST", headers: { "X-Turnstile-Token": "x".repeat(2049) } },
+      env
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({
+      ok: false,
+      error: { code: "turnstile_failed", message: expect.any(String) },
+    });
+    expect(calls).toBe(0);
+  });
 });

@@ -6,12 +6,17 @@
 export type AuditAction =
   | "admin.store.read"
   | "admin.store.update"
+  | "store.create"
   | "store.update"
   | "admin.subscription.activate"
   | "admin.subscription.cancel"
   | "admin.subscription.renew"
+  | "admin.plan.create"
+  | "admin.plan.update"
+  | "admin.plan.delete"
   | "admin.user.password_reset"
-  | "user.password_change";
+  | "user.password_change"
+  | "user.profile.update";
 
 export function auditLog(
   action: AuditAction,

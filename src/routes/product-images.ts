@@ -346,6 +346,33 @@ productImages.openapi(restoreImageRoute, async (c) => {
 // hand-rolled (File instance checks the schema language cannot express), and
 // a declared schema would either reject valid uploads or duplicate the
 // handler's exact checks. The route IS in the document via responses below.
+// Multipart form shape for POST /upload — DOCUMENTATION-first (MVP fix:
+// without a declared multipart body Swagger UI renders no file picker and
+// its curl sends no body, so every Swagger upload died with "Multipart field
+// 'file' is required."). Deliberately PERMISSIVE at runtime: declaring the
+// body auto-wires a form validator, so both fields stay loose here (any file
+// value, optional product_id) and the handler below remains the SOLE
+// enforcer — missing file / oversize / bad magic bytes / missing product_id
+// keep their exact current 400/413 errors. Tightening this schema would
+// replace those specific errors with generic validation failures.
+const uploadFormSchema = z.object({
+  file: z
+    .any()
+    .openapi({
+      type: "string",
+      format: "binary",
+      description: "Image file: PNG, JPEG, WebP, or GIF, max 5 MB. Required.",
+    }),
+  product_id: z
+    .any()
+    .optional()
+    .openapi({
+      type: "string",
+      example: "prod_01J...",
+      description: "ID of a product in this store. Required.",
+    }),
+});
+
 const uploadRoute = createRoute({
   method: "post",
   path: "/upload",
@@ -355,7 +382,14 @@ const uploadRoute = createRoute({
     "(claimed MIME ignored), strips metadata, and stores a private R2 object linked to the product. " +
     "503 without R2 binding.",
   middleware: [...mutating],
-  request: { params: storeIdParams },
+  request: {
+    params: storeIdParams,
+    body: {
+      content: {
+        "multipart/form-data": { schema: uploadFormSchema },
+      },
+    },
+  },
   responses: {
     201: {
       content: { "application/json": { schema: imageOkSchema } },

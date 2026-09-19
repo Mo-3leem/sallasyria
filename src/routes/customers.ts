@@ -6,7 +6,7 @@ import { AppError } from "../http/errors.js";
 import { ok } from "../http/respond.js";
 import { assertNoImmutableFields, z, validationHook } from "../http/validate.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
-import { idParam, storeIdParam, storeIdParams } from "../openapi/params.js";
+import { idParam, storeIdParam, storeIdParams, turnstileTokenHeader } from "../openapi/params.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireTurnstile } from "../middleware/turnstile.js";
 import { limitPublicMutations } from "../middleware/public.js";
@@ -76,6 +76,7 @@ const upsertCustomerRoute = createRoute({
   middleware: [...buyerMutating],
   request: {
     params: storeIdParams,
+    headers: turnstileTokenHeader,
     body: { content: { "application/json": { schema: upsertSchema } } },
   },
   responses: {

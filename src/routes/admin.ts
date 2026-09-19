@@ -18,6 +18,13 @@ import {
   listSubscriptions,
   renewSubscription,
 } from "../services/subscriptions.js";
+import {
+  createPlan,
+  deletePlan,
+  getPlan,
+  listPlans,
+  updatePlan,
+} from "../services/plans.js";
 import { userExists, resetUserPassword } from "../services/users.js";
 import { purgeIdempotencyKeys, purgeSessions } from "../services/maintenance.js";
 
@@ -213,6 +220,184 @@ admin.openapi(getSubscriptionRoute, async (c) => {
   const sub = await getSubscription(getDb(c), resourceId(c));
   if (!sub) throw new AppError("subscription_not_found", 404, "Subscription not found.");
   return ok(c, { subscription: sub });
+}, validationHook);
+
+// --- plans (platform-level reference data, admin-managed) ---
+
+const planDocSchema = z
+  .object({
+    id: z.string().openapi({ example: "plan_01J..." }),
+    code: z.string().openapi({ example: "premium" }),
+    name: z.string().openapi({ example: "Premium" }),
+    price_monthly: z.number().openapi({ example: 250000 }),
+    price_yearly: z.number().openapi({ example: 2500000 }),
+    max_products: z.number().nullable().openapi({ example: 500 }),
+    created_at: z.string(),
+    updated_at: z.string(),
+  })
+  .openapi("Plan");
+
+const planOkSchema = okOf(z.object({ plan: planDocSchema }));
+const planIdParams = z.object({ id: idParam });
+
+const codeSchema = z
+  .string()
+  .min(1)
+  .max(100)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Plan code must be lowercase alphanumeric with dashes.");
+
+const planCreateSchema = z.object({
+  code: codeSchema,
+  name: z.string().min(1).max(200),
+  price_monthly: z.number().int().min(0).default(0),
+  price_yearly: z.number().int().min(0).default(0),
+  max_products: z.number().int().min(1).nullable().default(null),
+});
+
+const planPatchSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  price_monthly: z.number().int().min(0).optional(),
+  price_yearly: z.number().int().min(0).optional(),
+  max_products: z.number().int().min(1).nullable().optional(),
+});
+
+const CREATE_PLAN_FORBIDDEN = ["id"] as const;
+const UPDATE_PLAN_FORBIDDEN = ["id", "code"] as const;
+
+const listPlansRoute = createRoute({
+  method: "get",
+  path: "/plans",
+  summary: "List all plans",
+  description: "Platform admin only. Platform-level reference data, not tenant-scoped.",
+  middleware: [...authedAdmin],
+  responses: {
+    200: {
+      content: { "application/json": { schema: okOf(z.object({ plans: z.array(planDocSchema) })) } },
+      description: "All plans",
+    },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
+  },
+});
+
+admin.openapi(listPlansRoute, async (c) => {
+  return ok(c, { plans: await listPlans(getDb(c)) });
+}, validationHook);
+
+const getPlanRoute = createRoute({
+  method: "get",
+  path: "/plans/:id",
+  summary: "Get one plan",
+  description: "Platform admin only.",
+  middleware: [...authedAdmin],
+  request: { params: planIdParams },
+  responses: {
+    200: {
+      content: { "application/json": { schema: planOkSchema } },
+      description: "The plan",
+    },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown plan" },
+  },
+});
+
+admin.openapi(getPlanRoute, async (c) => {
+  const plan = await getPlan(getDb(c), resourceId(c));
+  if (!plan) throw new AppError("plan_not_found", 404, "Plan not found.");
+  return ok(c, { plan });
+}, validationHook);
+
+const createPlanRoute = createRoute({
+  method: "post",
+  path: "/plans",
+  summary: "Create a plan",
+  description:
+    "Platform admin only, audited. Code is unique and lowercase kebab-case; id is generated server-side. " +
+    "max_products null means unlimited.",
+  middleware: [...authedAdmin],
+  request: {
+    body: { content: { "application/json": { schema: planCreateSchema } } },
+  },
+  responses: {
+    201: {
+      content: { "application/json": { schema: planOkSchema } },
+      description: "Created plan",
+    },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid body or immutable field" },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
+    409: { content: { "application/json": { schema: failEnvelope } }, description: "Plan code already in use" },
+  },
+});
+
+admin.openapi(createPlanRoute, async (c) => {
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  assertNoImmutableFields(raw, CREATE_PLAN_FORBIDDEN);
+  const plan = await createPlan(getDb(c), c.req.valid("json"));
+  auditLog("admin.plan.create", { actor: currentUser(c).id, result: plan.id });
+  return ok(c, { plan }, 201);
+}, validationHook);
+
+const updatePlanRoute = createRoute({
+  method: "patch",
+  path: "/plans/:id",
+  summary: "Update a plan",
+  description:
+    "Platform admin only, audited. Whitelisted name/prices/max_products only — code and id are immutable. " +
+    "Edits affect future plan-limit enforcement; existing subscriptions keep working and their price_amount is untouched.",
+  middleware: [...authedAdmin],
+  request: {
+    params: planIdParams,
+    body: { content: { "application/json": { schema: planPatchSchema } } },
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: planOkSchema } },
+      description: "Updated plan",
+    },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid body or immutable field" },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown plan" },
+  },
+});
+
+admin.openapi(updatePlanRoute, async (c) => {
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  assertNoImmutableFields(raw, UPDATE_PLAN_FORBIDDEN);
+  const plan = await updatePlan(getDb(c), resourceId(c), c.req.valid("json"));
+  if (!plan) throw new AppError("plan_not_found", 404, "Plan not found.");
+  auditLog("admin.plan.update", { actor: currentUser(c).id, result: plan.id });
+  return ok(c, { plan });
+}, validationHook);
+
+const deletePlanRoute = createRoute({
+  method: "delete",
+  path: "/plans/:id",
+  summary: "Delete a plan",
+  description:
+    "Platform admin only, audited. Hard delete; 409 while any subscription references the plan.",
+  middleware: [...authedAdmin],
+  request: { params: planIdParams },
+  responses: {
+    200: {
+      content: { "application/json": { schema: okOf(z.object({ deleted: z.string() })) } },
+      description: "Deleted plan id",
+    },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown plan" },
+    409: { content: { "application/json": { schema: failEnvelope } }, description: "Plan referenced by subscriptions" },
+  },
+});
+
+admin.openapi(deletePlanRoute, async (c) => {
+  const targetId = resourceId(c);
+  const result = await deletePlan(getDb(c), targetId);
+  if (!result) throw new AppError("plan_not_found", 404, "Plan not found.");
+  auditLog("admin.plan.delete", { actor: currentUser(c).id, result: targetId });
+  return ok(c, result);
 }, validationHook);
 
 // --- assisted password reset (no email/SMS infra in MVP) ---

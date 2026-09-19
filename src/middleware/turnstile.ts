@@ -50,6 +50,13 @@ export function requireTurnstile(fetchImpl: typeof fetch = fetch) {
     if (!token) {
       throw new AppError("turnstile_required", 400, "Bot verification token is required.");
     }
+    // Fail fast on absurd input without calling siteverify: real tokens are
+    // short opaque strings; an oversized value can only be a mistake or a
+    // probe. Same 403 as a failed verification (no new oracle: length alone
+    // reveals nothing about secrets or widget state).
+    if (token.length > 2048) {
+      throw new AppError("turnstile_failed", 403, "Bot verification failed.");
+    }
     const ok = await verifyTurnstileToken(secret, token, fetchImpl);
     if (!ok) {
       throw new AppError("turnstile_failed", 403, "Bot verification failed.");

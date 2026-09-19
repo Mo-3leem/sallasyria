@@ -17,6 +17,7 @@ import { shippingRates } from "./routes/shipping-rates.js";
 import { checkoutRouter } from "./routes/checkout.js";
 import { orders } from "./routes/orders.js";
 import { admin } from "./routes/admin.js";
+import { plans } from "./routes/plans.js";
 import { registerDocs } from "./routes/docs.js";
 
 // Application factory (exported for tests via app.request(); src/index.ts
@@ -46,6 +47,7 @@ export function createApp() {
   app.route("/stores/:storeId/checkout", checkoutRouter);
   app.route("/stores/:storeId/orders", orders);
   app.route("/admin", admin);
+  app.route("/plans", plans);
   registerDocs(app);
 
   // B8+ mount points attach here. Nothing else

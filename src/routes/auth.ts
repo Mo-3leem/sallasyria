@@ -3,8 +3,10 @@ import type { AppEnv, Env } from "../env.js";
 import { getDb } from "../db.js";
 import { AppError } from "../http/errors.js";
 import { ok } from "../http/respond.js";
-import { z, validationHook } from "../http/validate.js";
+import { z, assertNoImmutableFields, validationHook } from "../http/validate.js";
+import { createMerchant, phoneTaken, updateUserProfile } from "../services/users.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
+import { auditLog } from "../lib/audit.js";
 import { uuidv7 } from "../lib/ids.js";
 import { dummyHash, hashPassword, verifyPassword, PASSWORD_RULES } from "../lib/password.js";
 import {
@@ -47,6 +49,85 @@ const loginOkSchema = okOf(
     must_rotate: z.boolean().openapi({ example: false }),
   })
 );
+
+const registerSchema = z.object({
+  phone: z.string().min(1).max(32).openapi({ example: "+963991234567" }),
+  password: z
+    .string()
+    .min(PASSWORD_RULES.minNewChars)
+    .max(PASSWORD_RULES.maxChars)
+    .openapi({ example: "Correct-Horse-9x!" }),
+  name: z.string().min(1).max(200).openapi({ example: "Mohamed Haddad" }),
+  email: z.string().email().max(254).nullable().default(null),
+});
+
+// role and id can never come from the client: asserting them on the RAW body
+// fails closed even though the zod schema would strip them silently. The
+// service hardcodes role='merchant' and generates the id regardless.
+// NOTE: "store_id" is deliberately NOT listed — users have no store
+// dimension, and auth.ts must stay store_id-free to keep its exemption in
+// tests/tenant-conventions.test.ts (it queries only global tables).
+const REGISTER_FORBIDDEN = ["id", "role"] as const;
+
+// POST /auth/register — public merchant self-registration (MVP). No admin
+// involvement, no approval, no verification: a visitor becomes a merchant and
+// then logs in via /auth/login (separate step by design — registration mints
+// no session). Abuse control mirrors /auth/login (same per-isolate
+// ip+phone sliding window, same 429) rather than Turnstile: Turnstile
+// fail-closed 503s when unconfigured, which would brick registration in any
+// environment without a widget, while login proves rate-limit-only is the
+// accepted pattern for public auth mutations.
+// Duplicate phones are 409 phone_taken (signup uniqueness is inherently an
+// existence signal — unavoidable and standard; login keeps its no-oracle
+// 401 for credential guessing, which is the sensitive path).
+const registerRoute = createRoute({
+  method: "post",
+  path: "/register",
+  summary: "Register a merchant account",
+  description:
+    "Public self-service registration. Role is always merchant — role in the body is 400. " +
+    "Returns the public profile (never the password hash); log in separately via /auth/login.",
+  request: {
+    body: { content: { "application/json": { schema: registerSchema } } },
+  },
+  responses: {
+    201: {
+      content: { "application/json": { schema: okOf(z.object({ user: loginUserSchema })) } },
+      description: "Registered merchant public profile",
+    },
+    400: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Invalid body or forbidden field",
+    },
+    409: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Phone number already registered",
+    },
+    429: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Too many attempts",
+    },
+  },
+});
+
+auth.openapi(registerRoute, async (c) => {
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  assertNoImmutableFields(raw, REGISTER_FORBIDDEN);
+  const input = c.req.valid("json");
+  if (!checkLoginRateLimit(loginRateLimitKey(c, input.phone))) {
+    throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
+  }
+  if (await phoneTaken(getDb(c), input.phone)) {
+    throw new AppError("phone_taken", 409, "Phone number is already registered.");
+  }
+  const user = await createMerchant(getDb(c), {
+    phone: input.phone,
+    email: input.email,
+    name: input.name,
+    passwordHash: hashPassword(input.password),
+  });
+  return ok(c, { user }, 201);
+}, validationHook);
 
 interface UserRow {
   id: string;
@@ -232,6 +313,108 @@ const meRoute = createRoute({
 auth.openapi(meRoute, (c) => {
   const user: AuthUser = currentUser(c);
   return ok(c, { user: publicUser(user) });
+}, validationHook);
+
+const mePatchSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  email: z.string().email().max(254).nullable().optional(),
+  phone: z.string().min(1).max(32).optional(),
+  current_password: z.string().min(1).max(PASSWORD_RULES.maxChars).optional(),
+  logout_other_sessions: z.boolean().default(true),
+});
+
+// Identity and security fields can never be written through this endpoint.
+// (updated_at is app-managed and ignored; the schema already strips anything
+// else silently, but these fail closed loudly by design.)
+const ME_FORBIDDEN = ["id", "role", "is_active", "password_hash", "created_at"] as const;
+
+// PATCH /auth/me — self-service profile update. Name-only edits need no
+// password and touch no sessions. Phone/email edits are credential-identity
+// changes: they require the current password (same 401 as login), then honor
+// logout_other_sessions (default true) — revoking every OTHER session while
+// the calling session always survives. The current session is never revoked
+// by this endpoint, so reauth_required stays false and is kept only for API
+// compatibility.
+const patchMeRoute = createRoute({
+  method: "patch",
+  path: "/me",
+  summary: "Update own profile",
+  description:
+    "Partial update of name, email, phone, plus logout_other_sessions (default true). " +
+    "Phone/email changes require current_password; with logout_other_sessions true (default) all other " +
+    "sessions are revoked while the current session stays alive, with false every session survives. " +
+    "id, role, is_active, and password_hash in the body are 400.",
+  middleware: [requireAuth],
+  request: {
+    body: { content: { "application/json": { schema: mePatchSchema } } },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: okOf(
+            z.object({ user: loginUserSchema, reauth_required: z.boolean() })
+          ),
+        },
+      },
+      description: "Updated public profile; reauth_required tells whether to log in again",
+    },
+    400: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Invalid body, immutable field, or missing current password",
+    },
+    401: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Unauthenticated or wrong current password",
+    },
+    409: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Phone or email already registered",
+    },
+  },
+});
+
+auth.openapi(patchMeRoute, async (c) => {
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  assertNoImmutableFields(raw, ME_FORBIDDEN);
+  const user = currentUser(c);
+  const input = c.req.valid("json");
+  const emailChanged =
+    input.email !== undefined && (input.email ?? null) !== (user.email ?? null);
+  const phoneChanged = input.phone !== undefined && input.phone !== user.phone;
+  if (emailChanged || phoneChanged) {
+    if (!input.current_password) {
+      throw new AppError(
+        "current_password_required",
+        400,
+        "Current password is required to change email or phone."
+      );
+    }
+    const stored = await getDb(c)
+      .prepare("SELECT password_hash FROM users WHERE id = ?")
+      .bind(user.id)
+      .first<{ password_hash: string }>();
+    if (!stored || !verifyPassword(input.current_password, stored.password_hash)) {
+      throw new AppError("invalid_credentials", 401, "Invalid phone or password.");
+    }
+  }
+  const updated = await updateUserProfile(getDb(c), user.id, {
+    name: input.name,
+    email: input.email,
+    phone: input.phone,
+  });
+  if (!updated) throw new AppError("internal", 500, "Something went wrong.");
+  if ((emailChanged || phoneChanged) && input.logout_other_sessions) {
+    // Other sessions only: the caller's session always survives (its id is
+    // excluded), same statement shape as the change-password route.
+    const now = touch();
+    await getDb(c)
+      .prepare("UPDATE sessions SET revoked_at = ?, updated_at = ? WHERE user_id = ? AND id != ? AND revoked_at IS NULL")
+      .bind(now, now, user.id, currentSessionId(c))
+      .run();
+  }
+  auditLog("user.profile.update", { actor: user.id, result: user.id });
+  return ok(c, { user: publicUser(updated), reauth_required: false });
 }, validationHook);
 
 const changePasswordSchema = z.object({

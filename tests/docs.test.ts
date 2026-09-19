@@ -31,18 +31,22 @@ describe("OpenAPI docs", () => {
         documented.add(`${method.toUpperCase()} ${normal}`);
       }
     }
-    // One entry per route in src/routes (health 2, auth 5, stores 3,
+    // One entry per route in src/routes (health 2, auth 7, stores 4,
     // categories 5, products 6, product-images 8, customers 5,
-    // customer-addresses 6, shipping-rates 5, checkout 1, orders 4, admin 7).
+    // customer-addresses 6, shipping-rates 5, checkout 1, orders 4,
+    // admin 12, plans 1).
     const expected = [
       "GET /health",
       "GET /ready",
+      "POST /auth/register",
       "POST /auth/login",
       "POST /auth/logout",
       "POST /auth/logout-others",
       "GET /auth/me",
+      "PATCH /auth/me",
       "POST /auth/change-password",
       "GET /stores",
+      "POST /stores",
       "GET /stores/{storeId}",
       "PATCH /stores/{storeId}",
       "GET /stores/{storeId}/categories",
@@ -90,8 +94,14 @@ describe("OpenAPI docs", () => {
       "POST /admin/subscriptions",
       "POST /admin/subscriptions/{id}/cancel",
       "POST /admin/subscriptions/{id}/renew",
+      "GET /admin/plans",
+      "GET /admin/plans/{id}",
+      "POST /admin/plans",
+      "PATCH /admin/plans/{id}",
+      "DELETE /admin/plans/{id}",
       "POST /admin/users/{id}/password",
       "POST /admin/maintenance/purge",
+      "GET /plans",
     ];
     expect(documented.size).toBe(expected.length);
     for (const route of expected) {
@@ -108,6 +118,53 @@ describe("OpenAPI docs", () => {
     for (const name of ["Category", "Product", "Customer", "Order", "Store", "Subscription"]) {
       expect(names, `missing component: ${name}`).toContain(name);
     }
+  });
+
+  it("documents the image upload as multipart/form-data with file + product_id", async () => {
+    // Regression: the upload route once declared no request body, so Swagger
+    // UI showed no file picker and its curl sent an empty body (every Swagger
+    // upload died with "Multipart field 'file' is required."). The declared
+    // schema is intentionally permissive at runtime — the handler stays the
+    // sole enforcer — but the document must describe both form fields.
+    const res = await createApp().request("/doc");
+    const doc = (await res.json()) as {
+      paths: Record<string, Record<string, { requestBody?: unknown }>>;
+    };
+    const key = Object.keys(doc.paths).find((p) => p.endsWith("/product-images/upload"));
+    expect(key, "upload path missing from /doc").toBeTruthy();
+    const op = doc.paths[key!]!.post as unknown as {
+      requestBody?: { content?: Record<string, { schema?: unknown }> };
+    };
+    const media = op.requestBody?.content?.["multipart/form-data"];
+    expect(media, "upload must declare a multipart/form-data body").toBeTruthy();
+    const schema = media!.schema as {
+      type?: string;
+      properties?: Record<string, Record<string, unknown>>;
+    };
+    expect(schema.type).toBe("object");
+    expect(schema.properties?.file).toMatchObject({ type: "string", format: "binary" });
+    expect(schema.properties?.product_id).toMatchObject({ type: "string" });
+  });
+
+  it("documents the Turnstile token header on public buyer mutations", async () => {
+    // The buyer endpoints (customers upsert, address create/make-default,
+    // checkout) require the token via the X-Turnstile-Token header; without
+    // a declared header Swagger UI gives Execute no place to put it. The
+    // declaration is optional in the document (docs-only) — the middleware
+    // stays the sole enforcer.
+    const res = await createApp().request("/doc");
+    const doc = (await res.json()) as {
+      paths: Record<string, Record<string, { parameters?: { name: string; in: string }[] }>>;
+    };
+    const key = Object.keys(doc.paths).find((p) => p.endsWith("/customers"));
+    expect(key, "customers upsert path missing from /doc").toBeTruthy();
+    const params = doc.paths[key!]!.post?.parameters ?? [];
+    expect(
+      params,
+      "X-Turnstile-Token header missing from customers upsert"
+    ).toContainEqual(
+      expect.objectContaining({ name: "X-Turnstile-Token", in: "header" })
+    );
   });
 
   it("GET /ui renders the Swagger shell", async () => {

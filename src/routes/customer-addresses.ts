@@ -6,7 +6,7 @@ import { AppError } from "../http/errors.js";
 import { ok } from "../http/respond.js";
 import { assertNoImmutableFields, z, validationHook } from "../http/validate.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
-import { idParam, storeIdParam, storeIdParams } from "../openapi/params.js";
+import { idParam, storeIdParam, storeIdParams, turnstileTokenHeader } from "../openapi/params.js";
 import { GOVERNORATES } from "../lib/governorates.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireTurnstile } from "../middleware/turnstile.js";
@@ -82,6 +82,7 @@ const createAddressRoute = createRoute({
   middleware: [...buyerMutating],
   request: {
     params: storeIdParams,
+    headers: turnstileTokenHeader,
     body: { content: { "application/json": { schema: addressSchema } } },
   },
   responses: {
@@ -225,7 +226,7 @@ const makeDefaultRoute = createRoute({
   summary: "Set the default delivery address",
   description: "Public buyer flow (Turnstile + rate limit). Clears the old default atomically in one batch.",
   middleware: [...buyerMutating],
-  request: { params: idParams },
+  request: { params: idParams, headers: turnstileTokenHeader },
   responses: {
     200: {
       content: { "application/json": { schema: addressOkSchema } },

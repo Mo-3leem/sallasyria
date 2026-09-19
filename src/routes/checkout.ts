@@ -6,7 +6,7 @@ import { AppError } from "../http/errors.js";
 import { ok } from "../http/respond.js";
 import { assertNoImmutableFields, z, validationHook } from "../http/validate.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
-import { storeIdParams } from "../openapi/params.js";
+import { storeIdParams, turnstileTokenHeader } from "../openapi/params.js";
 import { orderDocSchema, orderItemDocSchema } from "../openapi/orders.js";
 import { GOVERNORATES } from "../lib/governorates.js";
 import { retryTransient } from "../lib/retry.js";
@@ -88,6 +88,7 @@ const checkoutRoute = createRoute({
   middleware: [...buyerCheckout],
   request: {
     params: storeIdParams,
+    headers: turnstileTokenHeader,
     body: { content: { "application/json": { schema: checkoutSchema } } },
   },
   responses: {

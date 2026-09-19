@@ -326,6 +326,50 @@ describe("B6 failure atomicity + stock", () => {
   });
 });
 
+describe("B6 last-unit race (different keys)", () => {
+  it("two concurrent checkouts on stock=1 yield exactly one 201 + one 409, stock 0, no gap", async () => {
+    // Dedicated fixture with stock exactly 1, untouched by every other test
+    // (removed afterwards by the shared clean-verify store-prefix cleanup).
+    const seedRace = d1(
+      `INSERT INTO products (id, store_id, name, slug, price, stock_quantity) VALUES ('prod_verify_b6c_race', 'store_verify_b6c_a', 'Race', 'b6-race', 1000, 1);`
+    );
+    if (!seedRace.ok) throw new Error(`race fixture failed: ${seedRace.error}`);
+
+    const counterBefore = Number(
+      qrows(d1(`SELECT order_counter FROM stores WHERE id = 'store_verify_b6c_a';`))[0]?.["order_counter"]
+    );
+    // Distinct customer phones attribute the single winning order below.
+    const bodyFor = (phone: string) =>
+      JSON.stringify(validBody({
+        customer: { name: "Racer", phone },
+        items: [{ product_id: "prod_verify_b6c_race", quantity: 1 }],
+      }));
+    const [r1, r2] = await Promise.all([
+      api(`${A}/checkout`, { method: "POST", body: bodyFor("+963911600081") }, "", freshKey()),
+      api(`${A}/checkout`, { method: "POST", body: bodyFor("+963911600082") }, "", freshKey()),
+    ]);
+    expect([r1.status, r2.status].sort()).toEqual([201, 409]);
+    const loser = r1.status === 409 ? r1 : r2;
+    expect(loser.body).toEqual({
+      ok: false,
+      error: { code: "insufficient_stock", message: expect.any(String) },
+    });
+
+    // Exactly one order exists for the two racing customers.
+    const orders = qrows(d1(
+      `SELECT id, order_number, customer_phone FROM orders WHERE store_id = 'store_verify_b6c_a' AND customer_phone IN ('+963911600081', '+963911600082');`
+    ));
+    expect(orders).toHaveLength(1);
+    // No order-number gap from the rolled-back loser: the winner took the
+    // very next number (its batch kept the counter bump, the loser lost its).
+    expect(orders[0]?.["order_number"]).toBe(counterBefore + 1);
+
+    // Final stock is exactly 0 — decremented once, never negative.
+    const stock = qrows(d1(`SELECT stock_quantity FROM products WHERE id = 'prod_verify_b6c_race';`))[0]?.["stock_quantity"];
+    expect(stock).toBe(0);
+  }, 120_000);
+});
+
 describe("B6 money, shipping, payment rules", () => {
   it("client totals/discount are rejected, never trusted", async () => {
     for (const extra of [{ subtotal: 1 }, { total: 1 }, { discount: 9999 }]) {

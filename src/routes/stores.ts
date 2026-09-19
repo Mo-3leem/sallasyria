@@ -10,7 +10,7 @@ import { auditLog } from "../lib/audit.js";
 import { currentUser, requireAuth } from "../middleware/auth.js";
 import { requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
-import { listAllStores, getStoreById, getStoreOwner, listStoresForOwner, renameStore } from "../services/stores.js";
+import { listAllStores, getStoreById, getStoreOwner, listStoresForOwner, renameStore, createStore } from "../services/stores.js";
 
 export const stores = new OpenAPIHono<AppEnv>();
 
@@ -58,6 +58,68 @@ stores.openapi(listStoresRoute, async (c) => {
     return ok(c, { stores: await listAllStores(getDb(c)) });
   }
   return ok(c, { stores: await listStoresForOwner(getDb(c), user.id) });
+}, validationHook);
+
+const storeCreateSchema = z.object({
+  name: z.string().min(1).max(200).openapi({ example: "Mo Electronics" }),
+  slug: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Slug must be lowercase alphanumeric with dashes.")
+    .openapi({ example: "mo-electronics" }),
+  currency: z.string().min(1).max(8).default("SYP").openapi({ example: "SYP" }),
+});
+
+// owner_id joins the forbidden list here (on top of the default store_id/id):
+// ownership flows ONLY from the session below, never from the body.
+const CREATE_FORBIDDEN = ["store_id", "id", "owner_id"] as const;
+
+// POST /stores — authenticated merchant self-service creation (MVP).
+// Deliberately NOT behind requireActiveSubscription: a brand-new store has no
+// subscription yet, and there is no other store's subscription that could
+// cover it. Writes ON the new store stay gated per-store by the existing
+// middleware, so creation grants no unentitled capability.
+const createStoreRoute = createRoute({
+  method: "post",
+  path: "/",
+  summary: "Create a store",
+  description:
+    "Creates a store owned by the caller; owner comes from the session, never the body. " +
+    "No limit on stores per merchant. 409 when the slug is taken. " +
+    "Merchant writes on the new store still need a subscription per store.",
+  middleware: [requireAuth],
+  request: {
+    body: { content: { "application/json": { schema: storeCreateSchema } } },
+  },
+  responses: {
+    201: {
+      content: { "application/json": { schema: okOf(z.object({ store: storeDocSchema })) } },
+      description: "Created store",
+    },
+    400: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Invalid body or immutable field",
+    },
+    401: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Unauthenticated",
+    },
+    409: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Slug already in use",
+    },
+  },
+});
+
+stores.openapi(createStoreRoute, async (c) => {
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  assertNoImmutableFields(raw, CREATE_FORBIDDEN);
+  const ownerId = currentUser(c).id;
+  const input = c.req.valid("json");
+  const store = await createStore(getDb(c), ownerId, input);
+  auditLog("store.create", { actor: ownerId, store: store.id, result: "ok" });
+  return ok(c, { store }, 201);
 }, validationHook);
 
 const getStoreRoute = createRoute({
