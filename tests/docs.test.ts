@@ -34,7 +34,7 @@ describe("OpenAPI docs", () => {
     // One entry per route in src/routes (health 2, auth 7, stores 4,
     // categories 5, products 6, product-images 8, customers 5,
     // customer-addresses 6, shipping-rates 5, checkout 1, orders 4,
-    // admin 12, plans 1).
+    // admin 11, plans 1).
     const expected = [
       "GET /health",
       "GET /ready",
@@ -100,7 +100,6 @@ describe("OpenAPI docs", () => {
       "PATCH /admin/plans/{id}",
       "DELETE /admin/plans/{id}",
       "POST /admin/users/{id}/password",
-      "POST /admin/maintenance/purge",
       "GET /plans",
     ];
     expect(documented.size).toBe(expected.length);

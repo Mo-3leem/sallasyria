@@ -26,6 +26,20 @@ describe("app wiring", () => {
     });
   });
 
+  it("removed dev-only purge route is a plain 404", async () => {
+    // Regression: POST /admin/maintenance/purge was deleted entirely (no
+    // route, no docs). It must fall through to notFound like any unknown
+    // path — never an auth-gated or method-specific response.
+    for (const method of ["POST", "GET"]) {
+      const res = await createApp().request("/admin/maintenance/purge", { method });
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({
+        ok: false,
+        error: { code: "not_found", message: "Route does not exist." },
+      });
+    }
+  });
+
   it("attaches a request id to every response", async () => {
     const res = await createApp().request("/health");
     expect(res.headers.get("X-Request-Id")).toBeTruthy();

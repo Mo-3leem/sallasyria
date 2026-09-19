@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   checkLoginRateLimit,
+  checkRegisterRateLimit,
+  loginRateLimitKey,
   LOGIN_RATE_LIMIT,
+  registerRateLimitKey,
   resetLoginRateLimit,
+  resetRegisterRateLimit,
 } from "../src/lib/rate-limit.js";
 
 describe("login rate limiting", () => {
@@ -33,5 +37,31 @@ describe("login rate limiting", () => {
     expect(checkLoginRateLimit(b, 2_000_000)).toBe(true);
     resetLoginRateLimit(a);
     expect(checkLoginRateLimit(a, 2_000_000)).toBe(true);
+  });
+
+  it("register and login buckets never share attempts", () => {
+    const stamp = Date.now();
+    const fakeCtx = (ip: string) =>
+      ({ req: { header: (n: string) => (n === "cf-connecting-ip" ? ip : null) } }) as Parameters<
+        typeof registerRateLimitKey
+      >[0];
+    const phone = `+9639000099${String(stamp).slice(-2)}`;
+    const regKey = registerRateLimitKey(fakeCtx("10.9.9.9"), phone);
+    const loginKey = loginRateLimitKey(fakeCtx("10.9.9.9"), phone);
+    expect(regKey).not.toBe(loginKey);
+    // Exhaust registration: login for the same ip+phone stays allowed.
+    for (let i = 0; i < LOGIN_RATE_LIMIT.maxAttempts; i++) {
+      expect(checkRegisterRateLimit(regKey, 3_000_000)).toBe(true);
+    }
+    expect(checkRegisterRateLimit(regKey, 3_000_000)).toBe(false);
+    expect(checkLoginRateLimit(loginKey, 3_000_000)).toBe(true);
+    // And the reverse: exhausted login leaves registration open.
+    for (let i = 0; i < LOGIN_RATE_LIMIT.maxAttempts; i++) {
+      checkLoginRateLimit(loginKey, 3_000_001);
+    }
+    expect(checkLoginRateLimit(loginKey, 3_000_001)).toBe(false);
+    expect(checkRegisterRateLimit(`other-${stamp}`, 3_000_001)).toBe(true);
+    resetRegisterRateLimit(regKey);
+    expect(checkRegisterRateLimit(regKey, 3_000_000)).toBe(true);
   });
 });

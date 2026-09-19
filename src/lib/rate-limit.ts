@@ -78,9 +78,37 @@ export function checkLoginRateLimit(key: string, nowMs: number = Date.now()): bo
   return true;
 }
 
+// Registration limiter: SEPARATE bucket from login (same window/threshold,
+// own keyspace). Sharing one bucket let registration spam for a victim's
+// phone consume that phone's login attempts and 429 the victim out.
+// Key shape mirrors loginRateLimitKey with a static prefix so the two
+// namespaces can never collide even for identical ip+phone pairs.
+const registerHits = new Map<string, number[]>();
+
+export function registerRateLimitKey(c: Context, phone: string): string {
+  return `register:${clientIp(c)}:${phone}`;
+}
+
+export function checkRegisterRateLimit(key: string, nowMs: number = Date.now()): boolean {
+  const arr = registerHits.get(key) ?? [];
+  const fresh = arr.filter((t) => nowMs - t < WINDOW_MS);
+  if (fresh.length >= MAX_ATTEMPTS) {
+    registerHits.set(key, fresh);
+    return false;
+  }
+  fresh.push(nowMs);
+  registerHits.set(key, fresh);
+  return true;
+}
+
 // Test seam: reset one key (tests) — never exposed via HTTP.
 export function resetLoginRateLimit(key: string): void {
   hits.delete(key);
+}
+
+// Test seam for the registration bucket (mirrors the login seam).
+export function resetRegisterRateLimit(key: string): void {
+  registerHits.delete(key);
 }
 
 export const LOGIN_RATE_LIMIT = { windowMs: WINDOW_MS, maxAttempts: MAX_ATTEMPTS } as const;

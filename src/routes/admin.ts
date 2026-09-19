@@ -25,8 +25,7 @@ import {
   listPlans,
   updatePlan,
 } from "../services/plans.js";
-import { userExists, resetUserPassword } from "../services/users.js";
-import { purgeIdempotencyKeys, purgeSessions } from "../services/maintenance.js";
+import { getUserPublic, resetUserPassword } from "../services/users.js";
 
 export const admin = new OpenAPIHono<AppEnv>();
 
@@ -427,7 +426,7 @@ const resetPasswordRoute = createRoute({
     },
     400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid body or immutable field" },
     401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
-    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only, or target is another admin" },
     404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown user" },
   },
 });
@@ -436,58 +435,19 @@ admin.openapi(resetPasswordRoute, async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   assertNoImmutableFields(raw, ["store_id", "id"]);
   const targetId = resourceId(c);
-  if (!(await userExists(getDb(c), targetId))) {
+  const target = await getUserPublic(getDb(c), targetId);
+  if (!target) {
     throw new AppError("user_not_found", 404, "User not found.");
+  }
+  const me = currentUser(c);
+  // Admins cannot reset other admins: without this, any admin could take
+  // over every peer admin account (password + sessions). Self-reset stays
+  // allowed (fail-closed compromise recovery; caller re-logs in).
+  if (target.role === "admin" && target.id !== me.id) {
+    throw new AppError("forbidden", 403, "Cannot reset another admin's password.");
   }
   const now = touch();
   await resetUserPassword(getDb(c), targetId, hashPassword(c.req.valid("json").new_password), now);
   auditLog("admin.user.password_reset", { actor: currentUser(c).id, result: targetId });
   return ok(c, { reset: true });
-}, validationHook);
-
-// --- local-only maintenance (purge) ---
-
-const purgeSchema = z.object({
-  sessions_older_than_days: z.number().int().min(1).max(3650).default(30),
-  idempotency_older_than_days: z.number().int().min(1).max(3650).default(3),
-});
-
-// Runs the same purge functions as the production cron, but ONLY in
-// development: in any other environment this route does not exist (404), so
-// there is no remote mass-delete surface to audit or abuse.
-const purgeRoute = createRoute({
-  method: "post",
-  path: "/maintenance/purge",
-  summary: "Purge everything except the admin (dev only)",
-  description: "Danger: wipes all stores, subscriptions, sessions, and idempotency keys. Refused outside development.",
-  middleware: [requireAuth, requireRole("admin")],
-  request: { body: { content: { "application/json": { schema: purgeSchema } } } },
-  responses: {
-    200: {
-      content: {
-        "application/json": {
-          schema: okOf(z.object({ sessionsPurged: z.number(), idempotencyKeysPurged: z.number() })),
-        },
-      },
-      description: "Purge counts",
-    },
-    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid body" },
-    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
-    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
-    404: { content: { "application/json": { schema: failEnvelope } }, description: "Not a development environment" },
-  },
-});
-
-admin.openapi(purgeRoute, async (c) => {
-  if ((c.env.ENVIRONMENT ?? "development") !== "development") {
-    throw new AppError("not_found", 404, "Route does not exist.");
-  }
-  const { sessions_older_than_days, idempotency_older_than_days } = c.req.valid("json");
-  const nowMs = Date.now();
-  const dayMs = 24 * 3600 * 1000;
-  const cutoff = (days: number) =>
-    new Date(nowMs - days * dayMs).toISOString().replace(/\.\d{3}Z$/, "Z");
-  const sessionsPurged = await purgeSessions(getDb(c), cutoff(sessions_older_than_days));
-  const idempotencyKeysPurged = await purgeIdempotencyKeys(getDb(c), cutoff(idempotency_older_than_days));
-  return ok(c, { sessionsPurged, idempotencyKeysPurged });
 }, validationHook);

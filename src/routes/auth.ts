@@ -18,7 +18,7 @@ import {
   sessionExpiryIso,
 } from "../lib/session.js";
 import { touch } from "../lib/time.js";
-import { checkLoginRateLimit, loginRateLimitKey } from "../lib/rate-limit.js";
+import { checkLoginRateLimit, checkRegisterRateLimit, loginRateLimitKey, registerRateLimitKey } from "../lib/rate-limit.js";
 import {
   currentSessionId,
   currentUser,
@@ -114,7 +114,9 @@ auth.openapi(registerRoute, async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   assertNoImmutableFields(raw, REGISTER_FORBIDDEN);
   const input = c.req.valid("json");
-  if (!checkLoginRateLimit(loginRateLimitKey(c, input.phone))) {
+  // Own bucket (register:<ip>:<phone>): registration spam for a phone must
+  // never consume that phone's login attempts.
+  if (!checkRegisterRateLimit(registerRateLimitKey(c, input.phone))) {
     throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
   }
   if (await phoneTaken(getDb(c), input.phone)) {

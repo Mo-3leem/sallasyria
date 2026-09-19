@@ -190,6 +190,26 @@ function uploadForm(png: Uint8Array, productId: string): FormData {
   return form;
 }
 
+// Structurally valid PNG of ~targetBytes: real signature + IHDR + one large
+// IDAT chunk (CRC unchecked by the sanitizer, content preserved bit-for-bit)
+// + IEND. Proves the 1-5MB window reaches the handler instead of dying at a
+// JSON-sized body cap.
+function largePng(targetBytes: number): Uint8Array {
+  const ihdr = [
+    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+  ];
+  const dataLen = targetBytes - 8 - ihdr.length - 12 - 12;
+  const out: number[] = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...ihdr];
+  out.push((dataLen >>> 24) & 255, (dataLen >>> 16) & 255, (dataLen >>> 8) & 255, dataLen & 255);
+  out.push(0x49, 0x44, 0x41, 0x54);
+  for (let i = 0; i < dataLen; i++) out.push(0);
+  out.push(0x00, 0x00, 0x00, 0x00);
+  out.push(0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82);
+  return Uint8Array.from(out);
+}
+
 describe("B8 hardened upload flow", () => {
   it("uploads, sanitizes, stores r2://, and serves bytes back", async () => {
     const png = pngWithText();
@@ -216,6 +236,15 @@ describe("B8 hardened upload flow", () => {
     expect(buf).toEqual(expected);
     expect(file.headers.get("content-type")).toBe("image/png");
     expect(file.headers.get("cache-control")).toContain("private");
+  }, 120_000);
+
+  it("accepts a valid ~2MB image: above the JSON cap, below the image cap", async () => {
+    const up = await api(`${A}/product-images/upload`, {
+      method: "POST",
+      body: uploadForm(largePng(2 * 1024 * 1024), "prod_verify_b8c_a"),
+    }, jarA);
+    expect(up.status).toBe(201);
+    expect((up.body as { data: { image: { url: string } } }).data.image.url).toContain("/product-images/file/");
   }, 120_000);
 
   it("rejects executables, oversize bodies, and cross-store products", async () => {

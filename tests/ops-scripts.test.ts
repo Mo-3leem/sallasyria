@@ -37,6 +37,25 @@ describe("backup.mjs", () => {
   });
 });
 
+describe("seed.mjs", () => {
+  it("refuses remote without --allow-remote", () => {
+    const r = runNode(["scripts/seed.mjs", "--remote", "--admin-password", "x"]);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("REFUSED");
+  });
+
+  it("refuses remote without an explicit merchant password", () => {
+    // The committed demo password must never reach production: --remote
+    // demands --merchant-password even when the admin password is supplied.
+    const r = runNode(
+      ["scripts/seed.mjs", "--remote", "--allow-remote", "--admin-password", "x"],
+      { ADMIN_BOOTSTRAP_PASSWORD: "" }
+    );
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("--merchant-password");
+  });
+});
+
 describe("smoke.mjs", () => {
   it("skips loudly without a target (exit 2, never fails open)", () => {
     const r = runNode(["scripts/smoke.mjs"], { SMOKE_BASE_URL: "" });

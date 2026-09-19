@@ -295,3 +295,96 @@ describe("B3 store updates + gate", () => {
     });
   });
 });
+
+describe("B3 store settings update", () => {
+  it("merchant renames own store", async () => {
+    const res = await api("/stores/store_verify_b3_a", {
+      method: "PATCH",
+      body: JSON.stringify({ name: "B3 Store A Renamed" }),
+    }, jarA);
+    expect(res.status).toBe(200);
+    expect(((res.body as { data: { store: { name: string } } }).data.store.name)).toBe("B3 Store A Renamed");
+  });
+
+  it("merchant changes slug and currency together", async () => {
+    const res = await api("/stores/store_verify_b3_a", {
+      method: "PATCH",
+      body: JSON.stringify({ slug: "b3-store-a-new", currency: "USD" }),
+    }, jarA);
+    expect(res.status).toBe(200);
+    const store = (res.body as { data: { store: { slug: string; currency: string; name: string } } }).data.store;
+    expect(store.slug).toBe("b3-store-a-new");
+    expect(store.currency).toBe("USD");
+    expect(store.name).toBe("B3 Store A Renamed");
+  });
+
+  it("same slug is a no-op, not an error", async () => {
+    const res = await api("/stores/store_verify_b3_a", {
+      method: "PATCH",
+      body: JSON.stringify({ slug: "b3-store-a-new" }),
+    }, jarA);
+    expect(res.status).toBe(200);
+    expect(((res.body as { data: { store: { slug: string } } }).data.store.slug)).toBe("b3-store-a-new");
+  });
+
+  it("duplicate slug is 409 and touches nothing", async () => {
+    const res = await api("/stores/store_verify_b3_a", {
+      method: "PATCH",
+      body: JSON.stringify({ slug: "b3-store-b" }),
+    }, jarA);
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({
+      ok: false,
+      error: { code: "slug_taken", message: "Slug is already in use." },
+    });
+    const check = await api("/stores/store_verify_b3_b", {}, jarB);
+    expect(((check.body as { data: { store: { slug: string } } }).data.store.slug)).toBe("b3-store-b");
+  });
+
+  it("cross-merchant PATCH is 404 and modifies nothing", async () => {
+    const res = await api("/stores/store_verify_b3_b", {
+      method: "PATCH",
+      body: JSON.stringify({ name: "Pwned" }),
+    }, jarA);
+    expect(res.status).toBe(404);
+    const check = await api("/stores/store_verify_b3_b", {}, jarB);
+    expect(((check.body as { data: { store: { name: string } } }).data.store.name)).toBe("B3 Store B");
+  });
+
+  it("admin updates any store per existing rules", async () => {
+    const res = await api("/stores/store_verify_b3_b", {
+      method: "PATCH",
+      body: JSON.stringify({ name: "B3 Store B Managed", currency: "EUR" }),
+    }, jarAdmin);
+    expect(res.status).toBe(200);
+    const store = (res.body as { data: { store: { name: string; currency: string } } }).data.store;
+    expect(store.name).toBe("B3 Store B Managed");
+    expect(store.currency).toBe("EUR");
+  });
+
+  it("all six immutable fields are 400", async () => {
+    for (const [key, value] of [
+      ["id", "forged"],
+      ["owner_id", "user_verify_b3_b"],
+      ["store_id", "store_verify_b3_b"],
+      ["status", "archived"],
+      ["order_counter", 1],
+      ["created_at", "2020-01-01T00:00:00Z"],
+    ] as const) {
+      const res = await api("/stores/store_verify_b3_a", {
+        method: "PATCH",
+        body: JSON.stringify({ [key]: value }),
+      }, jarA);
+      expect(res.status, `field ${key}`).toBe(400);
+      expect(res.body).toEqual({
+        ok: false,
+        error: { code: "immutable_field", message: expect.any(String) },
+      });
+    }
+  });
+
+  it("session survives store updates", async () => {
+    const me = await api("/stores", {}, jarA);
+    expect(me.status).toBe(200);
+  });
+});

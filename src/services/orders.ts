@@ -77,10 +77,16 @@ export async function transitionOrderStatus(
   if (!allowed.includes(to)) {
     throw new AppError("invalid_transition", 409, "Order status transition is not allowed.");
   }
-  await db
-    .prepare("UPDATE orders SET status = ?, updated_at = ? WHERE store_id = ? AND id = ?")
-    .bind(to, nowIso, storeId, orderId)
+  // Compare-and-swap: the expected current status rides in the WHERE clause
+  // so a concurrent transition that moved the row first makes this UPDATE a
+  // no-op instead of a silent last-writer-wins overwrite.
+  const applied = await db
+    .prepare("UPDATE orders SET status = ?, updated_at = ? WHERE store_id = ? AND id = ? AND status = ?")
+    .bind(to, nowIso, storeId, orderId, current.order.status)
     .run();
+  if ((applied.meta.changes ?? 0) === 0) {
+    throw new AppError("invalid_transition", 409, "Order status transition is not allowed.");
+  }
   const updated = await getOrder(db, storeId, orderId);
   if (!updated) throw new AppError("internal", 500, "Something went wrong.");
   return updated.order;
@@ -99,10 +105,14 @@ export async function transitionPaymentStatus(
   if (!allowed.includes(to)) {
     throw new AppError("invalid_transition", 409, "Payment status transition is not allowed.");
   }
-  await db
-    .prepare("UPDATE orders SET payment_status = ?, updated_at = ? WHERE store_id = ? AND id = ?")
-    .bind(to, nowIso, storeId, orderId)
+  // Compare-and-swap, same rationale as transitionOrderStatus above.
+  const applied = await db
+    .prepare("UPDATE orders SET payment_status = ?, updated_at = ? WHERE store_id = ? AND id = ? AND payment_status = ?")
+    .bind(to, nowIso, storeId, orderId, current.order.payment_status)
     .run();
+  if ((applied.meta.changes ?? 0) === 0) {
+    throw new AppError("invalid_transition", 409, "Payment status transition is not allowed.");
+  }
   const updated = await getOrder(db, storeId, orderId);
   if (!updated) throw new AppError("internal", 500, "Something went wrong.");
   return updated.order;

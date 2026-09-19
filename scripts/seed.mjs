@@ -53,6 +53,17 @@ if (!ADMIN_PASSWORD) {
   process.exit(1);
 }
 
+// The committed demo-merchant password ("Demo-Merchant-1") is a LOCAL/DEV
+// convenience only. Seeding it into production would hand every reader of
+// this repository a working merchant account, so --remote refuses to run
+// without an explicit operator-chosen merchant password. Local keeps the
+// deterministic default (repeatable dev/test seeding).
+const MERCHANT_PASSWORD = opt("--merchant-password", remote ? "" : "Demo-Merchant-1");
+if (!MERCHANT_PASSWORD) {
+  console.error("REFUSED: --merchant-password is required for --remote so production never receives the committed demo password.");
+  process.exit(1);
+}
+
 // s1 format mirror of src/lib/password.ts (N=16384, r=8, p=1, dkLen=32).
 // See header comment: divergence breaks the seed-login proof test in B7.
 function hashPassword(password) {
@@ -188,7 +199,7 @@ const items = [
 ];
 
 const NOW = "2026-09-15T00:00:00Z";
-const hashes = { admin: hashPassword(ADMIN_PASSWORD), merchant: hashPassword("Demo-Merchant-1") };
+const hashes = { admin: hashPassword(ADMIN_PASSWORD), merchant: hashPassword(MERCHANT_PASSWORD) };
 
 for (const item of items) {
   if (exists(item.check)) {

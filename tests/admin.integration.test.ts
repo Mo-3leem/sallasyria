@@ -1,5 +1,5 @@
 // B7 integration suite: forced rotation, subscription admin, assisted reset,
-// maintenance purge, seed idempotence. Real workerd + real local D1.
+// seed idempotence. Real workerd + real local D1.
 //
 // BOOTSTRAP SECRET HANDLING (read carefully): this file writes a throwaway
 // .dev.vars containing a TEST-ONLY bootstrap password BEFORE spawning the
@@ -21,6 +21,8 @@ const isWindows = process.platform === "win32";
 const BOOTSTRAP = `b7-bootstrap-${Date.now().toString(36)}`;
 const BOOTSTRAP_PHONE = "+963900000851";
 const MERCHANT_PHONE = "+963900000852";
+const ADMIN2_PHONE = "+963900000853";
+const ADMIN2_PASS = "B7-Second-Admin-1";
 const MERCHANT_PASS = "B7-Merchant-1";
 const NEW_ADMIN_PASS = "B7-Rotated-Admin-1";
 const DEV_VARS = join(process.cwd(), ".dev.vars");
@@ -141,8 +143,10 @@ beforeAll(async () => {
   assertCleanVerify("b7 reset");
   const bHash = hashPassword(BOOTSTRAP);
   const mHash = hashPassword(MERCHANT_PASS);
+  const a2Hash = hashPassword(ADMIN2_PASS);
   const seed = [
     `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_b7_admin', '${BOOTSTRAP_PHONE}', 'b7admin@example.com', 'B7 Bootstrap Admin', '${bHash}', 'admin');`,
+    `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_b7_admin2', '${ADMIN2_PHONE}', 'b7admin2@example.com', 'B7 Second Admin', '${a2Hash}', 'admin');`,
     `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_b7_merchant', '${MERCHANT_PHONE}', 'b7m@example.com', 'B7 Merchant', '${mHash}', 'merchant');`,
     `INSERT INTO plans (id, code, name) VALUES ('plan_verify_b7', 'b7-plan', 'B7 Plan');`,
     `INSERT INTO stores (id, owner_id, slug, name) VALUES ('store_verify_b7', 'user_verify_b7_merchant', 'b7-store', 'B7 Store');`,
@@ -368,19 +372,53 @@ describe("B7 assisted reset", () => {
   }, 120_000);
 });
 
-describe("B7 maintenance purge", () => {
-  it("purges only eligible rows and reports counts", async () => {
-    d1(`INSERT INTO sessions (id, user_id, token_hash, expires_at, revoked_at) VALUES ('sess_verify_b7_old', 'user_verify_b7_merchant', '${"aa".repeat(32)}', '2020-01-01T00:00:00Z', '2020-02-01T00:00:00Z');`);
-    d1(`INSERT INTO idempotency_keys (key, store_id, request_hash, created_at) VALUES ('b7-old-key', 'store_verify_b7', '${"bb".repeat(32)}', '2020-01-01T00:00:00Z');`);
-    const res = await api("/admin/maintenance/purge", {
+describe("B7 admin boundary: no peer-admin takeover", () => {
+  it("resetting another admin is 403 and changes nothing", async () => {
+    const a2login = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ sessions_older_than_days: 30, idempotency_older_than_days: 3 }),
+      body: JSON.stringify({ phone: ADMIN2_PHONE, password: ADMIN2_PASS }),
+    });
+    expect(a2login.status).toBe(200);
+    const jarA2 = cookieOf(a2login.headers.get("set-cookie"));
+
+    const attempt = await api("/admin/users/user_verify_b7_admin2/password", {
+      method: "POST",
+      body: JSON.stringify({ new_password: "B7-Takeover-1" }),
     }, jarBootstrap);
-    expect(res.status).toBe(200);
-    const data = (res.body as { data: { sessionsPurged: number; idempotencyKeysPurged: number } }).data;
-    expect(data.sessionsPurged).toBeGreaterThanOrEqual(1);
-    expect(data.idempotencyKeysPurged).toBeGreaterThanOrEqual(1);
-  }, 60_000);
+    expect(attempt.status).toBe(403);
+    expect(attempt.body).toEqual({
+      ok: false,
+      error: { code: "forbidden", message: expect.any(String) },
+    });
+
+    // Blocked admin untouched: old password still works, session still valid.
+    const stillIn = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ phone: ADMIN2_PHONE, password: ADMIN2_PASS }),
+    });
+    expect(stillIn.status).toBe(200);
+    expect((await api("/auth/me", {}, jarA2)).status).toBe(200);
+    const hijack = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ phone: ADMIN2_PHONE, password: "B7-Takeover-1" }),
+    });
+    expect(hijack.status).toBe(401);
+  }, 120_000);
+
+  it("admin self-reset stays allowed and revokes own sessions", async () => {
+    const self = await api("/admin/users/user_verify_b7_admin/password", {
+      method: "POST",
+      body: JSON.stringify({ new_password: "B7-Self-Reset-1" }),
+    }, jarBootstrap);
+    expect(self.status).toBe(200);
+    expect((await api("/auth/me", {}, jarBootstrap)).status).toBe(401);
+    const relogin = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ phone: BOOTSTRAP_PHONE, password: "B7-Self-Reset-1" }),
+    });
+    expect(relogin.status).toBe(200);
+    jarBootstrap = cookieOf(relogin.headers.get("set-cookie"));
+  }, 120_000);
 });
 
 describe("B7 seed determinism", () => {

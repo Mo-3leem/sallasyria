@@ -237,6 +237,34 @@ describe("B6 idempotency: exactly-once", () => {
     expect(created.length).toBe(1);
   }, 120_000);
 
+  it("same key is independent per store, replaying within a store", async () => {
+    // Store-scoped keys (migration 0007): identical key strings in different
+    // stores are independent rows. Previously the global PRIMARY KEY turned
+    // this into a false 422 idempotency_conflict.
+    const key = freshKey();
+    const bodyA = JSON.stringify(validBody({ customer: { name: "KeyX", phone: "+963911600091" } }));
+    const a1 = await api(`${A}/checkout`, { method: "POST", body: bodyA }, "", key);
+    expect(a1.status).toBe(201);
+    const a2 = await api(`${A}/checkout`, { method: "POST", body: bodyA }, "", key);
+    expect(a2.status).toBe(200);
+    expect(orderOf(a2).order["id"]).toBe(orderOf(a1).order["id"]);
+
+    const b1 = await api(`${B}/checkout`, {
+      method: "POST",
+      body: JSON.stringify({
+        customer: { name: "KeyX", phone: "+963911600092" },
+        items: [{ product_id: "prod_verify_b6c_b", quantity: 1 }],
+        shipping: { recipient_name: "KeyX", phone: "+963911600092", governorate: "Damascus", address_line: "B St" },
+        payment: { method: "cod" },
+      }),
+    }, "", key);
+    expect(b1.status).toBe(201);
+    expect(orderOf(b1).order["id"]).not.toBe(orderOf(a1).order["id"]);
+
+    // Cross-store record stays unreachable through the other store's path.
+    expect((await api(`${A}/orders/${orderOf(b1).order["id"]}`, {}, jarA)).status).toBe(404);
+  });
+
   it("same key + same body replays; same key + different body is 422", async () => {
     const key = freshKey();
     const body = JSON.stringify(validBody({ customer: { name: "Replay", phone: "+963911600031" } }));
@@ -462,6 +490,30 @@ describe("B6 merchant order reads + transitions", () => {
     const bOrderId = orderOf(createdB).order["id"] as string;
     expect((await api(`${A}/orders/${bOrderId}`, {}, jarA)).status).toBe(404);
     expect((await api(`${B}/orders/${bOrderId}`)).status).toBe(401);
+  });
+
+  it("concurrent identical transitions: exactly one wins, loser is 409", async () => {
+    // Deterministic either way: serialized, the loser reads the moved state
+    // and fails the app-level map; interleaved, its CAS UPDATE matches zero
+    // rows. Both paths collapse to invalid_transition — never two 200s.
+    const mk = await api(`${A}/checkout`, {
+      method: "POST",
+      body: JSON.stringify(validBody({ customer: { name: "Race", phone: "+963911600081" } })),
+    }, "", freshKey());
+    expect(mk.status).toBe(201);
+    const id = orderOf(mk).order["id"] as string;
+    const [r1, r2] = await Promise.all([
+      api(`${A}/orders/${id}/status`, { method: "PATCH", body: JSON.stringify({ status: "confirmed" }) }, jarA),
+      api(`${A}/orders/${id}/status`, { method: "PATCH", body: JSON.stringify({ status: "confirmed" }) }, jarA),
+    ]);
+    expect([r1.status, r2.status].sort()).toEqual([200, 409]);
+    const loser = r1.status === 409 ? r1 : r2;
+    expect(loser.body).toEqual({
+      ok: false,
+      error: { code: "invalid_transition", message: expect.any(String) },
+    });
+    const final = await api(`${A}/orders/${id}`, {}, jarA);
+    expect(((final.body as { data: { order: { status: string } } }).data.order.status)).toBe("confirmed");
   });
 
   it("status and payment follow the transition maps, terminal is final", async () => {

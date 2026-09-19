@@ -103,20 +103,49 @@ export async function getStoreOwner(
   return row?.owner_id ?? null;
 }
 
-export async function renameStore(
+export interface StorePatch {
+  name?: string;
+  slug?: string;
+  currency?: string;
+}
+
+// General store-settings update (PATCH /stores/:storeId). Whitelist =
+// { name, slug, currency } enforced by the route's zod schema plus its
+// immutable-field guard (id/owner_id/store_id/status/order_counter/
+// created_at never reach here). Slug is globally unique: an unchanged slug
+// is a no-op, a taken slug is a 409 pre-check, and the UNIQUE index stays
+// the race backstop (pattern mirrors createStore above).
+export async function updateStore(
   db: D1Database,
   storeId: string,
-  name: string,
+  patch: StorePatch,
   nowIso: string = touch()
 ): Promise<StorePublic | null> {
-  // Whitelist = { name } enforced by the route's zod schema; this function
-  // accepts nothing else, so no caller can smuggle store_id/id/deleted_at.
-  await db
-    .prepare("UPDATE stores SET name = ?, updated_at = ? WHERE id = ?")
-    .bind(name, nowIso, storeId)
-    .run();
-  return db
-    .prepare(`SELECT ${PUBLIC_COLUMNS} FROM stores WHERE id = ?`)
-    .bind(storeId)
-    .first<StorePublic>();
+  const current = await getStoreById(db, storeId);
+  if (!current) return null;
+  const next = {
+    name: patch.name ?? current.name,
+    slug: patch.slug ?? current.slug,
+    currency: patch.currency ?? current.currency,
+  };
+  if (next.slug !== current.slug) {
+    const clash = await db
+      .prepare("SELECT 1 AS ok FROM stores WHERE slug = ? AND id != ?")
+      .bind(next.slug, storeId)
+      .first<{ ok: number }>();
+    if (clash) throw new AppError("slug_taken", 409, "Slug is already in use.");
+  }
+  try {
+    await db
+      .prepare("UPDATE stores SET name = ?, slug = ?, currency = ?, updated_at = ? WHERE id = ?")
+      .bind(next.name, next.slug, next.currency, nowIso, storeId)
+      .run();
+  } catch (err) {
+    const text = err instanceof Error ? err.message : String(err);
+    if (/UNIQUE constraint failed/i.test(text)) {
+      throw new AppError("slug_taken", 409, "Slug is already in use.");
+    }
+    throw err;
+  }
+  return getStoreById(db, storeId);
 }

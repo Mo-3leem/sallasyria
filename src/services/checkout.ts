@@ -267,12 +267,14 @@ export async function checkout(
   }
   const requestHash = await sha256Hex(canonicalJson(input));
 
+  // Store-scoped lookup (PRIMARY KEY (store_id, key) since 0007): the same
+  // key string in another store is an independent row, never a conflict.
   const existing = await db
-    .prepare("SELECT key, store_id, order_id, request_hash FROM idempotency_keys WHERE key = ?")
-    .bind(key)
+    .prepare("SELECT key, store_id, order_id, request_hash FROM idempotency_keys WHERE store_id = ? AND key = ?")
+    .bind(storeId, key)
     .first<KeyRow>();
   if (existing) {
-    if (existing.store_id !== storeId || existing.request_hash !== requestHash) {
+    if (existing.request_hash !== requestHash) {
       throw new AppError("idempotency_conflict", 422, "Idempotency key was already used differently.");
     }
     if (existing.order_id === null) {
@@ -345,12 +347,13 @@ export async function checkout(
   try {
     results = await db.batch(statements);
   } catch (err) {
-    // Failure diagnosis, cheapest decisive check first:
+    // Failure diagnosis, cheapest decisive check first (store-scoped like the
+    // pre-check above: another store's identical key must never replay here).
     const raced = await db
-      .prepare("SELECT key, store_id, order_id, request_hash FROM idempotency_keys WHERE key = ?")
-      .bind(key)
+      .prepare("SELECT key, store_id, order_id, request_hash FROM idempotency_keys WHERE store_id = ? AND key = ?")
+      .bind(storeId, key)
       .first<KeyRow>();
-    if (raced && raced.store_id === storeId && raced.request_hash === requestHash && raced.order_id !== null) {
+    if (raced && raced.request_hash === requestHash && raced.order_id !== null) {
       const replay = await loadOrder(db, storeId, raced.order_id);
       if (replay) return { ...replay, replayed: true };
     }
