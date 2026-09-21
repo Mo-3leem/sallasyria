@@ -4,7 +4,7 @@ import { getDb } from "../db.js";
 import { AppError } from "../http/errors.js";
 import { ok } from "../http/respond.js";
 import { z, assertNoImmutableFields, validationHook } from "../http/validate.js";
-import { createMerchant, emailTaken, getUserByEmail, getUserPublic, phoneTaken, resetUserPassword, updateUserProfile } from "../services/users.js";
+import { createMerchant, emailTaken, getUserByEmail, getUserPublic, phoneTaken, resetUserPassword, setPasswordHash, updateUserProfile } from "../services/users.js";
 import {
   RESET_TOKEN_TTL_MS,
   VERIFY_TOKEN_TTL_MS,
@@ -389,6 +389,7 @@ const resetPasswordSchema = z.object({
     .string()
     .min(PASSWORD_RULES.minNewChars)
     .max(PASSWORD_RULES.maxChars),
+  logout_other_sessions: z.boolean().default(false),
 });
 
 const resetPasswordRoute = createRoute({
@@ -396,8 +397,9 @@ const resetPasswordRoute = createRoute({
   path: "/reset-password",
   summary: "Reset a password with an emailed token",
   description:
-    "Redeems a single-use reset token (1h TTL), sets the new password, and revokes every session " +
-    "of the account (same guarantee as the admin reset). Unknown, expired, and already-used " +
+    "Redeems a single-use reset token (1h TTL) and sets the new password. Sessions are revoked " +
+    "only when logout_other_sessions is true (default false, keep everything); there is no calling " +
+    "session in this token flow. Unknown, expired, and already-used " +
     "tokens return an identical 400. A confirmation email is sent best-effort afterwards.",
   request: {
     body: { content: { "application/json": { schema: resetPasswordSchema } } },
@@ -405,7 +407,7 @@ const resetPasswordRoute = createRoute({
   responses: {
     200: {
       content: { "application/json": { schema: okOf(z.object({ reset: z.boolean() })) } },
-      description: "Password reset; all account sessions revoked",
+      description: "Password reset; sessions revoked only when requested",
     },
     400: {
       content: { "application/json": { schema: failEnvelope } },
@@ -431,7 +433,14 @@ auth.openapi(resetPasswordRoute, async (c) => {
     throw new AppError("invalid_token", 400, "Invalid or expired token.");
   }
   const now = touch();
-  await resetUserPassword(getDb(c), claimed.userId, hashPassword(input.new_password), now);
+  // Opt-in revocation only: by default the hash rotates while every session
+  // stays alive. The forced variant (existing resetUserPassword, also used by
+  // the admin reset) additionally revokes all target sessions.
+  if (input.logout_other_sessions) {
+    await resetUserPassword(getDb(c), claimed.userId, hashPassword(input.new_password), now);
+  } else {
+    await setPasswordHash(getDb(c), claimed.userId, hashPassword(input.new_password), now);
+  }
   // Confirmation notice, best-effort like every other send in this file.
   try {
     const account = await getUserPublic(getDb(c), claimed.userId);
@@ -648,7 +657,7 @@ const mePatchSchema = z.object({
   email: z.string().trim().email().max(254).nullable().optional(),
   phone: z.string().min(1).max(32).optional(),
   current_password: z.string().min(1).max(PASSWORD_RULES.maxChars).optional(),
-  logout_other_sessions: z.boolean().default(true),
+  logout_other_sessions: z.boolean().default(false),
 });
 
 // Identity and security fields can never be written through this endpoint.
@@ -659,18 +668,18 @@ const ME_FORBIDDEN = ["id", "role", "is_active", "password_hash", "created_at"] 
 // PATCH /auth/me — self-service profile update. Name-only edits need no
 // password and touch no sessions. Phone/email edits are credential-identity
 // changes: they require the current password (same 401 as login), then honor
-// logout_other_sessions (default true) — revoking every OTHER session while
-// the calling session always survives. The current session is never revoked
-// by this endpoint, so reauth_required stays false and is kept only for API
-// compatibility.
+// logout_other_sessions (default false) — revoking every OTHER session only
+// when the caller opts in, while the calling session always survives. The
+// current session is never revoked by this endpoint, so reauth_required stays
+// false and is kept only for API compatibility.
 const patchMeRoute = createRoute({
   method: "patch",
   path: "/me",
   summary: "Update own profile",
   description:
-    "Partial update of name, email, phone, plus logout_other_sessions (default true). " +
-    "Phone/email changes require current_password; with logout_other_sessions true (default) all other " +
-    "sessions are revoked while the current session stays alive, with false every session survives. " +
+    "Partial update of name, email, phone, plus logout_other_sessions (default false, keep everything). " +
+    "Phone/email changes require current_password; with logout_other_sessions true all other " +
+    "sessions are revoked while the current session stays alive, with false (or omitted) every session survives. " +
     "id, role, is_active, and password_hash in the body are 400.",
   middleware: [requireAuth],
   request: {
@@ -751,20 +760,22 @@ const changePasswordSchema = z.object({
     .string()
     .min(PASSWORD_RULES.minNewChars)
     .max(PASSWORD_RULES.maxChars),
+  logout_other_sessions: z.boolean().default(false),
 });
 
 // POST /auth/change-password — self-service rotation (B7). Verifies the
 // current password (same invalid_credentials code as login: no oracle),
-// stores the new scrypt hash, and revokes every OTHER session (a changed
-// password must kill potentially-compromised sessions; the caller keeps its
-// own so the rotation flow itself is not interrupted).
+// stores the new scrypt hash. Other sessions are revoked only on explicit
+// opt-in (logout_other_sessions, default false); the caller keeps its own
+// either way so the rotation flow itself is not interrupted.
 const changePasswordRoute = createRoute({
   method: "post",
   path: "/change-password",
   summary: "Change own password",
   description:
-    "Verifies the current password (same 401 as login: no oracle), stores the new scrypt hash, " +
-    "and revokes every other session. New password minimum 8 characters.",
+    "Verifies the current password (same 401 as login: no oracle), stores the new scrypt hash. " +
+    "Other sessions are revoked only when logout_other_sessions is true (default false, keep everything); " +
+    "the calling session always survives. New password minimum 8 characters.",
   middleware: [requireAuth],
   request: {
     body: { content: { "application/json": { schema: changePasswordSchema } } },
@@ -774,7 +785,7 @@ const changePasswordRoute = createRoute({
       content: {
         "application/json": { schema: okOf(z.object({ changed: z.boolean() })) },
       },
-      description: "Password changed; other sessions revoked",
+      description: "Password changed; other sessions revoked only when requested",
     },
     400: {
       content: { "application/json": { schema: failEnvelope } },
@@ -789,7 +800,7 @@ const changePasswordRoute = createRoute({
 
 auth.openapi(changePasswordRoute, async (c) => {
   const user = currentUser(c);
-  const { current_password, new_password } = c.req.valid("json");
+  const { current_password, new_password, logout_other_sessions } = c.req.valid("json");
   const stored = await getDb(c)
     .prepare("SELECT password_hash FROM users WHERE id = ?")
     .bind(user.id)
@@ -798,13 +809,21 @@ auth.openapi(changePasswordRoute, async (c) => {
     throw new AppError("invalid_credentials", 401, "Invalid email or password.");
   }
   const now = touch();
-  await getDb(c).batch([
+  // The sessions statement is included only on explicit opt-in; by default
+  // (false) the hash rotates while every session — including the caller's —
+  // stays alive.
+  const statements = [
     getDb(c)
       .prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
       .bind(hashPassword(new_password), now, user.id),
-    getDb(c)
-      .prepare("UPDATE sessions SET revoked_at = ?, updated_at = ? WHERE user_id = ? AND id != ? AND revoked_at IS NULL")
-      .bind(now, now, user.id, currentSessionId(c)),
-  ]);
+  ];
+  if (logout_other_sessions) {
+    statements.push(
+      getDb(c)
+        .prepare("UPDATE sessions SET revoked_at = ?, updated_at = ? WHERE user_id = ? AND id != ? AND revoked_at IS NULL")
+        .bind(now, now, user.id, currentSessionId(c))
+    );
+  }
+  await getDb(c).batch(statements);
   return ok(c, { changed: true });
 }, validationHook);

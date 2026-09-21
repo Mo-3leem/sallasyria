@@ -173,6 +173,24 @@ export async function createMerchant(
   return row;
 }
 
+// Password-hash rotation WITHOUT session revocation (opt-out counterpart to
+// resetUserPassword below). Used by user-initiated flows whose revocation is
+// explicitly opt-in; the caller keeps every session either way.
+export async function setPasswordHash(
+  db: D1Database,
+  targetId: string,
+  newHash: string,
+  nowIso: string
+): Promise<void> {
+  const res = await db
+    .prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
+    .bind(newHash, nowIso, targetId)
+    .run();
+  if (!res.success) {
+    throw new AppError("internal", 500, "Something went wrong.");
+  }
+}
+
 // Assisted password reset body (admin route): swaps the hash and revokes ALL
 // of the target's live sessions atomically (fail-closed for compromise; the
 // admin re-logs in if self-targeted). Caller audits.

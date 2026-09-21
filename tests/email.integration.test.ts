@@ -371,11 +371,11 @@ describe("password reset (live CAS path)", () => {
     expect(statuses[statuses.length - 1]).toBe(429);
   }, 120_000);
 
-  it("reset consumes the token, rotates the password, kills sessions, blocks reuse", async () => {
+  it("reset with the flag revokes sessions; default keeps them", async () => {
     await seedToken("user_verify_em_m", "reset", "em-reset-token-1", "2099-01-01T00:00:00Z");
     const first = await api("/auth/reset-password", {
       method: "POST",
-      body: JSON.stringify({ token: "em-reset-token-1", new_password: "Email-New-1x" }),
+      body: JSON.stringify({ token: "em-reset-token-1", new_password: "Email-New-1x", logout_other_sessions: true }),
     });
     expect(first.status).toBe(200);
     expect(first.body).toEqual({ ok: true, data: { reset: true } });
@@ -397,6 +397,29 @@ describe("password reset (live CAS path)", () => {
     });
     expect(fresh.status).toBe(200);
     jarMerchant = cookieOf(fresh.setCookie);
+  }, 120_000);
+
+  it("reset defaults to keeping every session", async () => {
+    const other = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: MERCHANT_EMAIL, password: "Email-New-1x" }),
+    });
+    const jarOther = cookieOf(other.setCookie);
+    await seedToken("user_verify_em_m", "reset", "em-reset-token-keep", "2099-01-01T00:00:00Z");
+    const res = await api("/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ token: "em-reset-token-keep", new_password: "Email-New-3x" }),
+    });
+    expect(res.status).toBe(200);
+    expect((await api("/auth/me", {}, jarMerchant)).status).toBe(200);
+    expect((await api("/auth/me", {}, jarOther)).status).toBe(200);
+    // restore known password for later tests
+    await seedToken("user_verify_em_m", "reset", "em-reset-token-restore", "2099-01-01T00:00:00Z");
+    const restore = await api("/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ token: "em-reset-token-restore", new_password: "Email-New-1x" }),
+    });
+    expect(restore.status).toBe(200);
   }, 120_000);
 
   it("concurrent resets allow exactly one success", async () => {

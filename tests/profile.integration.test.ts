@@ -230,7 +230,7 @@ describe("PATCH /auth/me guards", () => {
 }, 90_000);
 
 describe("PATCH /auth/me logout_other_sessions", () => {
-  it("phone change defaults to revoking others; email login unaffected", async () => {
+  it("phone change defaults to keeping every session", async () => {
     const jar1 = await loginJar("pfma@example.com", PASS);
     const jar2 = await loginJar("pfma@example.com", PASS);
     const NEW_PHONE = "+963900001321";
@@ -243,7 +243,7 @@ describe("PATCH /auth/me logout_other_sessions", () => {
     expect(user.phone).toBe(NEW_PHONE);
     expect((res.body as MeBody).data.reauth_required).toBe(false);
     expect((await api("/auth/me", {}, jar1)).status).toBe(200);
-    expect((await api("/auth/me", {}, jar2)).status).toBe(401);
+    expect((await api("/auth/me", {}, jar2)).status).toBe(200);
     // Phone is contact data, not identity: the same email still logs in.
     expect((await api("/auth/login", { method: "POST", body: JSON.stringify({ email: "pfma@example.com", password: PASS }) })).status).toBe(200);
   });
@@ -280,7 +280,7 @@ describe("PATCH /auth/me logout_other_sessions", () => {
     const jar2 = await loginJar(MERCHANT_B_EMAIL, PASS);
     const first = await api("/auth/me", {
       method: "PATCH",
-      body: JSON.stringify({ email: "pfb-new@example.com", current_password: PASS }),
+      body: JSON.stringify({ email: "pfb-new@example.com", current_password: PASS, logout_other_sessions: true }),
     }, jar1);
     expect(first.status).toBe(200);
     expect(((first.body as MeBody).data.user.email)).toBe("pfb-new@example.com");
@@ -297,6 +297,24 @@ describe("PATCH /auth/me logout_other_sessions", () => {
     expect(second.status).toBe(200);
     expect((await api("/auth/me", {}, jar1)).status).toBe(200);
     expect((await api("/auth/me", {}, jar3)).status).toBe(200);
+  });
+
+  it("email change with omitted flag keeps every session", async () => {
+    const jar1 = await loginJar("pfb-new2@example.com", PASS);
+    const jar2 = await loginJar("pfb-new2@example.com", PASS);
+    const res = await api("/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify({ email: "pfb-new3@example.com", current_password: PASS }),
+    }, jar1);
+    expect(res.status).toBe(200);
+    expect((await api("/auth/me", {}, jar1)).status).toBe(200);
+    expect((await api("/auth/me", {}, jar2)).status).toBe(200);
+    // restore the known address for later tests
+    const back = await api("/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify({ email: "pfb-new2@example.com", current_password: PASS }),
+    }, jar1);
+    expect(back.status).toBe(200);
   });
 
   it("same-value phone/email needs no password and revokes nothing", async () => {

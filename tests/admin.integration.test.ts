@@ -230,7 +230,7 @@ describe("B7 forced rotation", () => {
     expect((await api("/stores", {}, jarBootstrap)).status).toBe(200);
   }, 120_000);
 
-  it("rotation revokes the admin's other sessions", async () => {
+  it("rotation with the flag revokes the admin's other sessions, caller survives", async () => {
     // fresh bootstrap-state admin pair: second login, rotate via first
     const second = await api("/auth/login", {
       method: "POST",
@@ -240,7 +240,7 @@ describe("B7 forced rotation", () => {
     // rotate again through the primary session (needs current password)
     const changed = await api("/auth/change-password", {
       method: "POST",
-      body: JSON.stringify({ current_password: NEW_ADMIN_PASS, new_password: "B7-Rotated-Again-2" }),
+      body: JSON.stringify({ current_password: NEW_ADMIN_PASS, new_password: "B7-Rotated-Again-2", logout_other_sessions: true }),
     }, jarBootstrap);
     expect(changed.status).toBe(200);
     expect((await api("/auth/me", {}, jarSecond)).status).toBe(401);
@@ -249,6 +249,27 @@ describe("B7 forced rotation", () => {
     const restore = await api("/auth/change-password", {
       method: "POST",
       body: JSON.stringify({ current_password: "B7-Rotated-Again-2", new_password: NEW_ADMIN_PASS }),
+    }, jarBootstrap);
+    expect(restore.status).toBe(200);
+  }, 120_000);
+
+  it("change-password defaults to keeping every session", async () => {
+    const second = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: "b7admin@example.com", password: NEW_ADMIN_PASS }),
+    });
+    const jarSecond = cookieOf(second.headers.get("set-cookie"));
+    const changed = await api("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ current_password: NEW_ADMIN_PASS, new_password: "B7-Keep-Alive-3" }),
+    }, jarBootstrap);
+    expect(changed.status).toBe(200);
+    expect((await api("/auth/me", {}, jarSecond)).status).toBe(200);
+    expect((await api("/auth/me", {}, jarBootstrap)).status).toBe(200);
+    // restore known password for later tests
+    const restore = await api("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ current_password: "B7-Keep-Alive-3", new_password: NEW_ADMIN_PASS }),
     }, jarBootstrap);
     expect(restore.status).toBe(200);
   }, 120_000);
