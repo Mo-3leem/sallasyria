@@ -1,0 +1,90 @@
+/* =============================================================
+   SALLA SYRIA — Responsive Extras
+   ============================================================= */
+
+/* Medium tablets */
+@media (max-width: 960px) {
+  .sectors-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .features .tab-panel-inner {
+    grid-template-columns: 1fr;
+  }
+  .tab-visual {
+    display: none;
+  }
+}
+
+/* Small tablets / large phones */
+@media (max-width: 768px) {
+  section {
+    padding: 72px 0;
+  }
+  .hero {
+    padding: 110px 0 72px;
+  }
+  .hero-title {
+    font-size: 2rem;
+  }
+
+  .fashion-inner,
+  .tab-panel-inner {
+    grid-template-columns: 1fr;
+  }
+  .fashion-visual,
+  .tab-visual {
+    display: none;
+  }
+
+  .footer-top {
+    grid-template-columns: 1fr 1fr;
+    gap: 28px;
+  }
+  .footer-brand {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Phones */
+@media (max-width: 560px) {
+  .sectors-grid {
+    grid-template-columns: 1fr;
+  }
+  .hero-stats {
+    flex-direction: column;
+    width: 90%;
+    padding: 20px 28px;
+  }
+  .stat-divider {
+    width: 100%;
+    height: 1px;
+  }
+  .hero-ctas {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .hero-ctas .btn {
+    justify-content: center;
+  }
+  .tabs-nav {
+    flex-direction: column;
+  }
+  .footer-top {
+    grid-template-columns: 1fr;
+  }
+  .cta-banner {
+    padding: 60px 0;
+  }
+}
+
+/* Print */
+@media print {
+  .navbar,
+  .hero-scroll,
+  .cta-banner {
+    display: none;
+  }
+  body {
+    font-size: 12pt;
+  }
+}

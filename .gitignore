@@ -1,4 +1,11 @@
+@"
 node_modules/
 .wrangler/
 .dev.vars
 .dev.vars.*.local
+
+# Next.js
+.next/
+out/
+"@ | Set-Content .gitignore
+*.tsbuildinfo
