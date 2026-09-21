@@ -10,8 +10,11 @@ const MAX_ATTEMPTS = 10;
 
 const hits = new Map<string, number[]>();
 
-export function loginRateLimitKey(c: Context, phone: string): string {
-  return `${clientIp(c)}:${phone}`;
+// Identity-based keys use the NORMALIZED email (see lib/email.ts): without
+// this, Test@Example.com / test@example.com / TEST@EXAMPLE.COM would each
+// get a fresh budget and brute force would walk straight through.
+export function loginRateLimitKey(c: Context, email: string): string {
+  return `${clientIp(c)}:${email}`;
 }
 
 // Generic sliding-window limiter factory for endpoint classes (roadmap B5).
@@ -80,13 +83,13 @@ export function checkLoginRateLimit(key: string, nowMs: number = Date.now()): bo
 
 // Registration limiter: SEPARATE bucket from login (same window/threshold,
 // own keyspace). Sharing one bucket let registration spam for a victim's
-// phone consume that phone's login attempts and 429 the victim out.
+// identity consume that identity's login attempts and 429 the victim out.
 // Key shape mirrors loginRateLimitKey with a static prefix so the two
-// namespaces can never collide even for identical ip+phone pairs.
+// namespaces can never collide even for identical ip+identity pairs.
 const registerHits = new Map<string, number[]>();
 
-export function registerRateLimitKey(c: Context, phone: string): string {
-  return `register:${clientIp(c)}:${phone}`;
+export function registerRateLimitKey(c: Context, email: string): string {
+  return `register:${clientIp(c)}:${email}`;
 }
 
 export function checkRegisterRateLimit(key: string, nowMs: number = Date.now()): boolean {

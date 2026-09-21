@@ -10,7 +10,7 @@
 //   2. GET /ready  -> 200 envelope (proves Worker->D1 path remotely)
 //   3. GET /no-such-route -> 404 envelope (error contract holds remotely)
 //   4. Absence of Access-Control-Allow-Origin: * (fail-closed CORS)
-//   5. Optional authenticated flow when SMOKE_PHONE/SMOKE_PASSWORD are set:
+//   5. Optional authenticated flow when SMOKE_EMAIL/SMOKE_PASSWORD are set:
 //      login -> me -> logout, asserting envelope shapes only.
 // Test purchases are deliberately NOT automated here (they write prod data);
 // the runbook (docs/DEPLOY.md) makes one manual purchase-then-void the
@@ -74,12 +74,12 @@ await check("no wildcard CORS header", async () => {
   assert(r.headers.get("access-control-allow-origin") !== "*", "wildcard ACAO present");
 });
 
-if (process.env.SMOKE_PHONE && process.env.SMOKE_PASSWORD) {
+if (process.env.SMOKE_EMAIL && process.env.SMOKE_PASSWORD) {
   await check("login -> me -> logout envelope flow", async () => {
     const login = await fetch(`${BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone: process.env.SMOKE_PHONE, password: process.env.SMOKE_PASSWORD }),
+      body: JSON.stringify({ email: process.env.SMOKE_EMAIL, password: process.env.SMOKE_PASSWORD }),
     });
     assert(login.status === 200, `login status ${login.status}`);
     const setCookie = login.headers.get("set-cookie") ?? "";
@@ -94,7 +94,7 @@ if (process.env.SMOKE_PHONE && process.env.SMOKE_PASSWORD) {
     assert(dead.status === 401, `post-logout status ${dead.status}`);
   });
 } else {
-  console.log("  SKIP  authenticated flow (SMOKE_PHONE/SMOKE_PASSWORD unset)");
+  console.log("  SKIP  authenticated flow (SMOKE_EMAIL/SMOKE_PASSWORD unset)");
 }
 
 if (failures > 0) {

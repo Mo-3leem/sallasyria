@@ -113,12 +113,12 @@ function cookieOf(setCookie: string | null): string {
   return `ss_session=${(setCookie.split(";")[0] ?? "").split("=").slice(1).join("=")}`;
 }
 
-async function loginCookie(phone: string, password: string) {
+async function loginCookie(email: string, password: string) {
   const res = await api("/auth/login", {
     method: "POST",
-    body: JSON.stringify({ phone, password }),
+    body: JSON.stringify({ email, password }),
   });
-  if (res.status !== 200) throw new Error(`B7 setup login failed for ${phone}: ${res.status}`);
+  if (res.status !== 200) throw new Error(`B7 setup login failed for ${email}: ${res.status}`);
   return { jar: cookieOf(res.headers.get("set-cookie")), body: res.body };
 }
 
@@ -156,9 +156,10 @@ beforeAll(async () => {
     const r = d1(sql);
     if (!r.ok) throw new Error(`B7 seed failed: ${r.error}`);
   }
+  d1(`UPDATE users SET email_verified = 1 WHERE id IN ('user_verify_b7_admin', 'user_verify_b7_admin2', 'user_verify_b7_merchant');`);
   const login = await api("/auth/login", {
     method: "POST",
-    body: JSON.stringify({ phone: BOOTSTRAP_PHONE, password: BOOTSTRAP }),
+    body: JSON.stringify({ email: "b7admin@example.com", password: BOOTSTRAP }),
   });
   if (login.status !== 200) throw new Error(`B7 bootstrap login failed: ${login.status}`);
   jarBootstrap = cookieOf(login.headers.get("set-cookie"));
@@ -212,7 +213,7 @@ describe("B7 forced rotation", () => {
 
     const relogin = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: BOOTSTRAP_PHONE, password: NEW_ADMIN_PASS }),
+      body: JSON.stringify({ email: "b7admin@example.com", password: NEW_ADMIN_PASS }),
     });
     expect(relogin.status).toBe(200);
     expect((relogin.body as { data: { must_rotate?: boolean } }).data.must_rotate).toBe(false);
@@ -221,7 +222,7 @@ describe("B7 forced rotation", () => {
     // old bootstrap credential is dead
     const stale = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: BOOTSTRAP_PHONE, password: BOOTSTRAP }),
+      body: JSON.stringify({ email: "b7admin@example.com", password: BOOTSTRAP }),
     });
     expect(stale.status).toBe(401);
 
@@ -233,7 +234,7 @@ describe("B7 forced rotation", () => {
     // fresh bootstrap-state admin pair: second login, rotate via first
     const second = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: BOOTSTRAP_PHONE, password: NEW_ADMIN_PASS }),
+      body: JSON.stringify({ email: "b7admin@example.com", password: NEW_ADMIN_PASS }),
     });
     const jarSecond = cookieOf(second.headers.get("set-cookie"));
     // rotate again through the primary session (needs current password)
@@ -257,7 +258,7 @@ describe("B7 subscription admin", () => {
   it("merchant cannot touch admin endpoints", async () => {
     const mLogin = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: MERCHANT_PHONE, password: MERCHANT_PASS }),
+      body: JSON.stringify({ email: "b7m@example.com", password: MERCHANT_PASS }),
     });
     const jarM = cookieOf(mLogin.headers.get("set-cookie"));
     expect((await api("/admin/subscriptions", {}, jarM)).status).toBe(403);
@@ -330,11 +331,11 @@ describe("B7 assisted reset", () => {
   it("admin resets merchant password; old sessions die; ghost is 404", async () => {
     const m1 = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: MERCHANT_PHONE, password: MERCHANT_PASS }),
+      body: JSON.stringify({ email: "b7m@example.com", password: MERCHANT_PASS }),
     });
     const m2 = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: MERCHANT_PHONE, password: MERCHANT_PASS }),
+      body: JSON.stringify({ email: "b7m@example.com", password: MERCHANT_PASS }),
     });
     const jarM1 = cookieOf(m1.headers.get("set-cookie"));
     const jarM2 = cookieOf(m2.headers.get("set-cookie"));
@@ -349,12 +350,12 @@ describe("B7 assisted reset", () => {
     expect((await api("/auth/me", {}, jarM2)).status).toBe(401);
     const staleLogin = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: MERCHANT_PHONE, password: MERCHANT_PASS }),
+      body: JSON.stringify({ email: "b7m@example.com", password: MERCHANT_PASS }),
     });
     expect(staleLogin.status).toBe(401);
     const freshLogin = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: MERCHANT_PHONE, password: "B7-Reset-1" }),
+      body: JSON.stringify({ email: "b7m@example.com", password: "B7-Reset-1" }),
     });
     expect(freshLogin.status).toBe(200);
 
@@ -376,7 +377,7 @@ describe("B7 admin boundary: no peer-admin takeover", () => {
   it("resetting another admin is 403 and changes nothing", async () => {
     const a2login = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: ADMIN2_PHONE, password: ADMIN2_PASS }),
+      body: JSON.stringify({ email: "b7admin2@example.com", password: ADMIN2_PASS }),
     });
     expect(a2login.status).toBe(200);
     const jarA2 = cookieOf(a2login.headers.get("set-cookie"));
@@ -394,13 +395,13 @@ describe("B7 admin boundary: no peer-admin takeover", () => {
     // Blocked admin untouched: old password still works, session still valid.
     const stillIn = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: ADMIN2_PHONE, password: ADMIN2_PASS }),
+      body: JSON.stringify({ email: "b7admin2@example.com", password: ADMIN2_PASS }),
     });
     expect(stillIn.status).toBe(200);
     expect((await api("/auth/me", {}, jarA2)).status).toBe(200);
     const hijack = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: ADMIN2_PHONE, password: "B7-Takeover-1" }),
+      body: JSON.stringify({ email: "b7admin2@example.com", password: "B7-Takeover-1" }),
     });
     expect(hijack.status).toBe(401);
   }, 120_000);
@@ -414,7 +415,7 @@ describe("B7 admin boundary: no peer-admin takeover", () => {
     expect((await api("/auth/me", {}, jarBootstrap)).status).toBe(401);
     const relogin = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: BOOTSTRAP_PHONE, password: "B7-Self-Reset-1" }),
+      body: JSON.stringify({ email: "b7admin@example.com", password: "B7-Self-Reset-1" }),
     });
     expect(relogin.status).toBe(200);
     jarBootstrap = cookieOf(relogin.headers.get("set-cookie"));
@@ -464,7 +465,7 @@ describe("B7 seed determinism", () => {
     // hash-compat proof: the seeded admin hash verifies through real login
     const login = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: "+963990000001", password: "B7-Seed-Pw-1" }),
+      body: JSON.stringify({ email: "admin@sallasyria.local", password: "B7-Seed-Pw-1" }),
     });
     expect(login.status).toBe(200);
   }, 180_000);

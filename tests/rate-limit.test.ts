@@ -45,11 +45,11 @@ describe("login rate limiting", () => {
       ({ req: { header: (n: string) => (n === "cf-connecting-ip" ? ip : null) } }) as Parameters<
         typeof registerRateLimitKey
       >[0];
-    const phone = `+9639000099${String(stamp).slice(-2)}`;
-    const regKey = registerRateLimitKey(fakeCtx("10.9.9.9"), phone);
-    const loginKey = loginRateLimitKey(fakeCtx("10.9.9.9"), phone);
+    const email = `rl-${String(stamp).slice(-6)}@example.com`;
+    const regKey = registerRateLimitKey(fakeCtx("10.9.9.9"), email);
+    const loginKey = loginRateLimitKey(fakeCtx("10.9.9.9"), email);
     expect(regKey).not.toBe(loginKey);
-    // Exhaust registration: login for the same ip+phone stays allowed.
+    // Exhaust registration: login for the same ip+email stays allowed.
     for (let i = 0; i < LOGIN_RATE_LIMIT.maxAttempts; i++) {
       expect(checkRegisterRateLimit(regKey, 3_000_000)).toBe(true);
     }

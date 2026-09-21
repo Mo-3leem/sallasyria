@@ -426,7 +426,7 @@
     </p>
     <h1>Salla Syria &mdash; MVP Database Structure</h1>
     <p class="standfirst">
-      A deliberately lightweight twelve-table design for a multi-tenant
+      A deliberately lightweight fifteen-table design for a multi-tenant
       e-commerce platform: one shared database serving many independent Syrian
       online stores.
     </p>
@@ -449,7 +449,7 @@
       </div>
       <div class="fact">
         <dt>MVP Tables</dt>
-        <dd class="count">12</dd>
+        <dd class="count">15</dd>
       </div>
     </dl>
   </header>
@@ -461,11 +461,11 @@
     </div>
     <p>
       Salla Syria is a multi-tenant e-commerce SaaS platform. Merchants sign up,
-      create their own online store, and sell to their own customers &mdash; all
+      create their own online stores, and sell to their own customers &mdash; all
       running on one shared system.
     </p>
     <p>
-      The platform uses <strong>a single shared SQLite database</strong>. Every
+      The platform uses <strong>a single shared Cloudflare D1 database</strong> (SQLite-compatible). Every
       store&rsquo;s data is kept separate by a store identifier (<span
         class="mono-inline"
         >store_id</span
@@ -493,7 +493,9 @@
             <code>users</code
             ><span
               >Platform accounts for store owners and platform administrators
-              &mdash; name, phone for sign-in, optional email, role, and active
+              &mdash; name, required unique phone as contact identity, email as
+              the login identity (required and normalized at the app layer),
+              an email-verified flag that login requires, role, and active
               status.</span
             >
           </div>
@@ -519,6 +521,36 @@
               end date, cancellation date, and payment reference. Earlier
               periods are kept as history, and only one subscription per store
               may be active at a time.</span
+            >
+          </div>
+        </div>
+      </div>
+      <div class="group">
+        <h3>Authentication &amp; Idempotency</h3>
+        <div class="entities">
+          <div class="entity">
+            <code>sessions</code
+            ><span
+              >Server-side login sessions &mdash; one row per opaque token
+              (SHA-256 hash only, never the raw token), with expiry,
+              revocation and idle-timeout timestamps. User-scoped, never
+              store-scoped.</span
+            >
+          </div>
+          <div class="entity">
+            <code>email_tokens</code
+            ><span
+              >Single-use email tokens for verification and password reset
+              &mdash; hashed, expiring, consumed atomically so concurrent
+              redemptions collapse to one winner.</span
+            >
+          </div>
+          <div class="entity">
+            <code>idempotency_keys</code
+            ><span
+              >Exactly-once checkout claims &mdash; primary key
+              (store_id, key), so key strings are independent per store; each
+              claim carries its order and a hash of the request body.</span
             >
           </div>
         </div>
@@ -648,17 +680,22 @@ erDiagram
     CUSTOMERS ||--o{ CUSTOMER_ADDRESSES : has
     CUSTOMERS ||--o{ ORDERS : places
     ORDERS ||--|{ ORDER_ITEMS : contains
+    USERS ||--o{ SESSIONS : "authenticates with"
+    USERS ||--o{ EMAIL_TOKENS : "verifies with"
+    STORES ||--o{ IDEMPOTENCY_KEYS : has
+    ORDERS ||--o{ IDEMPOTENCY_KEYS : "claimed by"
 
     USERS {
         TEXT id PK "UUIDv7 / ULID"
-        TEXT phone UK "NOT NULL"
-        TEXT email UK "nullable"
+        TEXT phone UK "NOT NULL - contact identity, never used for login"
+        TEXT email UK "nullable in DDL, required by app; login identity, normalized trim+lowercase"
         TEXT name "NOT NULL"
         TEXT password_hash "NOT NULL"
         TEXT role "NOT NULL DEFAULT 'merchant' CHECK(role IN ('merchant', 'admin'))"
         INTEGER is_active "NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1))"
         TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
         TEXT updated_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+        INTEGER email_verified "NOT NULL DEFAULT 0 CHECK(email_verified IN (0, 1)) - added by migration 0008, login requires 1"
     }
 
     STORES {
@@ -702,7 +739,7 @@ erDiagram
     CATEGORIES {
         TEXT id PK "UUIDv7 / ULID - UNIQUE(store_id, id) supporting key for composite child FKs"
         TEXT store_id FK "REFERENCES stores(id) ON DELETE CASCADE ON UPDATE CASCADE"
-        TEXT parent_id FK "nullable REFERENCES categories(store_id, id), same store, ON DELETE SET NULL"
+        TEXT parent_id FK "nullable REFERENCES categories(store_id, id), same store, ON DELETE RESTRICT - app detaches first"
         TEXT name "NOT NULL"
         TEXT slug "NOT NULL - UNIQUE(store_id, slug)"
         INTEGER sort_order "NOT NULL DEFAULT 0"
@@ -714,9 +751,9 @@ erDiagram
     PRODUCTS {
         TEXT id PK "UUIDv7 / ULID - UNIQUE(store_id, id) supporting key for composite child FKs"
         TEXT store_id FK "REFERENCES stores(id) ON DELETE CASCADE ON UPDATE CASCADE"
-        TEXT category_id FK "nullable REFERENCES categories(store_id, id), same store, ON DELETE SET NULL"
+        TEXT category_id FK "nullable REFERENCES categories(store_id, id), same store, ON DELETE RESTRICT - app re-categorises first"
         TEXT name "NOT NULL"
-        TEXT slug "NOT NULL - UNIQUE(store_id, slug) WHERE deleted_at IS NULL"
+        TEXT slug "NOT NULL - UNIQUE(store_id, slug) WHERE deleted_at IS NULL, retired slugs reusable"
         INTEGER price "NOT NULL CHECK(price >= 0)"
         INTEGER stock_quantity "nullable = untracked CHECK(stock_quantity >= 0)"
         INTEGER is_active "NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1))"
@@ -799,12 +836,43 @@ erDiagram
         TEXT id PK "UUIDv7 / ULID"
         TEXT store_id FK "REFERENCES stores(id) ON DELETE RESTRICT ON UPDATE CASCADE"
         TEXT order_id FK "REFERENCES orders(store_id, id), same store, ON DELETE CASCADE"
-        TEXT product_id FK "nullable REFERENCES products(store_id, id), same store, ON DELETE SET NULL"
+        TEXT product_id FK "nullable REFERENCES products(store_id, id), same store, ON DELETE RESTRICT - products soft-delete instead"
         INTEGER quantity "NOT NULL DEFAULT 1 CHECK(quantity > 0)"
         TEXT product_name "snapshot NOT NULL"
         TEXT selected_options "snapshot nullable"
         INTEGER unit_price "snapshot NOT NULL CHECK(unit_price >= 0)"
         INTEGER line_total "snapshot NOT NULL CHECK(line_total >= 0)"
+        TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+        TEXT updated_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+    }
+
+    SESSIONS {
+        TEXT id PK "UUIDv7 / ULID"
+        TEXT user_id FK "REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE - user-scoped, never store-scoped"
+        TEXT token_hash UK "NOT NULL, SHA-256 hex - never the raw token"
+        TEXT expires_at "NOT NULL"
+        TEXT revoked_at "nullable - set on logout, row kept for audit"
+        TEXT last_used_at "nullable - idle timeout, bumped at most every N minutes by app"
+        TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+        TEXT updated_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+    }
+
+    IDEMPOTENCY_KEYS {
+        TEXT key "NOT NULL - PRIMARY KEY (store_id, key) since migration 0007, per-store key scope"
+        TEXT store_id FK "REFERENCES stores(id) ON DELETE CASCADE ON UPDATE CASCADE"
+        TEXT order_id FK "nullable REFERENCES orders(store_id, id), same store, ON DELETE CASCADE"
+        TEXT request_hash "NOT NULL - SHA-256 of canonical request body"
+        TEXT status "NOT NULL DEFAULT 'completed'"
+        TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+    }
+
+    EMAIL_TOKENS {
+        TEXT id PK "UUIDv7 / ULID"
+        TEXT user_id FK "REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE"
+        TEXT purpose "NOT NULL CHECK(purpose IN ('verify', 'reset'))"
+        TEXT token_hash UK "NOT NULL, SHA-256 hex - never the raw token"
+        TEXT expires_at "NOT NULL"
+        TEXT used_at "nullable - single-use marker, NULL means live"
         TEXT created_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
         TEXT updated_at "NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
     }
@@ -821,9 +889,8 @@ erDiagram
       composite FOREIGN KEY (store_id, ref_id) REFERENCES parent(store_id, id)
       backed by a UNIQUE(store_id, id) key on the parent, so a child row can
       never reference a parent belonging to a different store
-      &nbsp;&middot;&nbsp; every connection must issue PRAGMA foreign_keys = ON
-      at open, otherwise all ON DELETE / ON UPDATE behaviour is silently a
-      no-op
+      &nbsp;&middot;&nbsp; D1 enforces foreign keys natively with no
+      per-connection PRAGMA
     </p>
     <p class="footnote">
       <b>Enforcement DDL.</b> GOVERNORATES = ('Damascus','Rif Dimashq','Aleppo',
@@ -839,7 +906,11 @@ erDiagram
       customer_addresses(customer_id) WHERE is_default = 1.
       subscriptions.cancelled_at carries CHECK((status = 'cancelled' AND
       cancelled_at IS NOT NULL) OR (status != 'cancelled' AND cancelled_at IS
-      NULL)).
+      NULL)). Token hashes are globally unique: CREATE UNIQUE INDEX
+      uq_sessions_token_hash ON sessions(token_hash); CREATE UNIQUE INDEX
+      uq_email_tokens_hash ON email_tokens(token_hash). Checkout idempotency
+      keys are scoped per store by PRIMARY KEY (store_id, key) since migration
+      0007, so the same key string in two stores never collides.
     </p>
     <p class="footnote">
       <b>Required indexes.</b> SQLite does not auto-index foreign key columns,
@@ -850,28 +921,37 @@ erDiagram
       deleted_at), product_images(store_id, product_id, sort_order),
       customer_addresses(store_id, customer_id), orders(store_id, customer_id),
       orders(store_id, status), orders(store_id, created_at),
-      order_items(store_id, order_id).
+      order_items(store_id, order_id), sessions(user_id),
+      idempotency_keys(store_id, created_at),
+      email_tokens(user_id, purpose).
     </p>
     <p class="footnote">
-      <b>Checkout Transaction Contract.</b> Rules for the Hono checkout handler:
-      (1) increment the counter, insert the order and insert all order items
-      inside one single BEGIN IMMEDIATE transaction, so a later failure rolls
-      the counter back and numbers are never skipped; (2) upsert the customer
+      <b>Checkout Transaction Contract (D1).</b> Rules for the Hono checkout handler:
+      (1) stock decrements, counter increment (UPDATE stores SET order_counter
+      = order_counter + 1 WHERE id = ? RETURNING order_counter), customer
+      upsert, order insert, all order-item inserts and the idempotency-key
+      claim go in ONE single env.DB.batch() call &mdash; D1 executes the batch
+      in one implicit transaction, so a later failure rolls back every
+      statement including the counter bump and order numbers are never
+      skipped; (2) upsert the customer
       with INSERT ... ON CONFLICT(store_id, phone) DO UPDATE rather than
       check-then-insert, so a concurrent double-submit resolves atomically
       instead of surfacing a constraint error to the buyer; (3) compute every
       order_items.line_total as quantity * unit_price and orders.total as
       subtotal - discount + shipping_cost in the same transaction, since the
       database cannot check totals across the orders/order_items boundary.
+      (4) No BEGIN IMMEDIATE, no PRAGMA busy_timeout and no SQLITE_BUSY retry
+      loop anywhere in this contract — env.DB.batch() is D1's own
+      transactional primitive and supersedes that part of the original
+      document entirely on D1.
     </p>
     <p class="footnote">
-      <b>Connection Contract.</b> All database access goes through a single
-      connection factory that runs <code>PRAGMA foreign_keys = ON</code> and
-      <code>PRAGMA busy_timeout = 5000</code> synchronously before returning
-      any connection — never per call-site. A startup check asserts
-      <code>PRAGMA foreign_keys;</code> returns 1, and the checkout transaction
-      retries up to 3 times on <code>SQLITE_BUSY</code> so concurrent checkouts
-      on one shared file queue instead of failing.
+      <b>Connection Contract (D1).</b> D1 enforces foreign keys natively — no
+      PRAGMA foreign_keys statement is used or needed. All ids are TEXT,
+      generated in application code as UUIDv7/ULID; the database never
+      generates ids. updated_at is application-managed by the Hono layer (no
+      AFTER UPDATE triggers on D1); created_at and the initial updated_at
+      value still default via strftime('%Y-%m-%dT%H:%M:%SZ','now') on INSERT.
     </p>
   </section>
 
@@ -901,8 +981,10 @@ erDiagram
       <div class="rel">
         <code>Category &rarr; Products</code
         ><span
-          >A product may sit in one category, or none. Removing a category
-          leaves its products uncategorised.</span
+          >A product may sit in one category, or none. A category with
+          products or child categories cannot be removed until the
+          application re-assigns them first; deleting a category never
+          nulls anything out.</span
         >
       </div>
       <div class="rel">
@@ -980,6 +1062,29 @@ erDiagram
         ><span
           >Each subscription is based on one of the platform&rsquo;s plans. A
           plan in use cannot be removed.</span
+        >
+      </div>
+      <div class="rel">
+        <code>User &rarr; Sessions</code
+        ><span
+          >Each login mints one session row holding only the token hash;
+          logout revokes, expiry and idle timeout are enforced by application
+          queries. Removing a user removes their sessions.</span
+        >
+      </div>
+      <div class="rel">
+        <code>User &rarr; Email tokens</code
+        ><span
+          >Verification and password-reset tokens belong to one user and are
+          consumed exactly once; removing a user removes their tokens.</span
+        >
+      </div>
+      <div class="rel">
+        <code>Store &amp; Order &rarr; Idempotency Keys</code
+        ><span
+          >Each checkout claims one key per store; replaying the same key with
+          the same body returns the stored order instead of creating a new
+          one.</span
         >
       </div>
     </div>
@@ -1064,9 +1169,29 @@ erDiagram
         </p>
       </div>
       <div class="decision">
+        <h4>Idempotency</h4>
+        <p>
+          Each checkout claims its idempotency key inside the same batch as
+          the order, keyed per store by PRIMARY KEY (store_id, key) &mdash;
+          the same key string in two stores never collides, and replaying the
+          same key with the same body returns the stored order instead of
+          charging twice.
+        </p>
+      </div>
+      <div class="decision">
+        <h4>Email verification</h4>
+        <p>
+          Email is the login identity and login requires a verified address
+          (403 until verified). Verification and password-reset tokens are
+          stored hashed, expire, and are consumed atomically so concurrent
+          redemptions collapse to one winner; email delivery itself never
+          fails a business operation.
+        </p>
+      </div>
+      <div class="decision">
         <h4>Lightweight MVP</h4>
         <p>
-          The design is limited to the twelve tables needed for the core selling
+          The design is limited to the fifteen tables needed for the core selling
           flow, keeping the first release small, quick to build, and
           straightforward to extend later.
         </p>
@@ -1099,20 +1224,18 @@ erDiagram
       <li>
         <b>Timestamps</b
         ><span
-          >Every table records a creation and an update timestamp, always in
-          UTC. SQLite defaults fire on INSERT only, so every table also needs
-          an AFTER UPDATE trigger refreshing updated_at, e.g. CREATE TRIGGER
-          trg_products_updated_at AFTER UPDATE ON products BEGIN UPDATE
-          products SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE
-          id = NEW.id; END;</span
+          >Every table records a creation timestamp, always in UTC, defaulting
+          via strftime on INSERT; every table except idempotency_keys also
+          records an update timestamp. SQLite defaults fire on INSERT only,
+          and there are no AFTER UPDATE triggers on D1 &mdash; updated_at is
+          written by the application on every update instead.</span
         >
       </li>
       <li>
-        <b>Foreign key pragma</b
+        <b>Foreign keys</b
         ><span
-          >Every connection must issue PRAGMA foreign_keys = ON at open. It is
-          per-connection, not per-database &mdash; without it none of the
-          stated delete/update behaviour is enforced.</span
+          >D1 enforces foreign keys natively with no per-connection PRAGMA;
+          every relationship states explicit delete and update behaviour.</span
         >
       </li>
       <li>
@@ -1181,7 +1304,7 @@ erDiagram
       <h2>MVP Scope</h2>
     </div>
     <div class="scope-col">
-      <h3>The approved structure &mdash; 12 tables</h3>
+      <h3>The approved structure &mdash; 15 tables</h3>
       <div class="taglist">
         <span class="tag">users</span><span class="tag">stores</span
         ><span class="tag">plans</span><span class="tag">subscriptions</span>
@@ -1190,10 +1313,12 @@ erDiagram
         ><span class="tag">customers</span>
         <span class="tag">customer_addresses</span
         ><span class="tag">shipping_rates</span><span class="tag">orders</span
-        ><span class="tag">order_items</span>
+        ><span class="tag">order_items</span><span class="tag">sessions</span
+        ><span class="tag">idempotency_keys</span
+        ><span class="tag">email_tokens</span>
       </div>
       <p class="scope-note">
-        The complete approved scope &mdash; nothing beyond these twelve tables
+        The complete approved scope &mdash; nothing beyond these fifteen tables
         is built for the first release.
       </p>
     </div>
@@ -1201,7 +1326,7 @@ erDiagram
 
   <footer class="status">
     <span class="label">Database Status</span>
-    <span class="badge">READY FOR IMPLEMENTATION</span>
+    <span class="badge">IMPLEMENTED &middot; CLOUDFLARE D1</span>
   </footer>
 </div>
 

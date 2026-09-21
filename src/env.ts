@@ -14,6 +14,14 @@ export interface Env {
   // Cloudflare Turnstile secret for public-mutation bot defense (B5).
   // Absent in development (documented bypass); required elsewhere.
   TURNSTILE_SECRET?: string;
+  // SendGrid transactional email (verification, password reset, order
+  // notifications). Absent = mail paths log-and-skip (emails never fail
+  // business operations); required only where real delivery is wanted.
+  // MAIL_FROM must be a verified sender. APP_URL builds email links and
+  // must never be hardcoded per-environment in source.
+  SENDGRID_API_KEY?: string;
+  MAIL_FROM?: string;
+  APP_URL?: string;
   // Bootstrap admin password (B7 seed only). While set, admin requests pay
   // one extra password check for rotation enforcement; unset it after every
   // admin has rotated (the value is a live credential until then).
@@ -54,4 +62,11 @@ export type AppEnv = {
 // must use fail()/AppError instead (see src/http/).
 export function appConfig(env: Env): { environment: string } {
   return { environment: env.ENVIRONMENT ?? "development" };
+}
+
+// Base URL used to build email links (verification, password reset). Never
+// hardcoded per-environment in source: local default is wrangler's default
+// dev origin, production comes from the APP_URL binding.
+export function appUrl(env: Env): string {
+  return env.APP_URL ?? "http://localhost:8787";
 }

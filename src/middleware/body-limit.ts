@@ -32,9 +32,14 @@ export function bodyLimitMw() {
   const uploadLimit = bodyLimit({
     maxSize: UPLOAD_LIMIT_MAX_SIZE,
     onError: () => {
-      throw new AppError("body_too_large", 413, "Image exceeds the size limit.");
+      throw new AppError(
+        "body_too_large",
+        413,
+        "Image exceeds the size limit.",
+      );
     },
   });
+
   return async function bodyLimitDispatch(c: Context<AppEnv>, next: Next) {
     if (c.req.path.endsWith(UPLOAD_PATH_SUFFIX)) {
       return uploadLimit(c, next);

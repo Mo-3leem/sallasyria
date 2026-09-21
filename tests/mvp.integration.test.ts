@@ -19,6 +19,8 @@ const isWindows = process.platform === "win32";
 
 const PHONE_A = "+963900001101";
 const PHONE_B = "+963900001102";
+const EMAIL_A = "mvpa@example.com";
+const EMAIL_B = "mvpb@example.com";
 const ADMIN_PHONE = "+963900001103";
 const PASS = "Mvp-Strong-1";
 const ADMIN_PASS = "Mvp-Admin-1";
@@ -50,9 +52,9 @@ function mvpCleanupDeletes(): void {
   // Own namespace only (uuid ids never match the shared clean-verify
   // prefixes, so this suite owns its residue). Child-first for RESTRICT FKs:
   // sessions -> stores -> users.
-  d1(`DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE phone IN ('${PHONE_A}', '${PHONE_B}') OR id = 'user_verify_mvp_admin');`);
+  d1(`DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE phone IN ('${PHONE_A}', '${PHONE_B}') OR email = 'em-new@example.com' OR id = 'user_verify_mvp_admin');`);
   d1(`DELETE FROM stores WHERE slug LIKE 'mvp-%';`);
-  d1(`DELETE FROM users WHERE id = 'user_verify_mvp_admin' OR phone IN ('${PHONE_A}', '${PHONE_B}');`);
+  d1(`DELETE FROM users WHERE id = 'user_verify_mvp_admin' OR phone IN ('${PHONE_A}', '${PHONE_B}') OR email = 'em-new@example.com';`);
 }
 
 function d1FirstValue(sql: string): unknown {
@@ -143,17 +145,18 @@ beforeAll(async () => {
     `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_mvp_admin', '${ADMIN_PHONE}', 'mvpadmin@example.com', 'MVP Admin', '${h}', 'admin');`
   );
   if (!r.ok) throw new Error(`MVP admin seed failed: ${r.error}`);
+  d1(`UPDATE users SET email_verified = 1 WHERE id = 'user_verify_mvp_admin';`);
 
-  async function loginCookie(phone: string, password: string): Promise<string> {
+  async function loginCookie(email: string, password: string): Promise<string> {
     const res = await fetch(`${BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone, password }),
+      body: JSON.stringify({ email, password }),
     });
-    if (res.status !== 200) throw new Error(`MVP login failed for ${phone}: ${res.status}`);
+    if (res.status !== 200) throw new Error(`MVP login failed for ${email}: ${res.status}`);
     return cookieOf(res.headers.get("set-cookie"));
   }
-  jarAdmin = await loginCookie(ADMIN_PHONE, ADMIN_PASS);
+  jarAdmin = await loginCookie("mvpadmin@example.com", ADMIN_PASS);
 }, 180_000);
 
 afterAll(async () => {
@@ -166,12 +169,13 @@ describe("POST /auth/register", () => {
   it("creates a merchant (role forced, hash never exposed)", async () => {
     const res = await api("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ phone: PHONE_A, password: PASS, name: "MVP Merchant A" }),
+      body: JSON.stringify({ email: EMAIL_A, phone: PHONE_A, password: PASS, name: "MVP Merchant A" }),
     });
     expect(res.status).toBe(201);
     const user = (res.body as { data: { user: Record<string, unknown> } }).data.user;
     expect(user.role).toBe("merchant");
     expect(user.phone).toBe(PHONE_A);
+    expect(user.email).toBe(EMAIL_A);
     expect(user).not.toHaveProperty("password_hash");
     expect(user).not.toHaveProperty("password");
     // Stored as scrypt hash, never plaintext (server-side proof via SQL).
@@ -186,7 +190,7 @@ describe("POST /auth/register", () => {
   it("rejects duplicate phone with 409", async () => {
     const res = await api("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ phone: PHONE_A, password: PASS, name: "Clone" }),
+      body: JSON.stringify({ email: "clone-phone@example.com", phone: PHONE_A, password: PASS, name: "Clone" }),
     });
     expect(res.status).toBe(409);
     expect(res.body).toEqual({
@@ -195,10 +199,22 @@ describe("POST /auth/register", () => {
     });
   });
 
+  it("rejects duplicate email with 409", async () => {
+    const res = await api("/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ email: EMAIL_A, phone: "+963900001199", password: PASS, name: "Clone" }),
+    });
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({
+      ok: false,
+      error: { code: "email_taken", message: "Email address is already registered." },
+    });
+  });
+
   it("refuses role smuggling with 400 and creates no admin", async () => {
     const res = await api("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ phone: PHONE_B, password: PASS, name: "Sneaky", role: "admin" }),
+      body: JSON.stringify({ email: "sneaky@example.com", phone: PHONE_B, password: PASS, name: "Sneaky", role: "admin" }),
     });
     expect(res.status).toBe(400);
     expect(res.body).toEqual({
@@ -223,13 +239,17 @@ describe("POST /auth/register", () => {
   it("registers merchant B and both merchants log in", async () => {
     const reg = await api("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ phone: PHONE_B, password: PASS, name: "MVP Merchant B" }),
+      body: JSON.stringify({ email: EMAIL_B, phone: PHONE_B, password: PASS, name: "MVP Merchant B" }),
     });
     expect(reg.status).toBe(201);
-    for (const [phone, set] of [[PHONE_A, (j: string) => { jarA = j; }], [PHONE_B, (j: string) => { jarB = j; }]] as const) {
+    // Raw verification tokens never leave the server; the suite verifies the
+    // gate with dedicated tests and marks these fixture accounts verified
+    // directly (mirrors a user clicking the emailed link).
+    d1(`UPDATE users SET email_verified = 1 WHERE phone IN ('${PHONE_A}', '${PHONE_B}');`);
+    for (const [email, set] of [[EMAIL_A, (j: string) => { jarA = j; }], [EMAIL_B, (j: string) => { jarB = j; }]] as const) {
       const login = await api("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ phone, password: PASS }),
+        body: JSON.stringify({ email, password: PASS }),
       });
       expect(login.status).toBe(200);
       set(cookieOf(login.setCookie));

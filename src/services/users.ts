@@ -14,6 +14,7 @@ export interface UserPublic {
   email: string | null;
   name: string;
   role: string;
+  email_verified: number;
 }
 
 export interface MerchantRegistration {
@@ -45,6 +46,27 @@ export async function phoneTaken(db: D1Database, phone: string): Promise<boolean
   return row !== null;
 }
 
+// Email-identity lookups for email-based authentication. Callers pass the
+// already-normalized address; uniqueness races fall back to the partial
+// UNIQUE index exactly like the phone path below.
+export async function emailTaken(db: D1Database, email: string): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT 1 AS ok FROM users WHERE email = ?")
+    .bind(email)
+    .first<{ ok: number }>();
+  return row !== null;
+}
+
+export async function getUserByEmail(
+  db: D1Database,
+  email: string
+): Promise<{ id: string; name: string; email: string | null } | null> {
+  return db
+    .prepare("SELECT id, name, email FROM users WHERE email = ?")
+    .bind(email)
+    .first<{ id: string; name: string; email: string | null }>();
+}
+
 async function phoneTakenByOther(db: D1Database, phone: string, selfId: string): Promise<boolean> {
   const row = await db
     .prepare("SELECT 1 AS ok FROM users WHERE phone = ? AND id != ?")
@@ -63,7 +85,7 @@ async function emailTakenByOther(db: D1Database, email: string, selfId: string):
 
 export async function getUserPublic(db: D1Database, id: string): Promise<UserPublic | null> {
   return db
-    .prepare("SELECT id, phone, email, name, role FROM users WHERE id = ?")
+    .prepare("SELECT id, phone, email, name, role, email_verified FROM users WHERE id = ?")
     .bind(id)
     .first<UserPublic>();
 }
@@ -117,9 +139,9 @@ export async function updateUserProfile(
 
 // Self-service merchant registration (MVP): role is HARDCODED to
 // 'merchant' — callers pass no role, so no request path can mint an admin.
-// The uq_users_phone UNIQUE is the race backstop behind the phoneTaken
-// pre-check; a residual clash maps to the same client-safe 409 (pattern
-// mirrors mapCatalogError in services/catalog.ts).
+// The phone/email UNIQUE indexes stay the race backstop behind the pre-checks
+// (column parsed from the constraint text so an email race maps to the right
+// 409 instead of phone_taken).
 export async function createMerchant(
   db: D1Database,
   input: MerchantRegistration,
@@ -135,13 +157,16 @@ export async function createMerchant(
       .run();
   } catch (err) {
     const text = err instanceof Error ? err.message : String(err);
+    if (/UNIQUE constraint failed: users\.email/i.test(text)) {
+      throw new AppError("email_taken", 409, "Email address is already registered.");
+    }
     if (/UNIQUE constraint failed/i.test(text)) {
       throw new AppError("phone_taken", 409, "Phone number is already registered.");
     }
     throw err;
   }
   const row = await db
-    .prepare("SELECT id, phone, email, name, role FROM users WHERE id = ?")
+    .prepare("SELECT id, phone, email, name, role, email_verified FROM users WHERE id = ?")
     .bind(id)
     .first<UserPublic>();
   if (!row) throw new AppError("internal", 500, "Something went wrong.");

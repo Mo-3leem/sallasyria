@@ -111,19 +111,20 @@ beforeAll(async () => {
     const r = d1(sql);
     if (!r.ok) throw new Error(`B3 seed failed: ${r.error}`);
   }
+  d1(`UPDATE users SET email_verified = 1 WHERE id IN ('user_verify_b3_a', 'user_verify_b3_b', 'user_verify_b3_admin');`);
 
-  async function loginCookie(phone: string): Promise<string> {
+  async function loginCookie(email: string): Promise<string> {
     const res = await fetch(`${BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone, password: PASS }),
+      body: JSON.stringify({ email, password: PASS }),
     });
-    if (res.status !== 200) throw new Error(`B3 setup login failed for ${phone}: ${res.status}`);
+    if (res.status !== 200) throw new Error(`B3 setup login failed for ${email}: ${res.status}`);
     return cookieOf(res.headers.get("set-cookie"));
   }
-  jarA = await loginCookie(OWNER_A);
-  jarB = await loginCookie(OWNER_B);
-  jarAdmin = await loginCookie(ADMIN);
+  jarA = await loginCookie("b3a@example.com");
+  jarB = await loginCookie("b3b@example.com");
+  jarAdmin = await loginCookie("b3admin@example.com");
 }, 180_000);
 
 afterAll(async () => {

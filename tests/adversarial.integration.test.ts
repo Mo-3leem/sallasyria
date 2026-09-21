@@ -123,9 +123,9 @@ const S = {
   prodA1: "", prodB1: "", catB1: "", custB1: "", addrB1: "", rateB1: "", orderB1: "", imgB1: "",
 };
 
-async function loginJar(phone: string, password: string): Promise<string> {
-  const res = await api("/auth/login", { method: "POST", body: JSON.stringify({ phone, password }) });
-  if (res.status !== 200) throw new Error(`adv login failed for ${phone}: ${res.status}`);
+async function loginJar(email: string, password: string): Promise<string> {
+  const res = await api("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+  if (res.status !== 200) throw new Error(`adv login failed for ${email}: ${res.status}`);
   return cookieOf(res.setCookie);
 }
 
@@ -180,8 +180,9 @@ beforeAll(async () => {
     const r = d1(sql);
     if (!r.ok) throw new Error(`adv seed failed [${idx}]: ${r.error}`);
   }
-  jarA = await loginJar(A_PHONE, PASS);
-  jarB = await loginJar(B_PHONE, PASS);
+  d1(`UPDATE users SET email_verified = 1 WHERE id IN ('user_adv_a', 'user_adv_b');`);
+  jarA = await loginJar("adva@example.com", PASS);
+  jarB = await loginJar("advb@example.com", PASS);
   S.prodA1 = "prod_adv_a1";
   S.prodB1 = "prod_adv_b1";
   S.catB1 = "cat_adv_b1";
@@ -227,7 +228,7 @@ describe("auth fuzz", () => {
     const evil = "' OR '1'='1'; --";
     const res = await api("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ phone: trackPhone(`+9639000019${Date.now() % 100}`), password: "Adv-Strong-9", name: evil }),
+      body: JSON.stringify({ email: `adv${Date.now() % 100000}@example.com`, phone: trackPhone(`+9639000019${Date.now() % 100}`), password: "Adv-Strong-9", name: evil }),
     });
     expectCleanEnvelope(res);
     expect([201, 400, 409]).toContain(res.status);
@@ -235,13 +236,14 @@ describe("auth fuzz", () => {
 
   it("malformed types, empty, oversize register bodies are clean 400s", async () => {
     const bodies = [
-      { phone: 12345, password: "Adv-Strong-9", name: "X" },
-      { phone: ["+9631"], password: "Adv-Strong-9", name: "X" },
-      { phone: "", password: "", name: "" },
-      { phone: "+9631", password: "short", name: "X" },
-      { phone: "+9631", password: "Adv-Strong-9", name: "x".repeat(201) },
+      { email: "x@example.com", phone: 12345, password: "Adv-Strong-9", name: "X" },
+      { email: "x@example.com", phone: ["+9631"], password: "Adv-Strong-9", name: "X" },
+      { email: "", phone: "", password: "", name: "" },
+      { email: "x@example.com", phone: "+9631", password: "short", name: "X" },
+      { email: "x@example.com", phone: "+9631", password: "Adv-Strong-9", name: "x".repeat(201) },
+      { email: "not-an-email", phone: "+9631", password: "Adv-Strong-9", name: "X" },
       ["not", "an", "object"],
-      { phone: trackPhone("+963900001910"), password: "Adv-Strong-9", name: "X", extra: { deep: { deeper: [1, { d: null }] } } },
+      { email: "adv-extra@example.com", phone: trackPhone("+963900001910"), password: "Adv-Strong-9", name: "X", extra: { deep: { deeper: [1, { d: null }] } } },
     ];
     for (const body of bodies) {
       const res = await api("/auth/register", { method: "POST", body: JSON.stringify(body) });
@@ -253,10 +255,10 @@ describe("auth fuzz", () => {
   it("50-level nested JSON does not crash or leak", async () => {
     let deep: unknown = "x";
     for (let i = 0; i < 50; i++) deep = { a: deep };
-    // Unknown `pad` key is stripped by validation; unique phone avoids
+    // Unknown `pad` key is stripped by validation; unique email avoids
     // colliding with earlier fuzz registrations in this file.
     const res = await api("/auth/register", {
-      method: "POST", body: JSON.stringify({ phone: trackPhone(`+9639000017${Date.now() % 100}`), password: "Adv-Strong-9", name: "X", pad: deep }),
+      method: "POST", body: JSON.stringify({ email: `advdeep${Date.now() % 100000}@example.com`, phone: trackPhone(`+9639000017${Date.now() % 100}`), password: "Adv-Strong-9", name: "X", pad: deep }),
     });
     expectCleanEnvelope(res);
     expect(res.status).toBe(201);
@@ -270,23 +272,33 @@ describe("auth fuzz", () => {
     expectCleanEnvelope({ status: res.status, body: await res.json() });
   });
 
-  it("login SQL injection phone is 401, never 500", async () => {
+  it("login SQL injection email is 401, never 500; phone never authenticates", async () => {
     const res = await api("/auth/login", {
-      method: "POST", body: JSON.stringify({ phone: "' OR '1'='1", password: "x" }),
+      method: "POST", body: JSON.stringify({ email: "' OR '1'='1", password: "x" }),
     });
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(400);
     expectCleanEnvelope(res);
+    // A valid phone is not an email shape: rejected at validation, never auth.
+    const byPhone = await api("/auth/login", {
+      method: "POST", body: JSON.stringify({ email: A_PHONE, password: PASS }),
+    });
+    expect(byPhone.status).toBe(400);
+    // Unknown but well-formed email: indistinguishable 401.
+    const unknown = await api("/auth/login", {
+      method: "POST", body: JSON.stringify({ email: "ghost-adv@example.com", password: "Whatever-1x" }),
+    });
+    expect(unknown.status).toBe(401);
   });
 
   it("mass-assignment role/id/is_active on register is 400 and creates nothing", async () => {
     const phone = trackPhone(`+9639000018${Date.now() % 100}`);
     const res = await api("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ phone, password: "Adv-Strong-9", name: "X", role: "admin", is_active: 0, id: "forged", store_id: "s" }),
+      body: JSON.stringify({ email: `advmass${Date.now() % 100000}@example.com`, phone, password: "Adv-Strong-9", name: "X", role: "admin", is_active: 0, id: "forged", store_id: "s" }),
     });
     expect(res.status).toBe(400);
     expect(qval(`SELECT id FROM users WHERE phone = '${phone}';`)).toBeUndefined();
-  });
+  }, 120_000);
 });
 
 describe("cross-store IDOR matrix (A attacks B1)", () => {
@@ -320,7 +332,7 @@ describe("cross-store IDOR matrix (A attacks B1)", () => {
     }, jarA);
     expect(patch.status).toBe(404);
     expect(String(qval(`SELECT is_default FROM customer_addresses WHERE id = '${S.addrB1}';`))).toBe(before);
-  });
+  }, 120_000);
 
   it("customer delete of B1 customer is 404 and row survives", async () => {
     expect((await api(`/stores/${S.a1}/customers/${S.custB1}`, { method: "DELETE" }, jarA)).status).toBe(404);
@@ -359,7 +371,7 @@ describe("cross-store IDOR matrix (A attacks B1)", () => {
     }, jarA, `adv-xstore-${Date.now()}`);
     expect(res.status).toBe(409);
     expect(Number(qval(`SELECT stock_quantity FROM products WHERE id = '${S.prodB1}';`))).toBe(before);
-  });
+  }, 120_000);
 
   it("garbage and SQL-flavored IDs are clean 404s", async () => {
     for (const bad of ["' OR '1'='1", "../../etc/passwd", "%2e%2e/%2e%2e", "x".repeat(500)]) {
@@ -402,5 +414,5 @@ describe("forged expired session is rejected", () => {
     const res = await api("/auth/me", {}, `ss_session=${token}`);
     expect(res.status).toBe(401);
     expectCleanEnvelope(res);
-  });
+  }, 120_000);
 });

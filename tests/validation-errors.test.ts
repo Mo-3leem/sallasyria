@@ -26,20 +26,20 @@ interface FailBody {
 
 describe("validation error responses", () => {
   it("schema failure returns code + safe field details", async () => {
-    const res = await login(JSON.stringify({ phone: 42, password: "x" }));
+    const res = await login(JSON.stringify({ email: 42, password: "x" }));
     expect(res.status).toBe(400);
     const body = (await res.json()) as FailBody;
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("validation_failed");
     expect(body.error.message).toBe("Request body is invalid.");
-    expect(body.error.details).toEqual([{ field: "phone", message: "Expected string." }]);
+    expect(body.error.details).toEqual([{ field: "email", message: "Expected string." }]);
   });
 
   it("short strings map to a fixed message without echoing the value", async () => {
-    const res = await login(JSON.stringify({ phone: "", password: "x" }));
+    const res = await login(JSON.stringify({ email: "", password: "x" }));
     expect(res.status).toBe(400);
     const body = (await res.json()) as FailBody;
-    expect(body.error.details).toEqual([{ field: "phone", message: "Too short." }]);
+    expect(body.error.details).toEqual([{ field: "email", message: "Invalid email address." }]);
   });
 
   it("malformed JSON is distinguished from schema errors", async () => {
@@ -51,7 +51,7 @@ describe("validation error responses", () => {
       error: { code: "malformed_json", message: "Request body is not valid JSON." },
     });
 
-    const invalid = await login(JSON.stringify({ phone: 42, password: "x" }));
+    const invalid = await login(JSON.stringify({ email: 42, password: "x" }));
     const invalidBody = (await invalid.json()) as FailBody;
     expect(invalidBody.error.code).toBe("validation_failed");
     expect(invalidBody.error.code).not.toBe(badBody.error.code);
@@ -59,7 +59,7 @@ describe("validation error responses", () => {
 
   it("never exposes Zod internals, patterns, or received values", async () => {
     const res = await login(
-      JSON.stringify({ phone: 42, password: ["not", "a", "string"], extra: "ignored" })
+      JSON.stringify({ email: 42, password: ["not", "a", "string"], extra: "ignored" })
     );
     const text = await res.text();
     for (const banned of [
@@ -87,7 +87,7 @@ describe("validation error responses", () => {
 
   it("does not echo sensitive user input back in error responses", async () => {
     const secret = "Sup3rS3cret-MARKER-9zq4";
-    const res = await login(JSON.stringify({ phone: 42, password: secret }));
+    const res = await login(JSON.stringify({ email: 42, password: secret }));
     expect(res.status).toBe(400);
     const text = await res.text();
     expect(text).not.toContain(secret);
