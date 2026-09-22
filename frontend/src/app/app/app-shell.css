@@ -437,6 +437,11 @@
   color: var(--gray-2);
   border: 1px solid var(--gray-5);
 }
+.sub-badge-trialing {
+  background: #fffbeb;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
 
 /* ---------- Info rows ---------- */
 .info-row {

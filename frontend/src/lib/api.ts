@@ -402,6 +402,54 @@ export const ordersApi = {
     ),
 };
 
+export interface BillingIntent {
+  id: string;
+  store_id: string;
+  plan_id: string;
+  billing_period: string;
+  amount: number;
+  currency: string;
+  status: string;
+  provider: string;
+  expires_at: string | null;
+}
+
+/**
+ * Self-serve billing (Phase 8). Prices always come from the server —
+ * callers never send amounts. Polling reads intent rows (no secrets).
+ */
+export const billingApi = {
+  checkout: (storeId: string, data: { plan_id: string; billing_period: string }) =>
+    api.post<{ intent_id: string; redirect_url: string }>(
+      storePath(storeId, "/subscriptions/checkout"),
+      data
+    ),
+  storeSubscriptions: (storeId: string) =>
+    api.get<{ subscriptions: Subscription[] }>(
+      storePath(storeId, "/subscriptions")
+    ),
+  storeIntents: (storeId: string) =>
+    api.get<{ intents: BillingIntent[] }>(
+      storePath(storeId, "/billing/intents")
+    ),
+  getIntent: (storeId: string, id: string) =>
+    api.get<{ intent: BillingIntent }>(
+      storePath(storeId, `/billing/intents/${encodeURIComponent(id)}`)
+    ),
+  adminIntents: () => api.get<{ intents: BillingIntent[] }>("/billing/admin/intents"),
+  /**
+   * Stub-only provider-callback simulator (dev): drives the REAL webhook
+   * endpoint so the full settle path is exercised. Production providers
+   * call the webhook server-to-server instead — this helper is never used
+   * for real money.
+   */
+  stubCallback: (data: { intent_id: string; stub_token: string; result: string }) =>
+    api.post<{ processed: boolean; activated: boolean; duplicate: boolean }>(
+      "/billing/webhook/stub",
+      data
+    ),
+};
+
 /**
  * Platform-admin endpoints (RequireAdmin in UI; backend enforces
  * requireRole on every route and audits mutations). No merchant should

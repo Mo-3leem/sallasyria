@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { adminApi, plansApi, storesApi } from "@/lib/api";
+import { adminApi, billingApi, plansApi, storesApi } from "@/lib/api";
 import {
   authErrorMessage,
   getErrorCode,
@@ -350,6 +350,73 @@ export default function AdminSubscriptionsPage() {
         onClose={() => setPendingCancel(null)}
         onConfirm={() => pendingCancel && doCancel(pendingCancel)}
       />
+
+      <AdminIntentsCard />
     </>
+  );
+}
+
+function AdminIntentsCard() {
+  const { refresh: refreshAuth } = useAuth();
+  const [intents, setIntents] = useState<
+    { id: string; store_id: string; status: string; amount: number; currency: string }[]
+  >([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await billingApi.adminIntents();
+        if (cancelled) return;
+        if (!res.ok) {
+          if (getErrorCode(res) === "unauthorized") await refreshAuth();
+          return;
+        }
+        setIntents(res.data.intents);
+      } catch {
+        // Readout degrades to empty; subscriptions above stay authoritative.
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshAuth]);
+
+  return (
+    <div className="shell-card">
+      <h2 className="shell-card-title">محاولات الدفع الأخيرة</h2>
+      {loading ? (
+        <div className="shell-loading">
+          <span className="shell-spinner" aria-hidden="true"></span>
+          جاري التحميل...
+        </div>
+      ) : intents.length === 0 ? (
+        <EmptyState
+          icon="fas fa-credit-card"
+          title="لا توجد محاولات دفع بعد"
+        />
+      ) : (
+        <div className="shell-stack">
+          {intents.slice(0, 10).map((intent) => (
+            <div key={intent.id} className="store-row">
+              <span className="store-row-icon" aria-hidden="true">
+                <i className="fas fa-credit-card"></i>
+              </span>
+              <span className="store-row-body">
+                <span className="store-row-name" dir="ltr">{intent.id}</span>
+                <span className="store-row-meta">
+                  <span>{intent.status}</span>
+                  <span>·</span>
+                  <span>{intent.amount.toLocaleString("ar-SY")} {intent.currency}</span>
+                </span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

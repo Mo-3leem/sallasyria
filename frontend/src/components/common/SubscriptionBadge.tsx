@@ -1,11 +1,12 @@
 "use client";
 
-export type SubscriptionStatus = "active" | "inactive" | "unknown";
+export type SubscriptionStatus = "active" | "inactive" | "unknown" | "trialing";
 
 const STATUS_TEXT: Record<SubscriptionStatus, string> = {
   active: "اشتراك نشط",
   inactive: "الاشتراك غير نشط",
   unknown: "حالة الاشتراك غير معروفة",
+  trialing: "فترة تجريبية",
 };
 
 /**

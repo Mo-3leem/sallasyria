@@ -29,6 +29,20 @@ export interface Env {
   // HMAC secret for short-lived image URLs (B8). Absent outside development
   // = fail-closed 503 on upload/serve paths that need signing.
   URL_SIGNING_SECRET?: string;
+  // Self-serve billing provider selection (Phase 8). "stub" (default) runs
+  // the local dev adapter; "real" arms the generic gateway skeleton, which
+  // fails closed with 503 until its keys arrive (see docs/BILLING-KEYS.md).
+  PAYMENT_PROVIDER?: string;
+  // Real-gateway credentials. Secrets arrive ONLY via bindings/secrets —
+  // never source, never logs. Absent = 503 on real paths, never fail-open.
+  PROVIDER_API_KEY?: string;
+  PROVIDER_WEBHOOK_SECRET?: string;
+  PROVIDER_BASE_URL?: string;
+  // Free-trial grants on store creation (Phase 8). Days of coverage;
+  // "0" (or unparseable) disables trials. Plan code the trial references;
+  // a missing plan skips the trial without failing store creation.
+  TRIAL_DAYS?: string;
+  TRIAL_PLAN_CODE?: string;
   // Public origin of the Next.js frontend, used ONLY as the CORS allow-list
   // for cookie-credentialed browser calls. Optional: when set and the request
   // Origin matches exactly, preflights and credentialed responses are allowed

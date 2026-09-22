@@ -11,6 +11,7 @@ import { currentUser, requireAuth } from "../middleware/auth.js";
 import { requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
 import { listAllStores, getStoreById, getStoreOwner, listStoresForOwner, updateStore, createStore } from "../services/stores.js";
+import { grantTrial } from "../services/billing.js";
 
 export const stores = new OpenAPIHono<AppEnv>();
 
@@ -87,15 +88,32 @@ const createStoreRoute = createRoute({
   description:
     "Creates a store owned by the caller; owner comes from the session, never the body. " +
     "No limit on stores per merchant. 409 when the slug is taken. " +
-    "Merchant writes on the new store still need a subscription per store.",
+    "A free trial period (TRIAL_DAYS, default 14) is granted automatically " +
+    "unless the trial is disabled or cannot resolve its plan — trial carries " +
+    "its ends_at for banners. Merchant writes on the new store still need a " +
+    "subscription per store.",
   middleware: [requireAuth],
   request: {
     body: { content: { "application/json": { schema: storeCreateSchema } } },
   },
   responses: {
     201: {
-      content: { "application/json": { schema: okOf(z.object({ store: storeDocSchema })) } },
-      description: "Created store",
+      content: {
+        "application/json": {
+          schema: okOf(
+            z.object({
+              store: storeDocSchema,
+              trial: z
+                .object({
+                  status: z.string(),
+                  ends_at: z.string().nullable(),
+                })
+                .nullable(),
+            })
+          ),
+        },
+      },
+      description: "Created store plus trial grant (null when skipped)",
     },
     400: {
       content: { "application/json": { schema: failEnvelope } },
@@ -119,7 +137,20 @@ stores.openapi(createStoreRoute, async (c) => {
   const input = c.req.valid("json");
   const store = await createStore(getDb(c), ownerId, input);
   auditLog("store.create", { actor: ownerId, store: store.id, result: "ok" });
-  return ok(c, { store }, 201);
+  // Trial is best-effort and never fails creation: grantTrial swallows its
+  // own race/skip cases; anything unexpected here still 500s loudly below
+  // (fail-closed beats a silent untrialed store).
+  const { trial } = await grantTrial(getDb(c), c.env, store.id, ownerId);
+  return ok(
+    c,
+    {
+      store,
+      trial: trial
+        ? { status: trial.status, ends_at: trial.ends_at }
+        : null,
+    },
+    201
+  );
 }, validationHook);
 
 const getStoreRoute = createRoute({

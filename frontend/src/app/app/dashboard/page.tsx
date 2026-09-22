@@ -4,23 +4,32 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useStores } from "@/hooks/useStores";
-import { plansApi } from "@/lib/api";
+import { billingApi, plansApi } from "@/lib/api";
 import { isApiError } from "@/lib/auth-errors";
 import { StatCard } from "@/components/common/StatCard";
 import { SubscriptionBadge } from "@/components/common/SubscriptionBadge";
 import { EmptyState } from "@/components/common/EmptyState";
-import type { Plan } from "@/types/api";
+import type { Plan, Subscription } from "@/types/api";
 
 function formatMoney(amount: number, currency = "ل.س"): string {
   return `${amount.toLocaleString("ar-SY")} ${currency}`;
 }
 
+function daysLeft(endsAt: string | null): number | null {
+  if (!endsAt) return null;
+  const ms = Date.parse(endsAt) - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return 0;
+  return Math.ceil(ms / (24 * 3600 * 1000));
+}
+
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, refresh: refreshAuth } = useAuth();
   const { stores, loading: storesLoading, error: storesError, refresh: refreshStores } = useStores();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [plansLoading, setPlansLoading] = useState(true);
   const [plansError, setPlansError] = useState<string | null>(null);
+  const [periods, setPeriods] = useState<Record<string, Subscription[]>>({});
+  const [periodsLoading, setPeriodsLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,6 +56,49 @@ export default function DashboardPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (storesLoading) return;
+    let cancelled = false;
+    (async () => {
+      const out: Record<string, Subscription[]> = {};
+      for (const store of stores) {
+        try {
+          const res = await billingApi.storeSubscriptions(store.id);
+          if (!res.ok) {
+            if (isApiError(res) && res.error.code === "unauthorized") {
+              await refreshAuth();
+              return;
+            }
+            continue;
+          }
+          out[store.id] = res.data.subscriptions;
+        } catch {
+          // Per-store failure degrades to the unknown badge below.
+        }
+      }
+      if (!cancelled) {
+        setPeriods(out);
+        setPeriodsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [stores, storesLoading, refreshAuth]);
+
+  const coveringOf = (storeId: string): Subscription | null => {
+    const list = periods[storeId];
+    if (!list) return null;
+    const now = Date.now();
+    return (
+      list.find(
+        (s) =>
+          (s.status === "active" || s.status === "trialing") &&
+          (!s.ends_at || Date.parse(s.ends_at) > now)
+      ) ?? null
+    );
+  };
 
   const isAdmin = user?.role === "admin";
 
@@ -120,7 +172,11 @@ export default function DashboardPage() {
           />
         ) : (
           <div className="shell-stack">
-            {stores.map((store) => (
+            {stores.map((store) => {
+              const covering = coveringOf(store.id);
+              const known = store.id in periods;
+              const left = covering ? daysLeft(covering.ends_at) : null;
+              return (
               <Link
                 key={store.id}
                 href={`/app/stores/${encodeURIComponent(store.id)}`}
@@ -136,14 +192,33 @@ export default function DashboardPage() {
                     <span>·</span>
                     <span>{store.currency}</span>
                     <span>·</span>
-                    {/* No merchant-facing subscription-status endpoint exists:
-                        status stays "unknown" with an honest explanation. */}
-                    <SubscriptionBadge status="unknown" />
+                    {!known ? (
+                      <SubscriptionBadge status="unknown" />
+                    ) : covering ? (
+                      <>
+                        <SubscriptionBadge
+                          status={
+                            covering.status === "trialing" ? "trialing" : "active"
+                          }
+                          planName={
+                            plans.find((p) => p.id === covering.plan_id)?.name
+                          }
+                        />
+                        {covering.status === "trialing" && (
+                          <span className="soon-tag">
+                            بقي {left ?? 0} يوم
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <SubscriptionBadge status="inactive" />
+                    )}
                   </span>
                 </span>
                 <i className="fas fa-chevron-left" aria-hidden="true" style={{ color: "var(--gray-3)" }}></i>
               </Link>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

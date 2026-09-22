@@ -53,6 +53,10 @@ describe("OpenAPI docs", () => {
       "POST /stores",
       "GET /stores/{storeId}",
       "PATCH /stores/{storeId}",
+      "POST /stores/{storeId}/subscriptions/checkout",
+      "GET /stores/{storeId}/subscriptions",
+      "GET /stores/{storeId}/billing/intents",
+      "GET /stores/{storeId}/billing/intents/{id}",
       "GET /stores/{storeId}/categories",
       "GET /stores/{storeId}/categories/{id}",
       "POST /stores/{storeId}/categories",
@@ -105,6 +109,8 @@ describe("OpenAPI docs", () => {
       "DELETE /admin/plans/{id}",
       "POST /admin/users/{id}/password",
       "GET /plans",
+      "POST /billing/webhook/{provider}",
+      "GET /billing/admin/intents",
     ];
     expect(documented.size).toBe(expected.length);
     for (const route of expected) {
