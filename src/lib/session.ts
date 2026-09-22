@@ -85,28 +85,42 @@ export function getCookieToken(cookieHeader: string | null): string | null {
   return null;
 }
 
+export type SameSiteMode = "lax" | "none";
+
 export function buildSetCookie(
   token: string,
-  opts: { secure: boolean; maxAgeSec: number }
+  opts: { secure: boolean; maxAgeSec: number; sameSite?: SameSiteMode }
 ): string {
+  // sameSite defaults to lax (previous behavior). Callers select "none"
+  // ONLY together with secure:true: browsers reject SameSite=None without
+  // Secure, which would silently destroy the session. Lax stays the
+  // same-origin/dev default; None is the split-deployment (pages.dev ->
+  // workers.dev) production mode.
+  const mode: SameSiteMode = opts.sameSite ?? "lax";
   const parts = [
     `${SESSION_COOKIE}=${token}`,
     "Path=/",
     `Max-Age=${opts.maxAgeSec}`,
     "HttpOnly",
-    "SameSite=Lax",
+    mode === "none" ? "SameSite=None" : "SameSite=Lax",
   ];
   if (opts.secure) parts.push("Secure");
   return parts.join("; ");
 }
 
-export function buildClearCookie(opts: { secure: boolean }): string {
+export function buildClearCookie(opts: {
+  secure: boolean;
+  sameSite?: SameSiteMode;
+}): string {
+  // Clearing must mirror the attributes the cookie was set with, or the
+  // browser keeps the original. Callers pass the same derivation as login.
+  const mode: SameSiteMode = opts.sameSite ?? "lax";
   const parts = [
     `${SESSION_COOKIE}=`,
     "Path=/",
     "Max-Age=0",
     "HttpOnly",
-    "SameSite=Lax",
+    mode === "none" ? "SameSite=None" : "SameSite=Lax",
   ];
   if (opts.secure) parts.push("Secure");
   return parts.join("; ");

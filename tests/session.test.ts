@@ -85,4 +85,18 @@ describe("cookies", () => {
     expect(buildSetCookie("tok", { secure: false, maxAgeSec: 60 })).not.toContain("Secure");
     expect(JSON.stringify(buildClearCookie({ secure: false }))).toContain("Max-Age=0");
   });
+
+  it("defaults to Lax and mirrors None on explicit opt-in (clear matches set)", () => {
+    // Split deployments (pages.dev -> workers.dev) need None+Secure or
+    // browsers reject the third-party session cookie outright.
+    const none = buildSetCookie("tok", { secure: true, maxAgeSec: 60, sameSite: "none" });
+    expect(none).toContain("SameSite=None");
+    expect(none).not.toContain("SameSite=Lax");
+    expect(none).toContain("Secure");
+    expect(buildSetCookie("tok", { secure: true, maxAgeSec: 60 })).toContain("SameSite=Lax");
+    const clearNone = buildClearCookie({ secure: true, sameSite: "none" });
+    expect(clearNone).toContain("SameSite=None");
+    expect(clearNone).toContain("Max-Age=0");
+    expect(buildClearCookie({ secure: true })).toContain("SameSite=Lax");
+  });
 });

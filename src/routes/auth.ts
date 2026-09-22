@@ -471,6 +471,33 @@ function cookieSecure(c: { env: Env }): boolean {
   return (c.env.ENVIRONMENT ?? "development") !== "development";
 }
 
+// SameSite derivation (split-deployment fix): cross-origin production
+// (frontend on pages.dev calling the API on workers.dev) needs
+// SameSite=None or browsers reject the session cookie third-party-style.
+// Same-origin callers and all of development keep Lax: None without Secure
+// is rejected by browsers, and dev serves plain http. Detection is
+// per-request (Origin host vs request host) so one deployment serves both
+// same-origin and split frontends correctly; unparsable/missing Origin
+// fails safe to Lax (non-browser clients send cookies explicitly anyway).
+function cookieSameSite(c: {
+  req: { header(name: string): string | undefined; url: string };
+  env: Env;
+}): "lax" | "none" {
+  if (!cookieSecure(c)) return "lax";
+  try {
+    const origin = c.req.header("Origin");
+    if (!origin) return "lax";
+    const originHost = new URL(origin).hostname.toLowerCase();
+    const requestHost = new URL(c.req.url).hostname.toLowerCase();
+    if (originHost && requestHost && originHost !== requestHost) {
+      return "none";
+    }
+    return "lax";
+  } catch {
+    return "lax";
+  }
+}
+
 // POST /auth/login — verifies credentials, mints ONE opaque session row,
 // returns the raw token exactly once (Set-Cookie). The identity is the
 // NORMALIZED email: Test@Example.com and test@example.com are the same
@@ -551,7 +578,14 @@ auth.openapi(loginRoute, async (c) => {
     .run();
 
   const maxAgeSec = Math.floor(SESSION_ABSOLUTE_MS / 1000);
-  c.header("Set-Cookie", buildSetCookie(token, { secure: cookieSecure(c), maxAgeSec }));
+  c.header(
+    "Set-Cookie",
+    buildSetCookie(token, {
+      secure: cookieSecure(c),
+      maxAgeSec,
+      sameSite: cookieSameSite(c),
+    })
+  );
   // Bootstrap rotation signal (B7): true only for admins still on the seeded
   // credential. Clients MUST route to change-password when set; the server
   // additionally enforces it in requireAuth (rotation-exempt list).
@@ -590,7 +624,10 @@ auth.openapi(logoutRoute, async (c) => {
     .prepare("UPDATE sessions SET revoked_at = ?, updated_at = ? WHERE id = ?")
     .bind(now, now, currentSessionId(c))
     .run();
-  c.header("Set-Cookie", buildClearCookie({ secure: cookieSecure(c) }));
+  c.header(
+    "Set-Cookie",
+    buildClearCookie({ secure: cookieSecure(c), sameSite: cookieSameSite(c) })
+  );
   return ok(c, { loggedOut: true });
 }, validationHook);
 

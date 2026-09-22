@@ -6,6 +6,7 @@ import { fail } from "./http/respond.js";
 import { accessLog } from "./middleware/logging.js";
 import { bodyLimitMw } from "./middleware/body-limit.js";
 import { corsMw } from "./middleware/cors.js";
+import { csrfMw } from "./middleware/csrf.js";
 import { health } from "./routes/health.js";
 import { auth } from "./routes/auth.js";
 import { stores } from "./routes/stores.js";
@@ -40,6 +41,10 @@ export function createApp() {
   // so OPTIONS preflights are answered with 204 here and never reach route
   // or auth middleware (previously they fell through to the 404 handler).
   app.use(corsMw());
+  // CSRF origin gate for cookie-authed mutations (companion to
+  // SameSite=None sessions): runs after CORS so OPTIONS preflights pass
+  // through untouched; safe methods are never gated.
+  app.use(csrfMw);
 
   app.route("/", health);
   app.route("/auth", auth);
