@@ -16,7 +16,13 @@ export type AuditAction =
   | "admin.plan.delete"
   | "admin.user.password_reset"
   | "user.password_change"
-  | "user.profile.update";
+  | "user.profile.update"
+  | "billing.checkout.start"
+  | "billing.webhook.success"
+  | "billing.webhook.failed"
+  | "billing.webhook.amount_mismatch"
+  | "billing.webhook.duplicate"
+  | "store.trial.grant";
 
 export function auditLog(
   action: AuditAction,

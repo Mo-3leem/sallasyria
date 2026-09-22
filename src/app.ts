@@ -18,6 +18,7 @@ import { shippingRates } from "./routes/shipping-rates.js";
 import { checkoutRouter } from "./routes/checkout.js";
 import { orders } from "./routes/orders.js";
 import { admin } from "./routes/admin.js";
+import { billingWebhook, storeBilling } from "./routes/billing.js";
 import { plans } from "./routes/plans.js";
 import { registerDocs } from "./routes/docs.js";
 
@@ -52,6 +53,8 @@ export function createApp() {
   app.route("/stores/:storeId/checkout", checkoutRouter);
   app.route("/stores/:storeId/orders", orders);
   app.route("/admin", admin);
+  app.route("/stores/:storeId", storeBilling);
+  app.route("/billing", billingWebhook);
   app.route("/plans", plans);
   registerDocs(app);
 

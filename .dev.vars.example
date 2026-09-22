@@ -28,3 +28,18 @@ ADMIN_BOOTSTRAP_PASSWORD=change-me-before-seeding
 # set the real frontend origin via `wrangler secret` / dashboard — unset
 # means the API sends no CORS headers (browser calls blocked, as before).
 # FRONTEND_URL=http://localhost:3000
+
+# Self-serve billing (Phase 8). PAYMENT_PROVIDER selects the adapter:
+# "stub" (default) runs the local dev adapter with no money and no vendor.
+# "real" arms the generic gateway skeleton in src/lib/billing/real.ts.
+# TRIAL_DAYS grants that many free trialing days on store creation
+# ("0" disables trials); TRIAL_PLAN_CODE names the referenced plan.
+# PAYMENT_PROVIDER=stub
+# TRIAL_DAYS=14
+# TRIAL_PLAN_CODE=basic
+# Real-gateway credentials below. Secrets live ONLY in `wrangler secret` /
+# dashboard in production — never here, never committed, never logged.
+# The "real" adapter fails closed with 503 until ALL THREE are set.
+# PROVIDER_API_KEY=
+# PROVIDER_WEBHOOK_SECRET=
+# PROVIDER_BASE_URL=
