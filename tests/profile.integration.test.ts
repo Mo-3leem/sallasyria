@@ -140,6 +140,23 @@ function expectCleanUser(body: unknown): Record<string, unknown> {
   return user;
 }
 
+describe("GET /auth/me email_verified shaping", () => {
+  it("reports the stored verification flag instead of a hardcoded 0", async () => {
+    // Fixtures are seeded verified (see beforeAll UPDATE above).
+    for (const jar of [jarAdmin, jarMerchant]) {
+      const me = await api("/auth/me", {}, jar);
+      expect(me.status).toBe(200);
+      expect(((me.body as MeBody).data.user.email_verified)).toBe(1);
+    }
+  });
+
+  it("PATCH /auth/me response carries the stored verification flag", async () => {
+    const res = await api("/auth/me", { method: "PATCH", body: JSON.stringify({ name: "Verified Name" }) }, jarMerchant);
+    expect(res.status).toBe(200);
+    expect(((res.body as MeBody).data.user.email_verified)).toBe(1);
+  });
+});
+
 describe("PATCH /auth/me name updates", () => {
   it("admin updates name, sessions stay valid", async () => {
     const res = await api("/auth/me", { method: "PATCH", body: JSON.stringify({ name: "Renamed Admin" }) }, jarAdmin);

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { AuthProvider } from "@/hooks/useAuth";
 
 export const metadata: Metadata = {
   title: "سلة سوريا - أكبر منصة سورية للتجارة الإلكترونية",
@@ -54,7 +55,7 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-screen bg-white text-gray-900 antialiased">
-        {children}
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );

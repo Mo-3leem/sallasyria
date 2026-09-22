@@ -71,10 +71,10 @@ export function Navbar() {
         </nav>
 
         <div className="nav-actions">
-          <a href="#" className="btn btn-outline">
+          <a href="/auth/login" className="btn btn-outline">
             تسجيل الدخول
           </a>
-          <a href="#" className="btn btn-primary">
+          <a href="/auth/register" className="btn btn-primary">
             ابدأ مجاناً
           </a>
           <button

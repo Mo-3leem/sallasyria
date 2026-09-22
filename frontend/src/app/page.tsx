@@ -241,7 +241,7 @@ export default function HomePage() {
             أنشئ متجرك اليوم وانضمَّ لعشرات الآلاف من الأفراد والمؤسسات والشركات الناجحة مع سلة
           </div>
           <div className="hero-ctas">
-            <a href="#" className="btn btn-primary btn-lg">
+            <a href="/auth/register" className="btn btn-primary btn-lg">
               <i className="fas fa-rocket" aria-hidden="true"></i>
               ابدأ مجاناً الآن
             </a>
@@ -473,7 +473,7 @@ export default function HomePage() {
         <div className="container cta-content">
           <h2>ابدأ رحلتك التجارية اليوم</h2>
           <p>انضم لعشرات الآلاف من التجار الناجحين على سلة سوريا</p>
-          <a href="#" className="btn btn-white btn-lg">
+          <a href="/auth/register" className="btn btn-white btn-lg">
             <i className="fas fa-store" aria-hidden="true"></i>
             أنشئ متجرك الآن — مجاناً
           </a>

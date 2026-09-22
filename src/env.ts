@@ -29,6 +29,13 @@ export interface Env {
   // HMAC secret for short-lived image URLs (B8). Absent outside development
   // = fail-closed 503 on upload/serve paths that need signing.
   URL_SIGNING_SECRET?: string;
+  // Public origin of the Next.js frontend, used ONLY as the CORS allow-list
+  // for cookie-credentialed browser calls. Optional: when set and the request
+  // Origin matches exactly, preflights and credentialed responses are allowed
+  // in every environment. When unset, only the development fallback below
+  // applies, and production sends no CORS headers (behavior unchanged).
+  // Never "*" — credentials/cookies forbid wildcard origins.
+  FRONTEND_URL?: string;
 }
 
 // Authenticated identity shape (populated by B2 requireAuth). Lives here —
@@ -40,6 +47,7 @@ export interface AuthUser {
   phone: string;
   email: string | null;
   name: string;
+  email_verified: number;
 }
 
 // Request-scoped values middleware may set. Fields are optional at the type

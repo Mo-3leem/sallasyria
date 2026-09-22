@@ -247,6 +247,41 @@ describe("B5 customers: private management + isolation", () => {
     expect(((intact.body as { data: { customer: { name: string } } }).data.customer.name)).toBe("Cust B");
   });
 
+  it("patch without email preserves the stored email (no null-wipe)", async () => {
+    const mk = await api(`${A}/customers`, {
+      method: "POST",
+      body: JSON.stringify({ name: "Mailable", phone: "+963911500077", email: "mailable@example.com" }),
+    });
+    expect(mk.status).toBe(200);
+    const id = (mk.body as { data: { customer: { id: string } } }).data.customer.id;
+
+    const renamed = await api(`${A}/customers/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: "Mailable Renamed" }),
+    }, jarA);
+    expect(renamed.status).toBe(200);
+    const kept = await api(`${A}/customers/${id}`, {}, jarA);
+    expect(((kept.body as { data: { customer: { email: string | null } } }).data.customer.email))
+      .toBe("mailable@example.com");
+
+    const cleared = await api(`${A}/customers/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ email: null }),
+    }, jarA);
+    expect(cleared.status).toBe(200);
+    const gone = await api(`${A}/customers/${id}`, {}, jarA);
+    expect(((gone.body as { data: { customer: { email: string | null } } }).data.customer.email))
+      .toBe(null);
+
+    const noop = await api(`${A}/customers/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({}),
+    }, jarA);
+    expect(noop.status).toBe(200);
+    expect(((noop.body as { data: { customer: { name: string } } }).data.customer.name))
+      .toBe("Mailable Renamed");
+  });
+
   it("delete removes unused customers; missing is 404", async () => {
     const mk = await api(`${A}/customers`, {
       method: "POST",

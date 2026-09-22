@@ -5,6 +5,7 @@ import { errorHandler } from "./http/errors.js";
 import { fail } from "./http/respond.js";
 import { accessLog } from "./middleware/logging.js";
 import { bodyLimitMw } from "./middleware/body-limit.js";
+import { corsMw } from "./middleware/cors.js";
 import { health } from "./routes/health.js";
 import { auth } from "./routes/auth.js";
 import { stores } from "./routes/stores.js";
@@ -34,6 +35,10 @@ export function createApp() {
   app.use(requestId());
   app.use(accessLog);
   app.use(bodyLimitMw());
+  // Cookie-credentialed CORS for the frontend. Registered before the routes
+  // so OPTIONS preflights are answered with 204 here and never reach route
+  // or auth middleware (previously they fell through to the 404 handler).
+  app.use(corsMw());
 
   app.route("/", health);
   app.route("/auth", auth);

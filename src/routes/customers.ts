@@ -48,7 +48,10 @@ const upsertSchema = z.object({
 const customerPatchSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   phone: z.string().min(1).max(64).optional(),
-  email: emailSchema.optional(),
+  // No .default(null) here (unlike the shared emailSchema used by POST):
+  // an omitted email must stay undefined so the service merge preserves the
+  // stored value. Explicit null still clears, per contract.
+  email: z.string().email().max(254).nullable().optional(),
 });
 
 const FORBIDDEN = ["store_id", "id"] as const;
