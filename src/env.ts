@@ -14,6 +14,14 @@ export interface Env {
   // Cloudflare Turnstile secret for public-mutation bot defense (B5).
   // Absent in development (documented bypass); required elsewhere.
   TURNSTILE_SECRET?: string;
+  // SendGrid transactional email (verification, password reset, order
+  // notifications). Absent = mail paths log-and-skip (emails never fail
+  // business operations); required only where real delivery is wanted.
+  // MAIL_FROM must be a verified sender. APP_URL builds email links and
+  // must never be hardcoded per-environment in source.
+  SENDGRID_API_KEY?: string;
+  MAIL_FROM?: string;
+  APP_URL?: string;
   // Bootstrap admin password (B7 seed only). While set, admin requests pay
   // one extra password check for rotation enforcement; unset it after every
   // admin has rotated (the value is a live credential until then).
@@ -21,6 +29,13 @@ export interface Env {
   // HMAC secret for short-lived image URLs (B8). Absent outside development
   // = fail-closed 503 on upload/serve paths that need signing.
   URL_SIGNING_SECRET?: string;
+  // Public origin of the Next.js frontend, used ONLY as the CORS allow-list
+  // for cookie-credentialed browser calls. Optional: when set and the request
+  // Origin matches exactly, preflights and credentialed responses are allowed
+  // in every environment. When unset, only the development fallback below
+  // applies, and production sends no CORS headers (behavior unchanged).
+  // Never "*" — credentials/cookies forbid wildcard origins.
+  FRONTEND_URL?: string;
 }
 
 // Authenticated identity shape (populated by B2 requireAuth). Lives here —
@@ -32,6 +47,7 @@ export interface AuthUser {
   phone: string;
   email: string | null;
   name: string;
+  email_verified: number;
 }
 
 // Request-scoped values middleware may set. Fields are optional at the type
@@ -54,4 +70,11 @@ export type AppEnv = {
 // must use fail()/AppError instead (see src/http/).
 export function appConfig(env: Env): { environment: string } {
   return { environment: env.ENVIRONMENT ?? "development" };
+}
+
+// Base URL used to build email links (verification, password reset). Never
+// hardcoded per-environment in source: local default is wrangler's default
+// dev origin, production comes from the APP_URL binding.
+export function appUrl(env: Env): string {
+  return env.APP_URL ?? "http://localhost:8787";
 }

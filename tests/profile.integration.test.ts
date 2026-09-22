@@ -78,12 +78,12 @@ function cookieOf(setCookie: string | null): string {
   return `ss_session=${(setCookie.split(";")[0] ?? "").split("=").slice(1).join("=")}`;
 }
 
-async function loginJar(phone: string, password: string): Promise<string> {
+async function loginJar(email: string, password: string): Promise<string> {
   const res = await api("/auth/login", {
     method: "POST",
-    body: JSON.stringify({ phone, password }),
+    body: JSON.stringify({ email, password }),
   });
-  if (res.status !== 200) throw new Error(`profile setup login failed for ${phone}: ${res.status}`);
+  if (res.status !== 200) throw new Error(`profile setup login failed for ${email}: ${res.status}`);
   return cookieOf(res.setCookie);
 }
 
@@ -93,7 +93,6 @@ interface MeBody {
 
 let jarAdmin = "";
 let jarMerchant = "";
-let merchantAPhone = MERCHANT_A_PHONE;
 
 beforeAll(async () => {
   server = spawn(isWindows ? "npx.cmd" : "npx", ["wrangler", "dev", "--port", String(PORT), "--ip", "127.0.0.1"], {
@@ -117,8 +116,9 @@ beforeAll(async () => {
     const r = d1(sql);
     if (!r.ok) throw new Error(`profile seed failed: ${r.error}`);
   }
-  jarAdmin = await loginJar(ADMIN_PHONE, PASS);
-  jarMerchant = await loginJar(MERCHANT_A_PHONE, PASS);
+  d1(`UPDATE users SET email_verified = 1 WHERE id IN ('user_verify_pf_admin', 'user_verify_pf_ma', 'user_verify_pf_mb');`);
+  jarAdmin = await loginJar("pfa@example.com", PASS);
+  jarMerchant = await loginJar("pfma@example.com", PASS);
 }, 180_000);
 
 afterAll(async () => {
@@ -139,6 +139,23 @@ function expectCleanUser(body: unknown): Record<string, unknown> {
   expect(JSON.stringify(body)).not.toContain(PASS);
   return user;
 }
+
+describe("GET /auth/me email_verified shaping", () => {
+  it("reports the stored verification flag instead of a hardcoded 0", async () => {
+    // Fixtures are seeded verified (see beforeAll UPDATE above).
+    for (const jar of [jarAdmin, jarMerchant]) {
+      const me = await api("/auth/me", {}, jar);
+      expect(me.status).toBe(200);
+      expect(((me.body as MeBody).data.user.email_verified)).toBe(1);
+    }
+  });
+
+  it("PATCH /auth/me response carries the stored verification flag", async () => {
+    const res = await api("/auth/me", { method: "PATCH", body: JSON.stringify({ name: "Verified Name" }) }, jarMerchant);
+    expect(res.status).toBe(200);
+    expect(((res.body as MeBody).data.user.email_verified)).toBe(1);
+  });
+});
 
 describe("PATCH /auth/me name updates", () => {
   it("admin updates name, sessions stay valid", async () => {
@@ -181,7 +198,7 @@ describe("PATCH /auth/me guards", () => {
     expect(res.status).toBe(401);
     expect(res.body).toEqual({
       ok: false,
-      error: { code: "invalid_credentials", message: "Invalid phone or password." },
+      error: { code: "invalid_credentials", message: "Invalid email or password." },
     });
   });
 
@@ -230,9 +247,9 @@ describe("PATCH /auth/me guards", () => {
 }, 90_000);
 
 describe("PATCH /auth/me logout_other_sessions", () => {
-  it("phone change defaults to revoking others; current stays alive", async () => {
-    const jar1 = await loginJar(merchantAPhone, PASS);
-    const jar2 = await loginJar(merchantAPhone, PASS);
+  it("phone change defaults to keeping every session", async () => {
+    const jar1 = await loginJar("pfma@example.com", PASS);
+    const jar2 = await loginJar("pfma@example.com", PASS);
     const NEW_PHONE = "+963900001321";
     const res = await api("/auth/me", {
       method: "PATCH",
@@ -243,15 +260,14 @@ describe("PATCH /auth/me logout_other_sessions", () => {
     expect(user.phone).toBe(NEW_PHONE);
     expect((res.body as MeBody).data.reauth_required).toBe(false);
     expect((await api("/auth/me", {}, jar1)).status).toBe(200);
-    expect((await api("/auth/me", {}, jar2)).status).toBe(401);
-    expect((await api("/auth/login", { method: "POST", body: JSON.stringify({ phone: NEW_PHONE, password: PASS }) })).status).toBe(200);
-    expect((await api("/auth/login", { method: "POST", body: JSON.stringify({ phone: merchantAPhone, password: PASS }) })).status).toBe(401);
-    merchantAPhone = NEW_PHONE;
+    expect((await api("/auth/me", {}, jar2)).status).toBe(200);
+    // Phone is contact data, not identity: the same email still logs in.
+    expect((await api("/auth/login", { method: "POST", body: JSON.stringify({ email: "pfma@example.com", password: PASS }) })).status).toBe(200);
   });
 
   it("phone change with explicit true revokes others only", async () => {
-    const jar1 = await loginJar(merchantAPhone, PASS);
-    const jar2 = await loginJar(merchantAPhone, PASS);
+    const jar1 = await loginJar("pfma@example.com", PASS);
+    const jar2 = await loginJar("pfma@example.com", PASS);
     const NEW_PHONE = "+963900001322";
     const res = await api("/auth/me", {
       method: "PATCH",
@@ -260,12 +276,11 @@ describe("PATCH /auth/me logout_other_sessions", () => {
     expect(res.status).toBe(200);
     expect((await api("/auth/me", {}, jar1)).status).toBe(200);
     expect((await api("/auth/me", {}, jar2)).status).toBe(401);
-    merchantAPhone = NEW_PHONE;
   });
 
   it("phone change with false keeps every session", async () => {
-    const jar1 = await loginJar(merchantAPhone, PASS);
-    const jar2 = await loginJar(merchantAPhone, PASS);
+    const jar1 = await loginJar("pfma@example.com", PASS);
+    const jar2 = await loginJar("pfma@example.com", PASS);
     const NEW_PHONE = "+963900001323";
     const res = await api("/auth/me", {
       method: "PATCH",
@@ -275,21 +290,23 @@ describe("PATCH /auth/me logout_other_sessions", () => {
     expect((res.body as MeBody).data.reauth_required).toBe(false);
     expect((await api("/auth/me", {}, jar1)).status).toBe(200);
     expect((await api("/auth/me", {}, jar2)).status).toBe(200);
-    merchantAPhone = NEW_PHONE;
   });
 
-  it("email change true revokes others; false keeps all", async () => {
-    const jar1 = await loginJar(MERCHANT_B_PHONE, PASS);
-    const jar2 = await loginJar(MERCHANT_B_PHONE, PASS);
+  it("email change moves the login identity; old email dies", async () => {
+    const jar1 = await loginJar(MERCHANT_B_EMAIL, PASS);
+    const jar2 = await loginJar(MERCHANT_B_EMAIL, PASS);
     const first = await api("/auth/me", {
       method: "PATCH",
-      body: JSON.stringify({ email: "pfb-new@example.com", current_password: PASS }),
+      body: JSON.stringify({ email: "pfb-new@example.com", current_password: PASS, logout_other_sessions: true }),
     }, jar1);
     expect(first.status).toBe(200);
     expect(((first.body as MeBody).data.user.email)).toBe("pfb-new@example.com");
     expect((await api("/auth/me", {}, jar1)).status).toBe(200);
     expect((await api("/auth/me", {}, jar2)).status).toBe(401);
-    const jar3 = await loginJar(MERCHANT_B_PHONE, PASS);
+    // New email authenticates; old email no longer does.
+    expect((await api("/auth/login", { method: "POST", body: JSON.stringify({ email: "pfb-new@example.com", password: PASS }) })).status).toBe(200);
+    expect((await api("/auth/login", { method: "POST", body: JSON.stringify({ email: MERCHANT_B_EMAIL, password: PASS }) })).status).toBe(401);
+    const jar3 = await loginJar("pfb-new@example.com", PASS);
     const second = await api("/auth/me", {
       method: "PATCH",
       body: JSON.stringify({ email: "pfb-new2@example.com", current_password: PASS, logout_other_sessions: false }),
@@ -299,9 +316,27 @@ describe("PATCH /auth/me logout_other_sessions", () => {
     expect((await api("/auth/me", {}, jar3)).status).toBe(200);
   });
 
+  it("email change with omitted flag keeps every session", async () => {
+    const jar1 = await loginJar("pfb-new2@example.com", PASS);
+    const jar2 = await loginJar("pfb-new2@example.com", PASS);
+    const res = await api("/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify({ email: "pfb-new3@example.com", current_password: PASS }),
+    }, jar1);
+    expect(res.status).toBe(200);
+    expect((await api("/auth/me", {}, jar1)).status).toBe(200);
+    expect((await api("/auth/me", {}, jar2)).status).toBe(200);
+    // restore the known address for later tests
+    const back = await api("/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify({ email: "pfb-new2@example.com", current_password: PASS }),
+    }, jar1);
+    expect(back.status).toBe(200);
+  });
+
   it("same-value phone/email needs no password and revokes nothing", async () => {
-    const jar1 = await loginJar(MERCHANT_B_PHONE, PASS);
-    const jar2 = await loginJar(MERCHANT_B_PHONE, PASS);
+    const jar1 = await loginJar("pfb-new2@example.com", PASS);
+    const jar2 = await loginJar("pfb-new2@example.com", PASS);
     const res = await api("/auth/me", {
       method: "PATCH",
       body: JSON.stringify({ phone: MERCHANT_B_PHONE, email: "pfb-new2@example.com", logout_other_sessions: true }),

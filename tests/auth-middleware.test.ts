@@ -59,6 +59,7 @@ const LIVE_ROW = {
   phone: "+963900000001",
   email: null,
   name: "Merchant",
+  email_verified: 1,
   is_active: 1,
 };
 
@@ -116,7 +117,7 @@ describe("requireAuth", () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; data: { user: { id: string; role: string } } };
-    expect(body.data.user).toMatchObject({ id: "user-1", role: "merchant" });
+    expect(body.data.user).toMatchObject({ id: "user-1", role: "merchant", email_verified: 1 });
     expect(body.data.user).not.toHaveProperty("password_hash");
     expect(canned.touched).toEqual(["sess-1"]);
   });

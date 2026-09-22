@@ -112,18 +112,19 @@ beforeAll(async () => {
     const r = d1(sql);
     if (!r.ok) throw new Error(`B5 seed failed: ${r.error}`);
   }
+  d1(`UPDATE users SET email_verified = 1 WHERE id IN ('user_verify_b5c_a', 'user_verify_b5c_b');`);
 
-  async function loginCookie(phone: string): Promise<string> {
+  async function loginCookie(email: string): Promise<string> {
     const res = await fetch(`${BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone, password: PASS }),
+      body: JSON.stringify({ email, password: PASS }),
     });
-    if (res.status !== 200) throw new Error(`B5 setup login failed for ${phone}: ${res.status}`);
+    if (res.status !== 200) throw new Error(`B5 setup login failed for ${email}: ${res.status}`);
     return cookieOf(res.headers.get("set-cookie"));
   }
-  jarA = await loginCookie(OWNER_A);
-  jarB = await loginCookie(OWNER_B);
+  jarA = await loginCookie("b5ca@example.com");
+  jarB = await loginCookie("b5cb@example.com");
 }, 180_000);
 
 afterAll(async () => {
@@ -244,6 +245,41 @@ describe("B5 customers: private management + isolation", () => {
     expect(cross.status).toBe(404);
     const intact = await api(`${B}/customers/cust_verify_b5c_b`, {}, jarB);
     expect(((intact.body as { data: { customer: { name: string } } }).data.customer.name)).toBe("Cust B");
+  });
+
+  it("patch without email preserves the stored email (no null-wipe)", async () => {
+    const mk = await api(`${A}/customers`, {
+      method: "POST",
+      body: JSON.stringify({ name: "Mailable", phone: "+963911500077", email: "mailable@example.com" }),
+    });
+    expect(mk.status).toBe(200);
+    const id = (mk.body as { data: { customer: { id: string } } }).data.customer.id;
+
+    const renamed = await api(`${A}/customers/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: "Mailable Renamed" }),
+    }, jarA);
+    expect(renamed.status).toBe(200);
+    const kept = await api(`${A}/customers/${id}`, {}, jarA);
+    expect(((kept.body as { data: { customer: { email: string | null } } }).data.customer.email))
+      .toBe("mailable@example.com");
+
+    const cleared = await api(`${A}/customers/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ email: null }),
+    }, jarA);
+    expect(cleared.status).toBe(200);
+    const gone = await api(`${A}/customers/${id}`, {}, jarA);
+    expect(((gone.body as { data: { customer: { email: string | null } } }).data.customer.email))
+      .toBe(null);
+
+    const noop = await api(`${A}/customers/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({}),
+    }, jarA);
+    expect(noop.status).toBe(200);
+    expect(((noop.body as { data: { customer: { name: string } } }).data.customer.name))
+      .toBe("Mailable Renamed");
   });
 
   it("delete removes unused customers; missing is 404", async () => {

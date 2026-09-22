@@ -164,12 +164,12 @@ const items = [
   {
     label: "admin user",
     check: `SELECT 1 FROM users WHERE phone = '${esc(ADMIN_PHONE)}';`,
-    insert: (now, hashes) => `INSERT INTO users (id, phone, email, name, password_hash, role, created_at, updated_at) VALUES ('seed-admin', '${esc(ADMIN_PHONE)}', 'admin@sallasyria.local', 'Platform Admin', '${hashes.admin}', 'admin', '${now}', '${now}') ON CONFLICT(phone) DO NOTHING;`,
+    insert: (now, hashes) => `INSERT INTO users (id, phone, email, name, password_hash, role, email_verified, created_at, updated_at) VALUES ('seed-admin', '${esc(ADMIN_PHONE)}', 'admin@sallasyria.local', 'Platform Admin', '${hashes.admin}', 'admin', 1, '${now}', '${now}') ON CONFLICT(phone) DO NOTHING;`,
   },
   {
     label: "demo merchant",
     check: `SELECT 1 FROM users WHERE phone = '+963990000101';`,
-    insert: (now, hashes) => `INSERT INTO users (id, phone, email, name, password_hash, role, created_at, updated_at) VALUES ('seed-merchant', '+963990000101', 'demo@sallasyria.local', 'Demo Merchant', '${hashes.merchant}', 'merchant', '${now}', '${now}') ON CONFLICT(phone) DO NOTHING;`,
+    insert: (now, hashes) => `INSERT INTO users (id, phone, email, name, password_hash, role, email_verified, created_at, updated_at) VALUES ('seed-merchant', '+963990000101', 'demo@sallasyria.local', 'Demo Merchant', '${hashes.merchant}', 'merchant', 1, '${now}', '${now}') ON CONFLICT(phone) DO NOTHING;`,
   },
   {
     label: "demo store",

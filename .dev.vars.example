@@ -11,5 +11,20 @@ ADMIN_BOOTSTRAP_PASSWORD=change-me-before-seeding
 # Absent locally = documented dev bypass; required in production.
 # TURNSTILE_SECRET=
 
+# SendGrid transactional email (verification, password reset, order
+# notifications). Absent locally = mail paths log-and-skip; set all three
+# for real delivery. Production values live ONLY in `wrangler secret` —
+# never here, never hardcoded.
+# SENDGRID_API_KEY=
+# MAIL_FROM=noreply@example.com
+# APP_URL=http://localhost:8787
+
 # Worker environment label consumed by Env.ENVIRONMENT (development default).
 # ENVIRONMENT=development
+
+# Public origin of the Next.js frontend for cookie-credentialed CORS.
+# Local default (http://localhost:3000) is allowed automatically in
+# non-production environments; set this only to override it. In production,
+# set the real frontend origin via `wrangler secret` / dashboard — unset
+# means the API sends no CORS headers (browser calls blocked, as before).
+# FRONTEND_URL=http://localhost:3000

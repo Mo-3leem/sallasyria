@@ -159,10 +159,11 @@ beforeAll(async () => {
     const r = d1(sql);
     if (!r.ok) throw new Error(`B6 seed failed: ${r.error}`);
   }
+  d1(`UPDATE users SET email_verified = 1 WHERE id IN ('user_verify_b6c_a', 'user_verify_b6c_b');`);
   const login = await fetch(`${BASE}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ phone: OWNER_A, password: PASS }),
+    body: JSON.stringify({ email: "b6ca@example.com", password: PASS }),
   });
   if (login.status !== 200) throw new Error(`B6 setup login failed: ${login.status}`);
   jarA = cookieOf(login.headers.get("set-cookie"));

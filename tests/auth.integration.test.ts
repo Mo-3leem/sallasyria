@@ -22,11 +22,14 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const isWindows = process.platform === "win32";
 
 const MERCHANT_PHONE = "+963900000601";
+const MERCHANT_EMAIL = "b2m@example.com";
 const MERCHANT_PASS = "Merchant-Strong-1";
 const ADMIN_PHONE = "+963900000602";
+const ADMIN_EMAIL = "b2a@example.com";
 const ADMIN_PASS = "Admin-Strong-2";
 const INACTIVE_PHONE = "+963900000603";
-const RATELIMIT_PHONE = "+963900000699";
+const INACTIVE_EMAIL = "b2i@example.com";
+const RATELIMIT_EMAIL = "ratelimit-b2@example.com";
 
 let server: ChildProcess | null = null;
 let serverOutput = "";
@@ -153,6 +156,9 @@ beforeAll(async () => {
     const r = d1(sql);
     if (!r.ok) throw new Error(`B2 seed failed: ${r.error} [${sql.slice(0, 80)}]`);
   }
+  // Verification-gated login: seeded fixture users are verified; the
+  // unverified-login path is covered by dedicated tests below.
+  d1(`UPDATE users SET email_verified = 1 WHERE id IN ('user_verify_b2_merchant', 'user_verify_b2_admin', 'user_verify_b2_inactive');`);
 }, 180_000);
 
 afterAll(async () => {
@@ -168,7 +174,7 @@ describe("B2 login", () => {
     const j = jar();
     const res = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: MERCHANT_PHONE, password: MERCHANT_PASS }),
+      body: JSON.stringify({ email: MERCHANT_EMAIL, password: MERCHANT_PASS }),
     });
     expect(res.status).toBe(200);
     j.ingest(res.setCookie);
@@ -180,7 +186,7 @@ describe("B2 login", () => {
 
     const body = res.body as { ok: boolean; data: { user: Record<string, unknown> } };
     expect(body.ok).toBe(true);
-    expect(body.data.user).toMatchObject({ phone: MERCHANT_PHONE, role: "merchant" });
+    expect(body.data.user).toMatchObject({ email: MERCHANT_EMAIL, role: "merchant" });
     expect(body.data.user).not.toHaveProperty("password_hash");
     expect(JSON.stringify(body)).not.toContain(raw);
 
@@ -195,28 +201,47 @@ describe("B2 login", () => {
     expect(rows.some((r) => r["token_hash"] === raw)).toBe(false);
   }, 30_000);
 
-  it("wrong password, unknown phone, and inactive user share one 401", async () => {
+  it("wrong password, unknown email, and inactive user share one 401", async () => {
     const shapes: [string, string][] = [
-      [MERCHANT_PHONE, "Wrong-Password-9"],
-      ["+963900000000", "Whatever-1"],
-      [INACTIVE_PHONE, ADMIN_PASS],
+      [MERCHANT_EMAIL, "Wrong-Password-9"],
+      ["unknown-b2@example.com", "Whatever-1"],
+      [INACTIVE_EMAIL, ADMIN_PASS],
     ];
-    for (const [phone, password] of shapes) {
-      const res = await api("/auth/login", { method: "POST", body: JSON.stringify({ phone, password }) });
+    for (const [email, password] of shapes) {
+      const res = await api("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
       expect(res.status).toBe(401);
       expect(res.body).toEqual({
         ok: false,
-        error: { code: "invalid_credentials", message: "Invalid phone or password." },
+        error: { code: "invalid_credentials", message: "Invalid email or password." },
       });
     }
   }, 60_000);
 
+  it("email identity is normalized; phones never authenticate", async () => {
+    const upper = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: "  B2M@EXAMPLE.COM  ", password: MERCHANT_PASS }),
+    });
+    expect(upper.status).toBe(200);
+    const byPhone = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: MERCHANT_PHONE, password: MERCHANT_PASS }),
+    });
+    // Not an email shape at all → 400, never an authentication attempt.
+    expect(byPhone.status).toBe(400);
+    const rawPhone = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: "merchant", password: MERCHANT_PASS }),
+    });
+    expect(rawPhone.status).toBe(400);
+  }, 60_000);
+
   it("rejects invalid bodies with 400", async () => {
-    const empty = await api("/auth/login", { method: "POST", body: JSON.stringify({ phone: "", password: "" }) });
+    const empty = await api("/auth/login", { method: "POST", body: JSON.stringify({ email: "", password: "" }) });
     expect(empty.status).toBe(400);
     const huge = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: MERCHANT_PHONE, password: "x".repeat(300) }),
+      body: JSON.stringify({ email: MERCHANT_EMAIL, password: "x".repeat(300) }),
     });
     expect(huge.status).toBe(400);
   }, 30_000);
@@ -227,7 +252,7 @@ describe("B2 sessions", () => {
     const j = jar();
     const login = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: MERCHANT_PHONE, password: MERCHANT_PASS }),
+      body: JSON.stringify({ email: MERCHANT_EMAIL, password: MERCHANT_PASS }),
     });
     j.ingest(login.setCookie);
     const me = await api("/auth/me", {}, j.header());
@@ -246,7 +271,7 @@ describe("B2 sessions", () => {
     const j = jar();
     const login = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: ADMIN_PHONE, password: ADMIN_PASS }),
+      body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASS }),
     });
     j.ingest(login.setCookie);
     const raw = j.cookies.get("ss_session")!;
@@ -273,7 +298,7 @@ describe("B2 sessions", () => {
     const j = jar();
     const login = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: MERCHANT_PHONE, password: MERCHANT_PASS }),
+      body: JSON.stringify({ email: MERCHANT_EMAIL, password: MERCHANT_PASS }),
     });
     j.ingest(login.setCookie);
     const out = await api("/auth/logout", { method: "POST" }, j.header());
@@ -291,11 +316,11 @@ describe("B2 sessions", () => {
     const b = jar();
     const la = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: MERCHANT_PHONE, password: MERCHANT_PASS }),
+      body: JSON.stringify({ email: MERCHANT_EMAIL, password: MERCHANT_PASS }),
     });
     const lb = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: MERCHANT_PHONE, password: MERCHANT_PASS }),
+      body: JSON.stringify({ email: MERCHANT_EMAIL, password: MERCHANT_PASS }),
     });
     a.ingest(la.setCookie);
     b.ingest(lb.setCookie);
@@ -308,7 +333,7 @@ describe("B2 sessions", () => {
     const c = jar();
     const lc = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ phone: MERCHANT_PHONE, password: MERCHANT_PASS }),
+      body: JSON.stringify({ email: MERCHANT_EMAIL, password: MERCHANT_PASS }),
     });
     c.ingest(lc.setCookie);
     const purge = await api("/auth/logout-others", { method: "POST" }, c.header());
@@ -322,7 +347,7 @@ describe("B2 sessions", () => {
     for (let i = 0; i < 11; i++) {
       const res = await api("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ phone: RATELIMIT_PHONE, password: "Guess-Number-1" }),
+        body: JSON.stringify({ email: RATELIMIT_EMAIL, password: "Guess-Number-1" }),
       });
       statuses.push(res.status);
     }
