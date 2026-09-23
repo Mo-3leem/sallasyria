@@ -1,5 +1,6 @@
 import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
-import type { AppEnv } from "../env.js";
+import type { D1Database } from "@cloudflare/workers-types";
+import type { AppEnv, Env } from "../env.js";
 import { getDb } from "../db.js";
 import { resourceId } from "../db/tenant.js";
 import { AppError } from "../http/errors.js";
@@ -17,7 +18,9 @@ import {
   getSubscription,
   listSubscriptions,
   renewSubscription,
+  subscriptionNotifyTarget,
 } from "../services/subscriptions.js";
+import { buildSubscriptionEmail, fireOutboxMail } from "../services/mail-outbox.js";
 import {
   createPlan,
   deletePlan,
@@ -28,6 +31,30 @@ import {
 import { getUserPublic, resetUserPassword } from "../services/users.js";
 
 export const admin = new OpenAPIHono<AppEnv>();
+
+// Merchant notice for sub lifecycle events, post-commit via the exactly-once
+// outbox. Never throws: mail can never fail admin operations.
+async function notifySubOwner(
+  db: D1Database,
+  env: Env,
+  c: unknown,
+  sub: { id: string },
+  event: "activated" | "cancelled" | "renewed",
+  detail: string
+): Promise<void> {
+  try {
+    const target = await subscriptionNotifyTarget(db, sub.id);
+    if (!target?.email) return;
+    const msg = buildSubscriptionEmail(target.storeName, event, detail);
+    await fireOutboxMail(db, env, c, `sub:${sub.id}:${event}`, {
+      to: target.email,
+      subject: msg.subject,
+      text: msg.text,
+    });
+  } catch {
+    // Fall through: mail never fails admin ops.
+  }
+}
 
 // NOTE (type-level boundary): zero SQL strings here; scoping only from
 // storeScope(c). Enforced by tests/tenant-conventions.test.ts.
@@ -119,6 +146,7 @@ admin.openapi(activateRoute, async (c) => {
   assertNoImmutableFields(raw, ["id", "status", "cancelled_at"]);
   const sub = await activateSubscription(getDb(c), c.req.valid("json"));
   auditLog("admin.subscription.activate", { actor: currentUser(c).id, store: sub.store_id, result: sub.id });
+  await notifySubOwner(getDb(c), c.env, c, sub, "activated", `Plan ${sub.plan_id}, ${sub.starts_at} to ${sub.ends_at ?? "open"}.`);
   return ok(c, { subscription: sub }, 201);
 }, validationHook);
 
@@ -153,6 +181,7 @@ admin.openapi(cancelRoute, async (c) => {
   assertNoImmutableFields(raw, ["id", "status", "store_id", "plan_id"]);
   const sub = await cancelSubscription(getDb(c), resourceId(c), c.req.valid("json").cancelled_at);
   auditLog("admin.subscription.cancel", { actor: currentUser(c).id, store: sub.store_id, result: sub.id });
+  await notifySubOwner(getDb(c), c.env, c, sub, "cancelled", `Cancelled at ${sub.cancelled_at ?? "now"}.`);
   return ok(c, { subscription: sub });
 }, validationHook);
 
@@ -194,6 +223,7 @@ admin.openapi(renewRoute, async (c) => {
   assertNoImmutableFields(raw, ["id", "status", "cancelled_at", "store_id", "plan_id"]);
   const sub = await renewSubscription(getDb(c), resourceId(c), c.req.valid("json"));
   auditLog("admin.subscription.renew", { actor: currentUser(c).id, store: sub.store_id, result: sub.id });
+  await notifySubOwner(getDb(c), c.env, c, sub, "renewed", `Plan ${sub.plan_id}, ${sub.starts_at} to ${sub.ends_at ?? "open"}.`);
   return ok(c, { subscription: sub }, 201);
 }, validationHook);
 

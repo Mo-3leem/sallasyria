@@ -22,7 +22,8 @@ export type AuditAction =
   | "billing.webhook.failed"
   | "billing.webhook.amount_mismatch"
   | "billing.webhook.duplicate"
-  | "store.trial.grant";
+  | "store.trial.grant"
+  | "store.theme.publish";
 
 export function auditLog(
   action: AuditAction,

@@ -42,8 +42,12 @@ async function request<T>(
 
 export const api = {
   get: <T>(path: string) => request<T>(path, { method: "GET" }),
-  post: <T>(path: string, body: unknown) =>
-    request<T>(path, { method: "POST", body: JSON.stringify(body) }),
+  post: <T>(path: string, body: unknown, headers?: Record<string, string>) =>
+    request<T>(path, {
+      method: "POST",
+      body: JSON.stringify(body),
+      ...(headers ? { headers } : {}),
+    }),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
@@ -414,6 +418,144 @@ export interface BillingIntent {
   expires_at: string | null;
 }
 
+export interface ThemeData {
+  store_id: string;
+  draft: Record<string, unknown>;
+  published_snapshot: Record<string, unknown> | null;
+  published_at: string | null;
+  updated_at: string;
+}
+
+/**
+ * Merchant theme designer (draft autosave + audited publish + preview
+ * tokens). Draft bodies are whitelisted server-side; unknown keys 400.
+ */
+export const themeApi = {
+  get: (storeId: string) =>
+    api.get<{ theme: ThemeData }>(storePath(storeId, "/theme")),
+  update: (storeId: string, draft: Record<string, unknown>) =>
+    api.patch<{ theme: ThemeData }>(storePath(storeId, "/theme"), draft),
+  publish: (storeId: string) =>
+    api.post<{ theme: ThemeData }>(storePath(storeId, "/theme/publish"), {}),
+  issuePreview: (storeId: string) =>
+    api.post<{ token: string; expires_at: string }>(
+      storePath(storeId, "/theme/preview"),
+      {}
+    ),
+};
+
+export interface PreviewPayload {
+  store: PublicStore;
+  theme: ThemeData;
+  categories: PublicCategory[];
+  products: PublicProduct[];
+}
+
+/** Public, token-gated preview render data (no session). */
+export const previewApi = {
+  get: (token: string) =>
+    api.get<{
+      store: PublicStore;
+      theme: ThemeData;
+      categories: PublicCategory[];
+      products: PublicProduct[];
+    }>(`/s/preview/${encodeURIComponent(token)}`),
+};
+
+export interface PublicStore {
+  id: string;
+  slug: string;
+  name: string;
+  currency: string;
+}
+
+export interface PublicCategory {
+  id: string;
+  name: string;
+  slug: string;
+  parent_id: string | null;
+  sort_order: number;
+}
+
+export interface PublicProduct {
+  id: string;
+  category_id: string | null;
+  name: string;
+  slug: string;
+  price: number;
+  stock_quantity: number | null;
+}
+
+export interface CheckoutResult {
+  order: {
+    id: string;
+    order_number: number;
+    status: string;
+    subtotal: number;
+    discount: number;
+    total: number;
+    payment_method: string;
+    payment_status: string;
+    customer_name: string;
+    customer_phone: string;
+    shipping_method: string;
+    shipping_cost: number;
+    shipping_governorate: string;
+    shipping_address: string;
+  };
+  items: {
+    id: string;
+    product_name: string;
+    quantity: number;
+    unit_price: number;
+    line_total: number;
+  }[];
+  replayed: boolean;
+}
+
+/**
+ * Public storefront reads (no auth): published stores/rows only, drafts
+ * 404 identically to missing. Rate-limited per client+store server-side.
+ */
+export const storefrontApi = {
+  bySlug: (slug: string) =>
+    api.get<{ store: PublicStore }>(
+      `/stores/by-slug/${encodeURIComponent(slug)}`
+    ),
+  store: (storeId: string) =>
+    api.get<{ store: PublicStore }>(
+      storePath(storeId, "/catalog/store")
+    ),
+  categories: (storeId: string) =>
+    api.get<{ categories: PublicCategory[] }>(
+      storePath(storeId, "/catalog/categories")
+    ),
+  products: (storeId: string) =>
+    api.get<{ products: PublicProduct[] }>(
+      storePath(storeId, "/catalog/products")
+    ),
+  checkout: (
+    storeId: string,
+    data: {
+      customer: { name: string; phone: string; email?: string | null };
+      items?: { product_id: string; quantity: number; selected_options?: string | null }[];
+      cart_id?: string;
+      shipping: {
+        recipient_name: string;
+        phone: string;
+        governorate: string;
+        city?: string | null;
+        address_line: string;
+      };
+      payment: { method: string; reference?: string | null };
+    },
+    idempotencyKey: string
+  ) =>
+    api.post<CheckoutResult>(storePath(storeId, "/checkout"), data, {
+      "X-Idempotency-Key": idempotencyKey,
+    }),
+};
+
 /**
  * Self-serve billing (Phase 8). Prices always come from the server —
  * callers never send amounts. Polling reads intent rows (no secrets).
@@ -525,5 +667,108 @@ export const adminApi = {
     api.post<{ reset: boolean }>(
       `/admin/users/${encodeURIComponent(id)}/password`,
       { new_password }
+    ),
+};
+
+export interface BuyerAccount {
+  id: string;
+  name: string;
+  phone: string;
+  email: string | null;
+  email_verified: boolean;
+}
+
+export interface ServerCartItem {
+  id: string;
+  product_id: string;
+  product_name: string;
+  unit_price: number;
+  quantity: number;
+}
+
+export interface ServerCart {
+  id: string;
+  expires_at: string;
+  items: ServerCartItem[];
+}
+
+export interface BuyerAddress {
+  id: string;
+  customer_id: string;
+  recipient_name: string;
+  phone: string;
+  governorate: string;
+  city: string | null;
+  address_line: string;
+  is_default: number;
+}
+
+export interface BuyerOrderSummary {
+  id: string;
+  order_number: number;
+  status: string;
+  payment_status: string;
+  total: number;
+}
+
+const buyerPath = (slug: string, rest: string) =>
+  `/s/${encodeURIComponent(slug)}/account${rest}`;
+
+/**
+ * Buyer accounts + server carts (P4). Accounts are optional convenience:
+ * guest checkout always works. Sessions ride the ss_buyer host-only cookie
+ * (credentials:include on every call); the cookie is store-bound server-side.
+ */
+export const buyerApi = {
+  register: (slug: string, data: { name: string; phone: string; email?: string | null; password: string }) =>
+    api.post<{ buyer: BuyerAccount; converted: boolean }>(buyerPath(slug, "/register"), data),
+  login: (slug: string, data: { identity: string; password: string }) =>
+    api.post<{ buyer: BuyerAccount }>(buyerPath(slug, "/login"), data),
+  logout: (slug: string) => api.post<{ logged_out: boolean }>(buyerPath(slug, "/logout"), {}),
+  me: (slug: string) => api.get<{ buyer: BuyerAccount }>(buyerPath(slug, "/me")),
+  updateName: (slug: string, name: string) =>
+    api.patch<{ buyer: BuyerAccount }>(buyerPath(slug, "/me"), { name }),
+  verifyEmail: (slug: string, token: string) =>
+    api.post<{ verified: boolean }>(buyerPath(slug, "/verify-email"), { token }),
+  forgotPassword: (slug: string, identity: string) =>
+    api.post<{ accepted: boolean }>(buyerPath(slug, "/forgot-password"), { identity }),
+  resetPassword: (slug: string, data: { token: string; password: string }) =>
+    api.post<{ reset: boolean }>(buyerPath(slug, "/reset-password"), data),
+  orders: (slug: string) => api.get<{ orders: BuyerOrderSummary[] }>(buyerPath(slug, "/orders")),
+  addresses: {
+    list: (slug: string) => api.get<{ addresses: BuyerAddress[] }>(buyerPath(slug, "/addresses")),
+    create: (slug: string, data: { recipient_name: string; phone: string; governorate: string; city?: string | null; address_line: string }) =>
+      api.post<{ address: BuyerAddress }>(buyerPath(slug, "/addresses"), data),
+    update: (slug: string, id: string, data: Partial<{ recipient_name: string; phone: string; governorate: string; city: string | null; address_line: string }>) =>
+      api.patch<{ address: BuyerAddress }>(buyerPath(slug, `/addresses/${encodeURIComponent(id)}`), data),
+    remove: (slug: string, id: string) =>
+      api.delete<{ deleted: string }>(buyerPath(slug, `/addresses/${encodeURIComponent(id)}`)),
+    makeDefault: (slug: string, id: string) =>
+      api.post<{ address: BuyerAddress }>(buyerPath(slug, `/addresses/${encodeURIComponent(id)}/make-default`), {}),
+  },
+  cart: {
+    my: (slug: string) => api.get<{ cart: ServerCart }>(buyerPath(slug, "/cart")),
+    add: (slug: string, data: { product_id: string; quantity: number }) =>
+      api.post<{ cart: ServerCart }>(buyerPath(slug, "/cart/items"), data),
+    setQty: (slug: string, itemId: string, quantity: number) =>
+      api.patch<{ cart: ServerCart }>(buyerPath(slug, `/cart/items/${encodeURIComponent(itemId)}`), { quantity }),
+    merge: (slug: string, cart_id: string) =>
+      api.post<{ cart: ServerCart }>(buyerPath(slug, "/cart/merge"), { cart_id }),
+  },
+};
+
+const guestCartPath = (slug: string, rest: string) =>
+  `/s/${encodeURIComponent(slug)}/cart${rest}`;
+
+export const cartApi = {
+  create: (slug: string) => api.post<{ cart: ServerCart }>(guestCartPath(slug, ""), {}),
+  get: (slug: string, cartId: string) =>
+    api.get<{ cart: ServerCart }>(guestCartPath(slug, `/${encodeURIComponent(cartId)}`)),
+  add: (slug: string, cartId: string, data: { product_id: string; quantity: number }) =>
+    api.post<{ cart: ServerCart }>(guestCartPath(slug, `/${encodeURIComponent(cartId)}/items`), data),
+  setQty: (slug: string, cartId: string, itemId: string, quantity: number) =>
+    api.patch<{ cart: ServerCart }>(
+      guestCartPath(slug, `/${encodeURIComponent(cartId)}/items/${encodeURIComponent(itemId)}`),
+      { quantity }
     ),
 };

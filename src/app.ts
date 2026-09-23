@@ -21,6 +21,9 @@ import { orders } from "./routes/orders.js";
 import { admin } from "./routes/admin.js";
 import { billingWebhook, storeBilling } from "./routes/billing.js";
 import { plans } from "./routes/plans.js";
+import { storefront } from "./routes/storefront.js";
+import { theme, themePreview } from "./routes/theme.js";
+import { buyer } from "./routes/buyer.js";
 import { registerDocs } from "./routes/docs.js";
 
 // Application factory (exported for tests via app.request(); src/index.ts
@@ -61,6 +64,10 @@ export function createApp() {
   app.route("/stores/:storeId", storeBilling);
   app.route("/billing", billingWebhook);
   app.route("/plans", plans);
+  app.route("/stores", storefront);
+  app.route("/stores/:storeId/theme", theme);
+  app.route("/s/preview", themePreview);
+  app.route("/s", buyer);
   registerDocs(app);
 
   // B8+ mount points attach here. Nothing else

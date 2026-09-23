@@ -14,6 +14,12 @@ import { requireTurnstile } from "../middleware/turnstile.js";
 import { limitPublicMutations } from "../middleware/public.js";
 import { resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
+import { BUYER_COOKIE, getCookieToken } from "../lib/session.js";
+import { resolveBuyerSession } from "../services/buyers.js";
+import { claimCart, unclaimCart } from "../services/buyer-cart.js";
+import { orderNotifyTarget } from "../services/orders.js";
+import { buildOrderConfirmationEmail } from "../services/mail.js";
+import { fireOutboxMail } from "../services/mail-outbox.js";
 import { checkout } from "../services/checkout.js";
 
 export const checkoutRouter = new OpenAPIHono<AppEnv>();
@@ -21,11 +27,12 @@ export const checkoutRouter = new OpenAPIHono<AppEnv>();
 // NOTE (type-level boundary): zero SQL strings here; scoping only from
 // storeScope(c). Enforced by tests/tenant-conventions.test.ts.
 //
-// PUBLIC buyer endpoint (no buyer login exists): resolveStore scoping +
-// per-store rate limit + subscription gate (expired stores cannot sell) +
-// Turnstile, in that cost order. The whole handler body is retried on
-// transient D1 contention ONLY — safe because the idempotency key makes
-// repeats resolve to one order (validated H1/H6 reviews).
+// PUBLIC buyer endpoint (guest-always: no login required; an optional
+// ss_buyer session identifies the account and fills the customer block):
+// resolveStore scoping + per-store rate limit + subscription gate (expired
+// stores cannot sell) + Turnstile, in that cost order. The whole handler
+// body is retried on transient D1 contention ONLY — safe because the
+// idempotency key makes repeats resolve to one order (validated H1/H6).
 
 const buyerCheckout = [
   resolveStore,
@@ -42,6 +49,10 @@ const checkoutSchema = z.object({
     phone: z.string().min(1).max(64),
     email: emailSchema.optional(),
   }),
+  // Exactly one of items / cart_id: direct lines, or a server-cart claim
+  // (CAS-consumed; stock re-validated inside the atomic batch). Cart
+  // checkouts are single-attempt by design: the claim consumes the cart, so
+  // a retry after success answers cart_not_found instead of replaying.
   items: z
     .array(
       z.object({
@@ -51,7 +62,9 @@ const checkoutSchema = z.object({
       })
     )
     .min(1)
-    .max(100),
+    .max(100)
+    .optional(),
+  cart_id: z.string().min(1).max(200).optional(),
   shipping: z.object({
     recipient_name: z.string().min(1).max(200),
     phone: z.string().min(1).max(64),
@@ -83,7 +96,9 @@ const checkoutRoute = createRoute({
   description:
     "Public buyer flow (Turnstile + rate limit). Upserts the customer, allocates the next per-store order number, " +
     "decrements stock, snapshots prices, and claims the Idempotency-Key in one D1 batch. " +
-    "Totals are always computed server-side — client money fields are rejected. " +
+    "Pass cart_id instead of items to check out a server cart (claimed CAS, " +
+    "single-attempt); a logged-in buyer session fills the customer block. " +
+    "Fresh orders enqueue a buyer receipt via the mail outbox. " +
     "Replaying the same key with an identical body returns the original result; a differing body conflicts (422).",
   middleware: [...buyerCheckout],
   request: {
@@ -116,15 +131,37 @@ checkoutRouter.openapi(checkoutRoute, async (c) => {
   const { storeId } = storeScope(c);
   const key = c.req.header(IDEMPOTENCY_HEADER) ?? null;
   const input = c.req.valid("json");
+  if ((input.items && input.cart_id) || (!input.items && !input.cart_id)) {
+    throw new AppError("cart_or_items", 422, "Provide exactly one of items or cart_id.");
+  }
+  // Optional buyer identity: a valid same-store session fills the customer
+  // block from the account (guest-always preserved when absent/invalid).
+  let customer = { name: input.customer.name, phone: input.customer.phone, email: input.customer.email ?? null };
+  const buyerToken = getCookieToken(c.req.header("Cookie") ?? null, BUYER_COOKIE);
+  if (buyerToken) {
+    const session = await resolveBuyerSession(getDb(c), buyerToken);
+    if (session && session.buyer.store_id === storeId) {
+      customer = { name: session.buyer.name, phone: session.buyer.phone, email: session.buyer.email };
+    }
+  }
+  // Cart claim (CAS): exactly one checkout wins the cart. A failed checkout
+  // unclaims best-effort so the buyer keeps their cart.
+  let cartId: string | null = null;
+  let items = (input.items ?? []).map((l) => ({
+    product_id: l.product_id,
+    quantity: l.quantity,
+    selected_options: l.selected_options ?? null,
+  }));
+  if (input.cart_id) {
+    cartId = input.cart_id;
+    const lines = await claimCart(getDb(c), storeId, cartId);
+    items = lines.map((l) => ({ product_id: l.product_id, quantity: l.quantity, selected_options: null }));
+  }
   try {
     const result = await retryTransient(() =>
       checkout(getDb(c), storeId, {
-        customer: { name: input.customer.name, phone: input.customer.phone, email: input.customer.email ?? null },
-        items: input.items.map((l) => ({
-          product_id: l.product_id,
-          quantity: l.quantity,
-          selected_options: l.selected_options ?? null,
-        })),
+        customer,
+        items,
         shipping: {
           recipient_name: input.shipping.recipient_name,
           phone: input.shipping.phone,
@@ -135,8 +172,32 @@ checkoutRouter.openapi(checkoutRoute, async (c) => {
         payment: { method: input.payment.method, reference: input.payment.reference ?? null },
       }, key)
     );
+    // Buyer receipt on fresh orders only (replays were already notified),
+    // post-commit via the exactly-once outbox.
+    if (!result.replayed) {
+      try {
+        const target = await orderNotifyTarget(getDb(c), storeId, result.order.id);
+        if (target?.email) {
+          const msg = buildOrderConfirmationEmail(target.storeName, result.order, result.items);
+          await fireOutboxMail(getDb(c), c.env, c, `order:${result.order.id}:confirm`, {
+            to: target.email,
+            subject: msg.subject,
+            text: msg.text,
+          });
+        }
+      } catch {
+        // Mail never fails checkout.
+      }
+    }
     return ok(c, { order: result.order, items: result.items, replayed: result.replayed }, result.replayed ? 200 : 201);
   } catch (err) {
+    if (cartId) {
+      try {
+        await unclaimCart(getDb(c), cartId);
+      } catch {
+        // Best-effort only.
+      }
+    }
     // Retry budget exhausted on a STILL-transient failure: tell the client to
     // come back instead of serving a sanitized 500 with no guidance.
     if (classifyDbError(err).retryable) {

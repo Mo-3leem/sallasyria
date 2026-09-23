@@ -13,6 +13,10 @@
 //   B3 resolves WHICH store per request. The two must never mix.
 
 export const SESSION_COOKIE = "ss_session";
+// Buyer sessions (customer accounts) authenticate via a separate host-only
+// cookie and a separate table: a merchant token never validates as a buyer
+// and vice versa. No Domain attribute on either: host-only, same as today.
+export const BUYER_COOKIE = "ss_buyer";
 export const SESSION_ABSOLUTE_MS = 7 * 24 * 3600 * 1000; // 7 days
 export const SESSION_IDLE_MS = 24 * 3600 * 1000; // 24h without use
 export const LAST_USED_WRITE_MS = 15 * 60 * 1000; // touch at most every 15m
@@ -71,13 +75,13 @@ export function sessionExpiryIso(nowMs: number = Date.now()): string {
 }
 
 // Minimal cookie handling without dependencies. Parsing is strict: exactly
-// one non-empty ss_session value, else null (fail-closed).
-export function getCookieToken(cookieHeader: string | null): string | null {
+// one non-empty value for the named cookie, else null (fail-closed).
+export function getCookieToken(cookieHeader: string | null, name: string = SESSION_COOKIE): string | null {
   if (!cookieHeader) return null;
   for (const part of cookieHeader.split(";")) {
     const idx = part.indexOf("=");
     if (idx === -1) continue;
-    if (part.slice(0, idx).trim() === SESSION_COOKIE) {
+    if (part.slice(0, idx).trim() === name) {
       const value = part.slice(idx + 1).trim();
       return value.length > 0 ? value : null;
     }
@@ -89,7 +93,7 @@ export type SameSiteMode = "lax" | "none";
 
 export function buildSetCookie(
   token: string,
-  opts: { secure: boolean; maxAgeSec: number; sameSite?: SameSiteMode }
+  opts: { secure: boolean; maxAgeSec: number; sameSite?: SameSiteMode; name?: string }
 ): string {
   // sameSite defaults to lax (previous behavior). Callers select "none"
   // ONLY together with secure:true: browsers reject SameSite=None without
@@ -98,7 +102,7 @@ export function buildSetCookie(
   // workers.dev) production mode.
   const mode: SameSiteMode = opts.sameSite ?? "lax";
   const parts = [
-    `${SESSION_COOKIE}=${token}`,
+    `${opts.name ?? SESSION_COOKIE}=${token}`,
     "Path=/",
     `Max-Age=${opts.maxAgeSec}`,
     "HttpOnly",
@@ -111,12 +115,13 @@ export function buildSetCookie(
 export function buildClearCookie(opts: {
   secure: boolean;
   sameSite?: SameSiteMode;
+  name?: string;
 }): string {
   // Clearing must mirror the attributes the cookie was set with, or the
   // browser keeps the original. Callers pass the same derivation as login.
   const mode: SameSiteMode = opts.sameSite ?? "lax";
   const parts = [
-    `${SESSION_COOKIE}=`,
+    `${opts.name ?? SESSION_COOKIE}=`,
     "Path=/",
     "Max-Age=0",
     "HttpOnly",

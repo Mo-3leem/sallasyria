@@ -223,6 +223,30 @@ export default function StorePage({
             </span>
             <i className="fas fa-chevron-left" aria-hidden="true" style={{ color: "var(--gray-3)" }}></i>
           </Link>
+          <Link
+            href={`/app/stores/${encodeURIComponent(store.id)}/design`}
+            className="store-row"
+          >
+            <span className="store-row-icon" aria-hidden="true">
+              <i className="fas fa-palette"></i>
+            </span>
+            <span className="store-row-body">
+              <span className="store-row-name">تصميم المتجر</span>
+            </span>
+            <i className="fas fa-chevron-left" aria-hidden="true" style={{ color: "var(--gray-3)" }}></i>
+          </Link>
+          <a
+            href={`/s/${encodeURIComponent(store.slug)}`}
+            className="store-row"
+          >
+            <span className="store-row-icon" aria-hidden="true">
+              <i className="fas fa-eye"></i>
+            </span>
+            <span className="store-row-body">
+              <span className="store-row-name">عرض كزائر</span>
+            </span>
+            <i className="fas fa-chevron-left" aria-hidden="true" style={{ color: "var(--gray-3)" }}></i>
+          </a>
         </div>
       </div>
     </>

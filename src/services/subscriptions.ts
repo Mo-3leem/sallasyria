@@ -197,3 +197,37 @@ export async function cancelSubscription(
   if (!updated) throw new AppError("internal", 500, "Something went wrong.");
   return updated;
 }
+
+// Merchant notification target: the store owner's email on file (null when
+// the owner never set one — callers skip, never fabricate) plus the store
+// name for the message.
+export interface SubscriptionNotifyTarget {
+  email: string | null;
+  storeName: string;
+}
+
+export async function storeOwnerNotifyTarget(
+  db: D1Database,
+  storeId: string
+): Promise<SubscriptionNotifyTarget | null> {
+  const row = await db
+    .prepare(
+      `SELECT u.email AS email, s.name AS storeName
+         FROM stores s LEFT JOIN users u ON u.id = s.owner_id
+        WHERE s.id = ?`
+    )
+    .bind(storeId)
+    .first<SubscriptionNotifyTarget>();
+  return row ?? null;
+}
+
+export async function subscriptionNotifyTarget(
+  db: D1Database,
+  subscriptionId: string
+): Promise<(SubscriptionNotifyTarget & { storeId: string }) | null> {
+  const sub = await getSubscription(db, subscriptionId);
+  if (!sub) return null;
+  const target = await storeOwnerNotifyTarget(db, sub.store_id);
+  if (!target) return null;
+  return { ...target, storeId: sub.store_id };
+}

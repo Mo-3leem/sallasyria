@@ -1,0 +1,274 @@
+/* ===================================================================
+   SALLA SYRIA — Public storefront (P2, path scheme)
+   Buyer-facing shop on the brand tokens. RTL-first, responsive.
+   =================================================================== */
+
+.shop {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--light);
+  color: var(--dark);
+}
+
+.shop-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--gray-5);
+}
+.shop-header-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.shop-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: var(--dark);
+}
+.shop-nav {
+  display: flex;
+  gap: 4px;
+  margin-inline-start: 8px;
+}
+.shop-nav a {
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--gray-1);
+}
+.shop-nav a:hover {
+  background: var(--green-50);
+  color: var(--primary);
+}
+.shop-cart-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--primary);
+  color: var(--white);
+  font-weight: 700;
+  font-size: 0.88rem;
+  padding: 9px 18px;
+  border-radius: var(--radius);
+  transition: var(--transition);
+}
+.shop-cart-link:hover {
+  background: var(--primary-dark);
+  color: var(--white);
+}
+.shop-account-link {
+  margin-inline-start: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: inherit;
+  font-weight: 700;
+  font-size: 0.88rem;
+  padding: 9px 10px;
+  border-radius: var(--radius);
+  transition: var(--transition);
+}
+.shop-account-link:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+.shop-cart-count {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 100px;
+  padding: 1px 9px;
+  font-size: 0.78rem;
+}
+
+.shop-main {
+  flex: 1;
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 28px 24px 64px;
+}
+
+.shop-hero {
+  text-align: center;
+  padding: 36px 16px 8px;
+}
+.shop-hero h1 {
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  font-weight: 900;
+  color: var(--dark);
+}
+.shop-hero p {
+  margin-top: 8px;
+  color: var(--gray-2);
+}
+
+.shop-section-title {
+  font-size: 1.2rem;
+  font-weight: 800;
+  margin: 32px 0 16px;
+  color: var(--dark);
+}
+
+.shop-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+.shop-card {
+  background: var(--white);
+  border: 1px solid var(--gray-5);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: var(--transition);
+}
+a.shop-card:hover {
+  border-color: var(--primary);
+  transform: translateY(-3px);
+  box-shadow: var(--shadow);
+}
+.shop-card-name {
+  font-weight: 800;
+  color: var(--dark);
+  font-size: 1rem;
+}
+.shop-card-price {
+  font-weight: 900;
+  color: var(--primary-dark);
+  font-size: 1.05rem;
+}
+.shop-card-meta {
+  font-size: 0.8rem;
+  color: var(--gray-2);
+}
+.shop-card-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.shop-detail {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+  align-items: start;
+}
+.shop-detail-visual {
+  background: var(--green-50);
+  border-radius: var(--radius-lg);
+  min-height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+  font-size: 3rem;
+}
+.shop-detail-info h1 {
+  font-size: clamp(1.5rem, 3vw, 2.1rem);
+  font-weight: 900;
+}
+.shop-detail-price {
+  font-size: 1.5rem;
+  font-weight: 900;
+  color: var(--primary-dark);
+  margin: 12px 0;
+}
+.shop-qty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0;
+}
+.shop-qty button {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 2px solid var(--gray-5);
+  background: var(--white);
+  font-size: 1.1rem;
+  cursor: pointer;
+  color: var(--dark);
+}
+.shop-qty button:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.shop-qty span {
+  min-width: 32px;
+  text-align: center;
+  font-weight: 800;
+  font-size: 1.05rem;
+}
+
+.shop-cart-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--gray-5);
+  font-size: 0.9rem;
+}
+.shop-cart-line:last-child {
+  border-bottom: none;
+}
+.shop-cart-line .grow {
+  flex: 1;
+  min-width: 0;
+}
+.shop-total-box {
+  background: var(--green-50);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin-top: 16px;
+  font-size: 0.9rem;
+  color: var(--gray-1);
+  line-height: 2;
+}
+.shop-total-box strong {
+  color: var(--dark);
+  font-size: 1.05rem;
+}
+
+.shop-footer {
+  border-top: 1px solid var(--gray-5);
+  background: var(--white);
+  padding: 22px;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--gray-2);
+}
+
+@media (max-width: 900px) {
+  .shop-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .shop-detail {
+    grid-template-columns: 1fr;
+  }
+  .shop-nav {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .shop-grid {
+    grid-template-columns: 1fr;
+  }
+  .shop-main {
+    padding: 20px 16px 48px;
+  }
+  .shop-header-inner {
+    padding: 10px 16px;
+  }
+}

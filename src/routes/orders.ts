@@ -14,9 +14,12 @@ import { requireActiveSubscription } from "../middleware/subscription.js";
 import {
   getOrder,
   listOrders,
+  orderNotifyTarget,
   transitionOrderStatus,
   transitionPaymentStatus,
 } from "../services/orders.js";
+import { buildStatusEmail } from "../services/mail.js";
+import { fireOutboxMail } from "../services/mail-outbox.js";
 
 export const orders = new OpenAPIHono<AppEnv>();
 
@@ -118,8 +121,24 @@ orders.openapi(statusTransitionRoute, async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   assertNoImmutableFields(raw, FORBIDDEN);
   const { storeId } = storeScope(c);
-  const order = await transitionOrderStatus(getDb(c), storeId, resourceId(c), c.req.valid("json").status);
+  const to = c.req.valid("json").status;
+  const order = await transitionOrderStatus(getDb(c), storeId, resourceId(c), to);
   if (!order) throw new AppError("order_not_found", 404, "Order not found.");
+  // Buyer notice for the CAS-applied transition only (failures throw above),
+  // post-commit via the exactly-once outbox.
+  try {
+    const target = await orderNotifyTarget(getDb(c), storeId, order.id);
+    if (target?.email) {
+      const msg = buildStatusEmail(target.storeName, target.orderNumber, "status", to, null);
+      await fireOutboxMail(getDb(c), c.env, c, `order:${order.id}:status:${to}`, {
+        to: target.email,
+        subject: msg.subject,
+        text: msg.text,
+      });
+    }
+  } catch {
+    // Mail never fails transitions.
+  }
   return ok(c, { order });
 }, validationHook);
 
@@ -156,7 +175,21 @@ orders.openapi(paymentTransitionRoute, async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   assertNoImmutableFields(raw, FORBIDDEN);
   const { storeId } = storeScope(c);
-  const order = await transitionPaymentStatus(getDb(c), storeId, resourceId(c), c.req.valid("json").payment_status);
+  const to = c.req.valid("json").payment_status;
+  const order = await transitionPaymentStatus(getDb(c), storeId, resourceId(c), to);
   if (!order) throw new AppError("order_not_found", 404, "Order not found.");
+  try {
+    const target = await orderNotifyTarget(getDb(c), storeId, order.id);
+    if (target?.email) {
+      const msg = buildStatusEmail(target.storeName, target.orderNumber, "payment", to, null);
+      await fireOutboxMail(getDb(c), c.env, c, `order:${order.id}:payment:${to}`, {
+        to: target.email,
+        subject: msg.subject,
+        text: msg.text,
+      });
+    }
+  } catch {
+    // Mail never fails transitions.
+  }
   return ok(c, { order });
 }, validationHook);
