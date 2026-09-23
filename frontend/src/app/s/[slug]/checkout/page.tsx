@@ -10,7 +10,7 @@ import { getErrorCode, getFieldErrors, NETWORK_ERROR_MESSAGE } from "@/lib/auth-
 import { GOVERNORATES } from "@/lib/governorates";
 import { TextField } from "@/components/auth/TextField";
 import { FormError } from "@/components/auth/FormError";
-import { TurnstileWidget, TURNSTILE_SITE_KEY } from "@/components/auth/TurnstileWidget";
+import { TurnstileWidget, TURNSTILE_READY } from "@/components/auth/TurnstileWidget";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -182,7 +182,7 @@ function CheckoutBody(props: {
       s.setFieldErrors(local);
       return;
     }
-    if (TURNSTILE_SITE_KEY && !s.captchaToken) {
+    if (TURNSTILE_READY && !s.captchaToken) {
       s.setFormError("أكمل التحقق الأمني أولاً.");
       return;
     }
