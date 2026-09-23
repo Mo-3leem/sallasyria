@@ -61,6 +61,18 @@ const SITE_KEY = TURNSTILE_SITE_KEY.trim();
 /** True when a usable key is baked in (what the widget actually renders on). */
 export const TURNSTILE_READY = SITE_KEY !== "";
 
+/**
+ * Failure logger for Turnstile-gated submits. Logs the backend code plus
+ * the request id (server-log correlation) — never the token or any secret.
+ */
+export function logCaptchaFailure(code: string, requestId: string | null): void {
+  try {
+    console.warn("[buyer-turnstile] submit rejected", { code, requestId });
+  } catch {
+    // Logging must never break the form.
+  }
+}
+
 type LoadState = "loading" | "ready" | "blocked" | "failed";
 
 /**

@@ -10,7 +10,8 @@ import { getErrorCode, getFieldErrors, NETWORK_ERROR_MESSAGE } from "@/lib/auth-
 import { GOVERNORATES } from "@/lib/governorates";
 import { TextField } from "@/components/auth/TextField";
 import { FormError } from "@/components/auth/FormError";
-import { TurnstileWidget, TURNSTILE_READY } from "@/components/auth/TurnstileWidget";
+import { TurnstileWidget, TURNSTILE_READY, logCaptchaFailure } from "@/components/auth/TurnstileWidget";
+import { getLastRequestId } from "@/lib/api";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -186,6 +187,10 @@ function CheckoutBody(props: {
       s.setFormError("أكمل التحقق الأمني أولاً.");
       return;
     }
+    if (!TURNSTILE_READY) {
+      s.setFormError("التحقق الأمني غير مفعّل حالياً — تواصل مع الإدارة.");
+      return;
+    }
     const attemptKey = s.key ?? newKey();
     s.setKey(attemptKey);
     s.setSubmitting(true);
@@ -217,12 +222,19 @@ function CheckoutBody(props: {
       if (!res.ok) {
         const code = getErrorCode(res);
         if (code === "turnstile_required") {
+          logCaptchaFailure(code, getLastRequestId());
           s.setFormError("أكمل التحقق الأمني أولاً.");
           return;
         }
         if (code === "turnstile_failed") {
+          logCaptchaFailure(code, getLastRequestId());
           s.setFormError("فشل التحقق الأمني. حاول مجدداً.");
           s.retryCaptcha();
+          return;
+        }
+        if (code === "turnstile_misconfigured") {
+          logCaptchaFailure(code, getLastRequestId());
+          s.setFormError("التحقق الأمني غير مفعّل حالياً — تواصل مع الإدارة.");
           return;
         }
         if (code === "cart_not_found") {
@@ -245,6 +257,9 @@ function CheckoutBody(props: {
     } catch {
       s.setFormError(NETWORK_ERROR_MESSAGE);
     } finally {
+      // Single-use tokens: refresh after every attempt so a retry (expired
+      // solve, changed cart) never replays a consumed token into a 403.
+      s.retryCaptcha();
       s.setSubmitting(false);
     }
   }
