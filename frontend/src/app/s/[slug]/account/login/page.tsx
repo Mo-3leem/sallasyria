@@ -10,7 +10,7 @@ import { NETWORK_ERROR_MESSAGE } from "@/lib/auth-errors";
 import { TextField } from "@/components/auth/TextField";
 import { PasswordInput } from "@/components/auth/PasswordInput";
 import { FormError } from "@/components/auth/FormError";
-import { TurnstileWidget, TURNSTILE_SITE_KEY } from "@/components/auth/TurnstileWidget";
+import { TurnstileWidget, TURNSTILE_READY } from "@/components/auth/TurnstileWidget";
 
 /** Buyer login: email or phone + password. Guest checkout never needs this. */
 export default function BuyerLoginPage({ params }: { params: { slug: string } }) {
@@ -33,7 +33,7 @@ export default function BuyerLoginPage({ params }: { params: { slug: string } })
       setFormError("أدخل الهاتف أو البريد وكلمة المرور.");
       return;
     }
-    if (TURNSTILE_SITE_KEY && !captchaToken) {
+    if (TURNSTILE_READY && !captchaToken) {
       setFormError("أكمل التحقق الأمني أولاً.");
       return;
     }
