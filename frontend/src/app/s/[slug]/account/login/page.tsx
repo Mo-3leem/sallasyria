@@ -96,7 +96,7 @@ export default function BuyerLoginPage({ params }: { params: { slug: string } })
               {submitting ? "جاري الدخول..." : "دخول"}
             </button>
           </form>
-          <p className="shell-note" style={{ marginTop: 12 }}>
+          <p className="shell-note mt-12">
             ليس لديك حساب؟{" "}
             <Link href={`/s/${encodeURIComponent(slug)}/account/register`}>أنشئ حساباً</Link>
             {" · "}

@@ -52,9 +52,14 @@ function VerifyBody({ slug }: { slug: string }) {
 
   return (
     <div className="shell-card">
-      {state === "working" && <p className="shell-note">جاري تأكيد بريدك...</p>}
+      {state === "working" && (
+        <div className="shell-loading">
+          <span className="shell-spinner" aria-hidden="true"></span>
+          جاري تأكيد بريدك...
+        </div>
+      )}
       {state === "done" && (
-        <p className="shell-note">
+        <p className="shell-success">
           تم تأكيد بريدك بنجاح.{" "}
           <Link href={`/s/${encodeURIComponent(slug)}/account`}>العودة إلى حسابي</Link>
         </p>

@@ -99,7 +99,7 @@ export default function BuyerRegisterPage({ params }: { params: { slug: string }
     <ShopPage slug={slug} title="إنشاء حساب">
       {() => (
         <div className="shell-card">
-          <p className="shell-note" style={{ marginBottom: 12 }}>
+          <p className="shell-note mb-12">
             سجّلت بنفس رقم هاتف طلب سابق؟ سيُربط سجل طلباتك بحسابك تلقائياً.
           </p>
           <form className="auth-form" onSubmit={onSubmit} noValidate>
@@ -113,7 +113,7 @@ export default function BuyerRegisterPage({ params }: { params: { slug: string }
               {submitting ? "جاري إنشاء الحساب..." : "إنشاء الحساب"}
             </button>
           </form>
-          <p className="shell-note" style={{ marginTop: 12 }}>
+          <p className="shell-note mt-12">
             لديك حساب؟{" "}
             <Link href={`/s/${encodeURIComponent(slug)}/account/login`}>سجّل الدخول</Link>
           </p>

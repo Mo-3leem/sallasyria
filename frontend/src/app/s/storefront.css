@@ -272,3 +272,80 @@ a.shop-card:hover {
     padding: 10px 16px;
   }
 }
+
+/* ===================================================================
+   Buyer UI polish (look-and-feel only — no merchant styles touched).
+   All rules below are scoped under .shop (or shop-* classes that exist
+   only on buyer surfaces), use logical properties for RTL, and keep the
+   brand tokens (green/gray/radius/shadow) and Cairo unchanged.
+   =================================================================== */
+
+/* Tap targets ≥44px (WCAG 2.5.8): qty steppers, nav links, header actions. */
+.shop-qty button {
+  width: 44px;
+  height: 44px;
+}
+.shop-nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 10px 14px;
+}
+.shop-cart-link,
+.shop-account-link {
+  min-height: 44px;
+}
+
+/* iOS Safari auto-zooms inputs under 16px: buyer fields stay at 1rem. */
+.shop .auth-input {
+  font-size: 1rem;
+}
+
+/* Password toggle: 44px target + logical placement (end side in RTL).
+   Scoped here so the shared merchant auth.css stays pixel-identical. */
+.shop .password-toggle {
+  width: 44px;
+  height: 44px;
+  left: auto;
+  inset-inline-end: 4px;
+}
+.shop .password-wrap .auth-input {
+  padding-left: 14px;
+  padding-inline-end: 52px;
+}
+
+/* Cart-line qty row sits inline: no outer margins, wraps on 390px screens. */
+.shop-cart-line .shop-qty {
+  margin: 0;
+}
+.shop-cart-price {
+  font-weight: 800;
+  color: var(--dark);
+  white-space: nowrap;
+}
+@media (max-width: 560px) {
+  .shop-cart-line {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+}
+
+/* Turnstile widget slot: centered, vertical rhythm inside auth forms. */
+.turnstile-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+/* Spacing helpers replacing one-off inline margins on buyer pages. */
+.shop .mt-12 {
+  margin-top: 12px;
+}
+.shop .mt-16 {
+  margin-top: 16px;
+}
+.shop .mb-12 {
+  margin-bottom: 12px;
+}

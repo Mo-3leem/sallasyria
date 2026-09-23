@@ -38,7 +38,16 @@ export default function ShopCategoryPage({
             </div>
             {lines.length === 0 ? (
               <div className="shell-card">
-                <p className="shell-note">لا توجد منتجات في هذا التصنيف حالياً.</p>
+                <EmptyState
+                  icon="fas fa-box-open"
+                  title="لا توجد منتجات"
+                  description="لا توجد منتجات في هذا التصنيف حالياً."
+                  action={
+                    <Link href={`/s/${encodeURIComponent(slug)}`} className="btn btn-outline">
+                      العودة إلى المتجر
+                    </Link>
+                  }
+                />
               </div>
             ) : (
               <div className="shop-grid">
