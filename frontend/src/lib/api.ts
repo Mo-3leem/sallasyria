@@ -16,6 +16,15 @@ import type {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8787";
 
+// Latest X-Request-Id seen (backend emits it on every response). Exposed
+// for failure logs so client reports correlate with server access logs.
+// Values logged are codes + request id only — never tokens or secrets.
+let lastRequestId: string | null = null;
+
+export function getLastRequestId(): string | null {
+  return lastRequestId;
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {}
@@ -30,6 +39,11 @@ async function request<T>(
     },
     credentials: "include",
   });
+  try {
+    lastRequestId = response.headers.get("X-Request-Id");
+  } catch {
+    // Headers unreadable (network edge): leave the previous id.
+  }
 
   const data = await response.json();
 

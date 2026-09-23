@@ -9,7 +9,8 @@ import { NETWORK_ERROR_MESSAGE } from "@/lib/auth-errors";
 import { TextField } from "@/components/auth/TextField";
 import { PasswordInput } from "@/components/auth/PasswordInput";
 import { FormError } from "@/components/auth/FormError";
-import { TurnstileWidget, TURNSTILE_READY } from "@/components/auth/TurnstileWidget";
+import { TurnstileWidget, TURNSTILE_READY, logCaptchaFailure } from "@/components/auth/TurnstileWidget";
+import { getLastRequestId } from "@/lib/api";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -51,6 +52,12 @@ export default function BuyerRegisterPage({ params }: { params: { slug: string }
       setFormError("أكمل التحقق الأمني أولاً.");
       return;
     }
+    if (!TURNSTILE_READY) {
+      // No widget baked in: no token can ever be produced. Backend answers
+      // 400/503; say so instead of pointing at a missing checkbox.
+      setFormError("التحقق الأمني غير مفعّل حالياً — تواصل مع الإدارة.");
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await register(slug, {
@@ -62,10 +69,18 @@ export default function BuyerRegisterPage({ params }: { params: { slug: string }
       if (!res.ok) {
         if (res.code === "user_exists") setFormError("يوجد حساب بهذا الهاتف. سجّل الدخول بدلاً من ذلك.");
         else if (res.code === "email_taken") setFormError("هذا البريد مسجل مسبقاً في المتجر.");
-        else if (res.code === "turnstile_required") setFormError("أكمل التحقق الأمني أولاً.");
+        else if (res.code === "turnstile_required") {
+          logCaptchaFailure(res.code, getLastRequestId());
+          setFormError("أكمل التحقق الأمني أولاً.");
+        }
         else if (res.code === "turnstile_failed") {
+          logCaptchaFailure(res.code, getLastRequestId());
           setFormError("فشل التحقق الأمني. حاول مجدداً.");
           retryCaptcha();
+        }
+        else if (res.code === "turnstile_misconfigured") {
+          logCaptchaFailure(res.code, getLastRequestId());
+          setFormError("التحقق الأمني غير مفعّل حالياً — تواصل مع الإدارة.");
         }
         else if (res.code === "network_error") setFormError(NETWORK_ERROR_MESSAGE);
         else setFormError("تعذّر إنشاء الحساب. حاول مجدداً.");
@@ -73,6 +88,9 @@ export default function BuyerRegisterPage({ params }: { params: { slug: string }
       }
       router.replace(`/s/${encodeURIComponent(slug)}/account`);
     } finally {
+      // Turnstile tokens are single-use: every attempt consumes the token,
+      // so a retry (taken phone, expired solve) always mints a fresh one.
+      retryCaptcha();
       setSubmitting(false);
     }
   }

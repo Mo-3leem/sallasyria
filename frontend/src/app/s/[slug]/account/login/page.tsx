@@ -10,7 +10,8 @@ import { NETWORK_ERROR_MESSAGE } from "@/lib/auth-errors";
 import { TextField } from "@/components/auth/TextField";
 import { PasswordInput } from "@/components/auth/PasswordInput";
 import { FormError } from "@/components/auth/FormError";
-import { TurnstileWidget, TURNSTILE_READY } from "@/components/auth/TurnstileWidget";
+import { TurnstileWidget, TURNSTILE_READY, logCaptchaFailure } from "@/components/auth/TurnstileWidget";
+import { getLastRequestId } from "@/lib/api";
 
 /** Buyer login: email or phone + password. Guest checkout never needs this. */
 export default function BuyerLoginPage({ params }: { params: { slug: string } }) {
@@ -37,18 +38,29 @@ export default function BuyerLoginPage({ params }: { params: { slug: string } })
       setFormError("أكمل التحقق الأمني أولاً.");
       return;
     }
+    if (!TURNSTILE_READY) {
+      setFormError("التحقق الأمني غير مفعّل حالياً — تواصل مع الإدارة.");
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await login(slug, identity.trim(), password, captchaToken ?? undefined);
       if (!res.ok) {
         if (res.code === "turnstile_required") {
+          logCaptchaFailure(res.code, getLastRequestId());
           setFormError("أكمل التحقق الأمني أولاً.");
           return;
         }
         if (res.code === "turnstile_failed") {
+          logCaptchaFailure(res.code, getLastRequestId());
           setFormError("فشل التحقق الأمني. حاول مجدداً.");
           setCaptchaToken(null);
           setCaptchaKey((k) => k + 1);
+          return;
+        }
+        if (res.code === "turnstile_misconfigured") {
+          logCaptchaFailure(res.code, getLastRequestId());
+          setFormError("التحقق الأمني غير مفعّل حالياً — تواصل مع الإدارة.");
           return;
         }
         setFormError(
@@ -63,6 +75,10 @@ export default function BuyerLoginPage({ params }: { params: { slug: string } })
       await mergeGuest(slug);
       router.replace(`/s/${encodeURIComponent(slug)}/account`);
     } finally {
+      // Single-use tokens: refresh after every attempt so a retry never
+      // replays a consumed token into a confusing 403.
+      setCaptchaToken(null);
+      setCaptchaKey((k) => k + 1);
       setSubmitting(false);
     }
   }
