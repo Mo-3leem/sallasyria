@@ -2,6 +2,13 @@ import type { ReactNode } from "react";
 import { BuyerProvider } from "@/hooks/useBuyer";
 import { CartProvider } from "@/hooks/useCart";
 import "./storefront.css";
+// Single source of truth for form base styles (mirrors the approved /app
+// fix): buyer forms render auth-form/field/label/input classes whose base
+// definitions live in app/auth/auth.css — without this import, /s/*
+// surfaces render those classes unstyled. Scoped .shop overrides in
+// storefront.css keep winning by higher specificity; merchant auth pages
+// are untouched (shared classes, additive only).
+import "../auth/auth.css";
 
 // Edge runtime for every public storefront route below this segment
 // (/s/[slug] + c/[cat] + p/[product] + checkout + account/* + preview).
