@@ -549,10 +549,12 @@ export const storefrontApi = {
       };
       payment: { method: string; reference?: string | null };
     },
-    idempotencyKey: string
+    idempotencyKey: string,
+    turnstileToken?: string
   ) =>
     api.post<CheckoutResult>(storePath(storeId, "/checkout"), data, {
       "X-Idempotency-Key": idempotencyKey,
+      ...(turnstileToken ? { "X-Turnstile-Token": turnstileToken } : {}),
     }),
 };
 
@@ -714,16 +716,21 @@ export interface BuyerOrderSummary {
 const buyerPath = (slug: string, rest: string) =>
   `/s/${encodeURIComponent(slug)}/account${rest}`;
 
+// Bot-token header for Turnstile-guarded buyer mutations. Omitted when no
+// token (dev bypass covers local); the backend stays the sole enforcer.
+const turnstileHeaders = (token?: string): Record<string, string> | undefined =>
+  token ? { "X-Turnstile-Token": token } : undefined;
+
 /**
  * Buyer accounts + server carts (P4). Accounts are optional convenience:
  * guest checkout always works. Sessions ride the ss_buyer host-only cookie
  * (credentials:include on every call); the cookie is store-bound server-side.
  */
 export const buyerApi = {
-  register: (slug: string, data: { name: string; phone: string; email?: string | null; password: string }) =>
-    api.post<{ buyer: BuyerAccount; converted: boolean }>(buyerPath(slug, "/register"), data),
-  login: (slug: string, data: { identity: string; password: string }) =>
-    api.post<{ buyer: BuyerAccount }>(buyerPath(slug, "/login"), data),
+  register: (slug: string, data: { name: string; phone: string; email?: string | null; password: string }, turnstileToken?: string) =>
+    api.post<{ buyer: BuyerAccount; converted: boolean }>(buyerPath(slug, "/register"), data, turnstileHeaders(turnstileToken)),
+  login: (slug: string, data: { identity: string; password: string }, turnstileToken?: string) =>
+    api.post<{ buyer: BuyerAccount }>(buyerPath(slug, "/login"), data, turnstileHeaders(turnstileToken)),
   logout: (slug: string) => api.post<{ logged_out: boolean }>(buyerPath(slug, "/logout"), {}),
   me: (slug: string) => api.get<{ buyer: BuyerAccount }>(buyerPath(slug, "/me")),
   updateName: (slug: string, name: string) =>

@@ -9,6 +9,7 @@ import { NETWORK_ERROR_MESSAGE } from "@/lib/auth-errors";
 import { TextField } from "@/components/auth/TextField";
 import { PasswordInput } from "@/components/auth/PasswordInput";
 import { FormError } from "@/components/auth/FormError";
+import { TurnstileWidget, TURNSTILE_SITE_KEY } from "@/components/auth/TurnstileWidget";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -24,6 +25,13 @@ export default function BuyerRegisterPage({ params }: { params: { slug: string }
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaKey, setCaptchaKey] = useState(0);
+
+  function retryCaptcha() {
+    setCaptchaToken(null);
+    setCaptchaKey((k) => k + 1);
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -39,6 +47,10 @@ export default function BuyerRegisterPage({ params }: { params: { slug: string }
       setFieldErrors(local);
       return;
     }
+    if (TURNSTILE_SITE_KEY && !captchaToken) {
+      setFormError("أكمل التحقق الأمني أولاً.");
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await register(slug, {
@@ -46,10 +58,15 @@ export default function BuyerRegisterPage({ params }: { params: { slug: string }
         phone: phone.trim(),
         email: email.trim() === "" ? null : email.trim(),
         password,
-      });
+      }, captchaToken ?? undefined);
       if (!res.ok) {
         if (res.code === "user_exists") setFormError("يوجد حساب بهذا الهاتف. سجّل الدخول بدلاً من ذلك.");
         else if (res.code === "email_taken") setFormError("هذا البريد مسجل مسبقاً في المتجر.");
+        else if (res.code === "turnstile_required") setFormError("أكمل التحقق الأمني أولاً.");
+        else if (res.code === "turnstile_failed") {
+          setFormError("فشل التحقق الأمني. حاول مجدداً.");
+          retryCaptcha();
+        }
         else if (res.code === "network_error") setFormError(NETWORK_ERROR_MESSAGE);
         else setFormError("تعذّر إنشاء الحساب. حاول مجدداً.");
         return;
@@ -73,6 +90,7 @@ export default function BuyerRegisterPage({ params }: { params: { slug: string }
             <TextField label="رقم الهاتف" id="br-phone" dir="ltr" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} error={fieldErrors.phone} />
             <TextField label="البريد (اختياري)" id="br-email" dir="ltr" value={email} onChange={(e) => setEmail(e.target.value)} error={fieldErrors.email} />
             <PasswordInput label="كلمة المرور" id="br-password" value={password} onChange={(e) => setPassword(e.target.value)} error={fieldErrors.password} />
+            <TurnstileWidget key={captchaKey} onToken={setCaptchaToken} />
             <button type="submit" className="btn btn-primary btn-lg auth-submit" disabled={submitting}>
               {submitting ? "جاري إنشاء الحساب..." : "إنشاء الحساب"}
             </button>

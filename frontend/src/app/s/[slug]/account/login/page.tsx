@@ -10,6 +10,7 @@ import { NETWORK_ERROR_MESSAGE } from "@/lib/auth-errors";
 import { TextField } from "@/components/auth/TextField";
 import { PasswordInput } from "@/components/auth/PasswordInput";
 import { FormError } from "@/components/auth/FormError";
+import { TurnstileWidget, TURNSTILE_SITE_KEY } from "@/components/auth/TurnstileWidget";
 
 /** Buyer login: email or phone + password. Guest checkout never needs this. */
 export default function BuyerLoginPage({ params }: { params: { slug: string } }) {
@@ -21,6 +22,8 @@ export default function BuyerLoginPage({ params }: { params: { slug: string } })
   const [password, setPassword] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaKey, setCaptchaKey] = useState(0);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -30,10 +33,24 @@ export default function BuyerLoginPage({ params }: { params: { slug: string } })
       setFormError("أدخل الهاتف أو البريد وكلمة المرور.");
       return;
     }
+    if (TURNSTILE_SITE_KEY && !captchaToken) {
+      setFormError("أكمل التحقق الأمني أولاً.");
+      return;
+    }
     setSubmitting(true);
     try {
-      const res = await login(slug, identity.trim(), password);
+      const res = await login(slug, identity.trim(), password, captchaToken ?? undefined);
       if (!res.ok) {
+        if (res.code === "turnstile_required") {
+          setFormError("أكمل التحقق الأمني أولاً.");
+          return;
+        }
+        if (res.code === "turnstile_failed") {
+          setFormError("فشل التحقق الأمني. حاول مجدداً.");
+          setCaptchaToken(null);
+          setCaptchaKey((k) => k + 1);
+          return;
+        }
         setFormError(
           res.code === "user_not_found"
             ? "بيانات الدخول غير صحيحة."
@@ -58,6 +75,7 @@ export default function BuyerLoginPage({ params }: { params: { slug: string } })
             <FormError message={formError} />
             <TextField label="الهاتف أو البريد" id="buyer-identity" dir="ltr" value={identity} onChange={(e) => setIdentity(e.target.value)} />
             <PasswordInput label="كلمة المرور" id="buyer-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <TurnstileWidget key={captchaKey} onToken={setCaptchaToken} />
             <button type="submit" className="btn btn-primary btn-lg auth-submit" disabled={submitting}>
               {submitting ? "جاري الدخول..." : "دخول"}
             </button>
