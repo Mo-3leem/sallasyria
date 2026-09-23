@@ -479,7 +479,9 @@ function cookieSecure(c: { env: Env }): boolean {
 // per-request (Origin host vs request host) so one deployment serves both
 // same-origin and split frontends correctly; unparsable/missing Origin
 // fails safe to Lax (non-browser clients send cookies explicitly anyway).
-function cookieSameSite(c: {
+// Exported for the buyer router (P4): buyer cookies follow the identical
+// split-deployment rule so one deployment serves both frontends correctly.
+export function cookieSameSite(c: {
   req: { header(name: string): string | undefined; url: string };
   env: Env;
 }): "lax" | "none" {

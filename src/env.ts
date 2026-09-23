@@ -64,6 +64,16 @@ export interface AuthUser {
   email_verified: number;
 }
 
+// Buyer identity shape (populated by P4 requireBuyer). Same one-type rule as
+// AuthUser: the context type lives here so middleware and routes agree.
+export interface BuyerIdentity {
+  id: string;
+  store_id: string;
+  name: string;
+  phone: string;
+  email: string | null;
+  email_verified: boolean;
+}
 // Request-scoped values middleware may set. Fields are optional at the type
 // level because routes run before/after auth; requireAuth guarantees user +
 // sessionId are present downstream of it (currentUser casts accordingly), and
@@ -72,6 +82,8 @@ export interface AppVariables {
   user?: AuthUser;
   sessionId?: string;
   storeId?: string;
+  buyer?: BuyerIdentity;
+  buyerSessionId?: string;
 }
 
 export type AppEnv = {

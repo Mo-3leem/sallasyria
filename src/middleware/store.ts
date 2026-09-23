@@ -36,6 +36,52 @@ export async function resolveStore(
   await next();
 }
 
+// resolvePublishedStore: public-route twin of resolveStore for the
+// path-based program (P1). Same fail-closed contract — unknown, missing,
+// AND unpublished ids answer with an identical 404 (no oracle
+// distinguishing "does not exist" from "exists but draft") — so future
+// public catalog/checkout routes mount THIS instead of resolveStore.
+// Merchant-private routes keep resolveStore: owners always manage their
+// own drafts. Reads the flag in one query; no ownership decision here.
+export async function resolvePublishedStore(
+  c: Context<AppEnv>,
+  next: Next
+): Promise<void> {
+  const rawId = c.req.param("storeId");
+  const row = await getDb(c)
+    .prepare(
+      "SELECT id, is_published FROM stores WHERE id = ?"
+    )
+    .bind(rawId)
+    .first<{ id: string; is_published: number }>();
+  if (row === null || row.is_published !== 1) {
+    throw new AppError("store_not_found", 404, "Store not found.");
+  }
+  c.set("storeId", row.id);
+  await next();
+}
+// resolvePublishedStoreBySlug: same fail-closed contract keyed by slug
+// for the storefront bootstrap (/stores/by-slug/:slug). Unknown, missing,
+// and unpublished slugs answer identically (no oracle). Only the resolved
+// id enters context — never the raw slug.
+export async function resolvePublishedStoreBySlug(
+  c: Context<AppEnv>,
+  next: Next
+): Promise<void> {
+  const rawSlug = c.req.param("slug");
+  const row = await getDb(c)
+    .prepare(
+      "SELECT id FROM stores WHERE slug = ? AND is_published = 1"
+    )
+    .bind(rawSlug)
+    .first<{ id: string }>();
+  if (row === null) {
+    throw new AppError("store_not_found", 404, "Store not found.");
+  }
+  c.set("storeId", row.id);
+  await next();
+}
+
 // requireStoreAccess: owner of the resolved store, or admin. Foreign stores
 // answer IDENTICALLY to missing stores (404 store_not_found) so ids cannot
 // be probed for existence (no oracle). Admin cross-store reads succeed but

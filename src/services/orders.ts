@@ -117,3 +117,50 @@ export async function transitionPaymentStatus(
   if (!updated) throw new AppError("internal", 500, "Something went wrong.");
   return updated.order;
 }
+
+// Buyer notification target for a CAS-applied transition: the customer email
+// on file (null when the buyer never gave one — callers skip, never
+// fabricate) plus store + order context for the message.
+export interface OrderNotifyTarget {
+  email: string | null;
+  orderNumber: number;
+  storeName: string;
+}
+
+export async function orderNotifyTarget(
+  db: D1Database,
+  storeId: string,
+  orderId: string
+): Promise<OrderNotifyTarget | null> {
+  const row = await db
+    .prepare(
+      `SELECT o.order_number AS orderNumber, c.email AS email, s.name AS storeName
+         FROM orders o
+         JOIN stores s ON s.id = o.store_id
+         LEFT JOIN customers c ON c.id = o.customer_id
+        WHERE o.store_id = ? AND o.id = ?`
+    )
+    .bind(storeId, orderId)
+    .first<OrderNotifyTarget>();
+  return row ?? null;
+}
+
+// Buyer order history: rows for one account only, newest first, bounded.
+export async function listCustomerOrders(
+  db: D1Database,
+  storeId: string,
+  customerId: string,
+  limit: number = 50
+): Promise<CheckoutOrderRow[]> {
+  const res = await db
+    .prepare(
+      `SELECT id, store_id, order_number, status, subtotal, discount, total,
+              payment_method, payment_status, payment_reference, tracking_number,
+              customer_name, customer_phone, shipping_method, shipping_cost,
+              shipping_governorate, shipping_address
+         FROM orders WHERE store_id = ? AND customer_id = ? ORDER BY created_at DESC LIMIT ?`
+    )
+    .bind(storeId, customerId, Math.min(Math.max(limit, 1), 100))
+    .all<CheckoutOrderRow>();
+  return res.results ?? [];
+}

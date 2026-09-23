@@ -1,5 +1,7 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import type { Env } from "../env.js";
+import { dispatchMail, sendMail } from "./mail.js";
+import { buildSubscriptionEmail, enqueueMail } from "./mail-outbox.js";
 
 // Scheduled hygiene (roadmap B7). Two bounded purges keep tables that would
 // otherwise grow forever (revoked/expired sessions; consumed idempotency
@@ -37,6 +39,38 @@ export async function purgeIdempotencyKeys(db: D1Database, cutoffIsoValue: strin
 export interface MaintenanceSummary {
   sessionsPurged: number;
   idempotencyKeysPurged: number;
+  trialNoticesQueued: number;
+}
+
+export const TRIAL_NOTICE_WINDOW_MS = 7 * 24 * 3600 * 1000; // T-7d
+
+export interface TrialNotice {
+  subId: string;
+  storeId: string;
+  storeName: string;
+  email: string | null;
+  endsAt: string;
+}
+
+// Trialing periods ending inside the notice window with no notice recorded
+// yet (NOT EXISTS on the outbox dedupe key: a notice is sent at most once
+// per subscription, and re-runs after a crash simply resume).
+export async function scanTrialExpiries(db: D1Database, nowMs: number = Date.now()): Promise<TrialNotice[]> {
+  const nowIso = new Date(nowMs).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const horizonIso = new Date(nowMs + TRIAL_NOTICE_WINDOW_MS).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const res = await db
+    .prepare(
+      `SELECT sub.id AS subId, sub.store_id AS storeId, s.name AS storeName, u.email AS email, sub.ends_at AS endsAt
+         FROM subscriptions sub
+         JOIN stores s ON s.id = sub.store_id
+         LEFT JOIN users u ON u.id = s.owner_id
+        WHERE sub.status = 'trialing' AND sub.ends_at IS NOT NULL
+          AND sub.ends_at > ? AND sub.ends_at <= ?
+          AND NOT EXISTS (SELECT 1 FROM mail_outbox WHERE dedupe_key = 'trial-7d:' || sub.id)`
+    )
+    .bind(nowIso, horizonIso)
+    .all<TrialNotice>();
+  return res.results ?? [];
 }
 
 // Cron entrypoint (wired as scheduled() in src/index.ts; verified in B8).
@@ -45,8 +79,36 @@ export interface MaintenanceSummary {
 export async function runScheduledMaintenance(env: Env, nowMs: number = Date.now()): Promise<MaintenanceSummary> {
   const sessionsPurged = await purgeSessions(env.DB, cutoffIso(nowMs, SESSION_RETENTION_MS));
   const idempotencyKeysPurged = await purgeIdempotencyKeys(env.DB, cutoffIso(nowMs, IDEMPOTENCY_RETENTION_MS));
+  let trialNoticesQueued = 0;
+  try {
+    const trials = await scanTrialExpiries(env.DB, nowMs);
+    for (const t of trials) {
+      if (!t.email) continue;
+      const msg = buildSubscriptionEmail(
+        t.storeName,
+        "trial_expiring",
+        `Your trial ends at ${t.endsAt}. Contact us to activate a paid period so your store stays online.`
+      );
+      let queued = false;
+      try {
+        queued = await enqueueMail(env.DB, `trial-7d:${t.subId}`, { to: t.email, subject: msg.subject, text: msg.text });
+      } catch {
+        queued = false;
+      }
+      if (queued) {
+        // No execution context on the cron path: dispatchMail runs detached.
+        dispatchMail(
+          {},
+          sendMail({ to: t.email, subject: msg.subject, text: msg.text }, { apiKey: env.SENDGRID_API_KEY, from: env.MAIL_FROM })
+        );
+        trialNoticesQueued += 1;
+      }
+    }
+  } catch {
+    // Trial notices never fail maintenance.
+  }
   console.log(
-    `maintenance sessions_purged=${sessionsPurged} idempotency_purged=${idempotencyKeysPurged}`
+    `maintenance sessions_purged=${sessionsPurged} idempotency_purged=${idempotencyKeysPurged} trial_notices=${trialNoticesQueued}`
   );
-  return { sessionsPurged, idempotencyKeysPurged };
+  return { sessionsPurged, idempotencyKeysPurged, trialNoticesQueued };
 }

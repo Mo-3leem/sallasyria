@@ -13,12 +13,14 @@ import { currentUser, requireAuth, requireRole } from "../middleware/auth.js";
 import { requireStoreAccess, resolveStore } from "../middleware/store.js";
 import {
   createBillingIntent,
+  getIntent,
   getIntentForStore,
   listAllIntents,
   listIntentsForStore,
   settleWebhook,
 } from "../services/billing.js";
-import { listSubscriptions } from "../services/subscriptions.js";
+import { listSubscriptions, storeOwnerNotifyTarget } from "../services/subscriptions.js";
+import { buildSubscriptionEmail, fireOutboxMail } from "../services/mail-outbox.js";
 
 // NOTE (type-level boundary): zero SQL strings here; scoping only from
 // storeScope(c). All queries live in services/billing.ts + subscriptions.ts.
@@ -301,6 +303,32 @@ billingWebhook.openapi(webhookRoute, async (c) => {
   }
   const result = await adapter.verifyWebhook(c.req.raw, c.env);
   const outcome = await settleWebhook(getDb(c), result);
+  // Merchant notice for a newly settled payment (success or fail), post-
+  // commit via the exactly-once outbox. Duplicates/replays were already
+  // notified; mail never fails the webhook.
+  if (outcome.processed && !outcome.duplicate) {
+    try {
+      const intent = await getIntent(getDb(c), result.intentId);
+      const target = intent ? await storeOwnerNotifyTarget(getDb(c), intent.store_id) : null;
+      if (target?.email) {
+        const failed = !outcome.activated;
+        const msg = buildSubscriptionEmail(
+          target.storeName,
+          failed ? "payment_failed" : "activated",
+          failed
+            ? `Payment ${intent?.id ?? ""} failed or mismatched; no coverage was recorded.`
+            : `Payment ${intent?.id ?? ""} succeeded and coverage was recorded.`
+        );
+        await fireOutboxMail(getDb(c), c.env, c, `intent:${result.intentId}:settled`, {
+          to: target.email,
+          subject: msg.subject,
+          text: msg.text,
+        });
+      }
+    } catch {
+      // Fall through to the normal 200 below.
+    }
+  }
   return ok(c, {
     processed: outcome.processed,
     activated: outcome.activated,
