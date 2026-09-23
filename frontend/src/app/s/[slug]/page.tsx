@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { ShopPage } from "@/components/shop/ShopPage";
+import { EmptyState } from "@/components/common/EmptyState";
 
 /** Buyer home: hero + categories + all published products. */
 export default function ShopHomePage({
@@ -38,7 +39,11 @@ export default function ShopHomePage({
           <h2 className="shop-section-title">المنتجات</h2>
           {products.length === 0 ? (
             <div className="shell-card">
-              <p className="shell-note">لا توجد منتجات متاحة حالياً. عُد قريباً.</p>
+              <EmptyState
+                icon="fas fa-box-open"
+                title="لا توجد منتجات"
+                description="لا توجد منتجات متاحة حالياً. عُد قريباً."
+              />
             </div>
           ) : (
             <div className="shop-grid">

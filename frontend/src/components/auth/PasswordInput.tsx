@@ -35,7 +35,6 @@ export function PasswordInput({ label, error, hint, id, ...props }: PasswordInpu
           onClick={() => setVisible((v) => !v)}
           aria-label={visible ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}
           aria-pressed={visible}
-          tabIndex={-1}
         >
           <i className={visible ? "fas fa-eye-slash" : "fas fa-eye"} aria-hidden="true"></i>
         </button>

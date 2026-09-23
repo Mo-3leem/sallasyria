@@ -64,7 +64,7 @@ export default function ShopProductPage({
                     >
                       −
                     </button>
-                    <span>{quantity.toLocaleString("ar-SY")}</span>
+                    <span aria-live="polite">{quantity.toLocaleString("ar-SY")}</span>
                     <button
                       type="button"
                       aria-label="زيادة الكمية"
@@ -88,12 +88,12 @@ export default function ShopProductPage({
                     {adding ? "جاري الإضافة..." : "أضف إلى السلة"}
                   </button>
                   {notice && !added && (
-                    <p className="shell-note" role="alert" style={{ marginTop: 12 }}>
+                    <p className="shell-error mt-12" role="alert">
                       {notice}
                     </p>
                   )}
                   {added && (
-                    <p className="shell-note" style={{ marginTop: 12 }}>
+                    <p className="shell-success mt-12">
                       أُضيف إلى السلة.{" "}
                       <Link href={`/s/${encodeURIComponent(slug)}/checkout`}>
                         إتمام الشراء

@@ -42,7 +42,7 @@ export function ShopPage({
   if (state.kind === "loading") {
     return (
       <main className="shop-main">
-        <div className="shell-loading">
+        <div className="shell-loading" role="status">
           <span className="shell-spinner" aria-hidden="true"></span>
           جاري تحميل المتجر...
         </div>

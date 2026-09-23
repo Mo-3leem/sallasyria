@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ShopPage } from "@/components/shop/ShopPage";
 import { useBuyer } from "@/hooks/useBuyer";
 import { buyerApi, type BuyerAddress, type BuyerOrderSummary } from "@/lib/api";
+import { orderStatusLabel, paymentStatusLabel } from "@/lib/orders";
 import { GOVERNORATES } from "@/lib/governorates";
 import { TextField } from "@/components/auth/TextField";
 import { FormError } from "@/components/auth/FormError";
@@ -28,6 +29,7 @@ function AccountBody({ slug }: { slug: string }) {
   const [addresses, setAddresses] = useState<BuyerAddress[] | null>(null);
   const [name, setName] = useState("");
   const [nameSaved, setNameSaved] = useState(false);
+  const [savingName, setSavingName] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -58,7 +60,10 @@ function AccountBody({ slug }: { slug: string }) {
   if (buyer === undefined) {
     return (
       <div className="shell-card">
-        <p className="shell-note">جاري تحميل الحساب...</p>
+        <div className="shell-loading" role="status">
+          <span className="shell-spinner" aria-hidden="true"></span>
+          جاري تحميل الحساب...
+        </div>
       </div>
     );
   }
@@ -66,15 +71,21 @@ function AccountBody({ slug }: { slug: string }) {
 
   async function onSaveName(e: FormEvent) {
     e.preventDefault();
+    if (savingName) return;
     setError(null);
     setNameSaved(false);
     if (name.trim().length < 1) {
       setError("الاسم مطلوب.");
       return;
     }
-    const okSaved = await updateName(slug, name.trim());
-    if (okSaved) setNameSaved(true);
-    else setError("تعذّر حفظ الاسم.");
+    setSavingName(true);
+    try {
+      const okSaved = await updateName(slug, name.trim());
+      if (okSaved) setNameSaved(true);
+      else setError("تعذّر حفظ الاسم.");
+    } finally {
+      setSavingName(false);
+    }
   }
 
   return (
@@ -93,12 +104,14 @@ function AccountBody({ slug }: { slug: string }) {
             {buyer.email && (buyer.email_verified ? " (مؤكد)" : " (غير مؤكد)")}
           </span>
         </div>
-        <form className="auth-form" onSubmit={onSaveName} noValidate style={{ marginTop: 12 }}>
+        <form className="auth-form mt-12" onSubmit={onSaveName} noValidate>
           <TextField label="الاسم" id="ba-name" value={name} onChange={(e) => setName(e.target.value)} />
-          <button type="submit" className="btn btn-outline">حفظ الاسم</button>
-          {nameSaved && <p className="shell-note">تم الحفظ.</p>}
+          <button type="submit" className="btn btn-outline" disabled={savingName}>
+            {savingName ? "جاري الحفظ..." : "حفظ الاسم"}
+          </button>
+          {nameSaved && <p className="shell-success">تم الحفظ.</p>}
         </form>
-        <div style={{ marginTop: 12 }}>
+        <div className="mt-12">
           <button
             type="button"
             className="btn btn-ghost btn-shell-dark btn-sm"
@@ -115,15 +128,21 @@ function AccountBody({ slug }: { slug: string }) {
       <div className="shell-card">
         <h2 className="shell-card-title">طلباتي</h2>
         {orders === null ? (
-          <p className="shell-note">جاري التحميل...</p>
+          <div className="shell-loading" role="status">
+            <span className="shell-spinner" aria-hidden="true"></span>
+            جاري التحميل...
+          </div>
         ) : orders.length === 0 ? (
-          <p className="shell-note">لا توجد طلبات بعد.</p>
+          <p className="shell-note">
+            لا توجد طلبات بعد.{" "}
+            <Link href={`/s/${encodeURIComponent(slug)}`}>تصفح المنتجات</Link>
+          </p>
         ) : (
           orders.map((o) => (
             <div key={o.id} className="info-row">
               <span className="key" dir="ltr">#{o.order_number}</span>
               <span className="value">
-                {o.status} · {o.payment_status} · {o.total.toLocaleString("ar-SY")} قرش
+                {orderStatusLabel(o.status)} · {paymentStatusLabel(o.payment_status)} · {o.total.toLocaleString("ar-SY")} قرش
               </span>
             </div>
           ))
@@ -202,7 +221,10 @@ function AddressBook({
     <div className="shell-card">
       <h2 className="shell-card-title">دفتر العناوين</h2>
       {addresses === null ? (
-        <p className="shell-note">جاري التحميل...</p>
+        <div className="shell-loading" role="status">
+          <span className="shell-spinner" aria-hidden="true"></span>
+          جاري التحميل...
+        </div>
       ) : (
         addresses.map((a) => (
           <div key={a.id} className="info-row">
@@ -226,7 +248,7 @@ function AddressBook({
       {addresses !== null && addresses.length === 0 && (
         <p className="shell-note">لا توجد عناوين محفوظة.</p>
       )}
-      <form className="auth-form" onSubmit={onAdd} noValidate style={{ marginTop: 12 }}>
+      <form className="auth-form mt-12" onSubmit={onAdd} noValidate>
         <h3 className="shell-card-title">عنوان جديد</h3>
         <FormError message={formError} />
         <TextField label="اسم المستلم" id="ba-recipient" value={recipient} onChange={(e) => setRecipient(e.target.value)} />

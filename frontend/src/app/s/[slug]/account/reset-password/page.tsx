@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Suspense, useState, type FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import { ShopPage } from "@/components/shop/ShopPage";
+import { EmptyState } from "@/components/common/EmptyState";
 import { buyerApi } from "@/lib/api";
 import { NETWORK_ERROR_MESSAGE } from "@/lib/auth-errors";
 import { PasswordInput } from "@/components/auth/PasswordInput";
@@ -56,12 +57,23 @@ function ResetBody({ slug }: { slug: string }) {
   return (
     <div className="shell-card">
       {done ? (
-        <p className="shell-note">
+        <p className="shell-success">
           تم تعيين كلمة المرور.{" "}
           <Link href={`/s/${encodeURIComponent(slug)}/account/login`}>سجّل الدخول</Link>
         </p>
       ) : token === "" ? (
-        <p className="shell-note">رابط غير صالح.</p>
+        <div className="shell-card">
+          <EmptyState
+            icon="fas fa-link-slash"
+            title="رابط غير صالح"
+            description="انتهت صلاحية رابط التعيين أو أنه غير مكتمل."
+            action={
+              <Link href={`/s/${encodeURIComponent(slug)}/account/forgot-password`} className="btn btn-outline">
+                طلب رابط جديد
+              </Link>
+            }
+          />
+        </div>
       ) : (
         <form className="auth-form" onSubmit={onSubmit} noValidate>
           <FormError message={formError} />

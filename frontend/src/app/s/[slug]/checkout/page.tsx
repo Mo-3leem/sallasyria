@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { ShopPage } from "@/components/shop/ShopPage";
+import { EmptyState } from "@/components/common/EmptyState";
 import { useBuyer } from "@/hooks/useBuyer";
 import { useCart } from "@/hooks/useCart";
 import { storefrontApi, type CheckoutResult, type ServerCartItem } from "@/lib/api";
@@ -289,7 +290,7 @@ function CheckoutBody(props: {
             <span className="key">الإجمالي</span>
             <span className="value">{order.total.toLocaleString("ar-SY")} قرش</span>
           </div>
-          <div style={{ marginTop: 16 }}>
+          <div className="mt-16">
             <Link href={`/s/${encodeURIComponent(slug)}`} className="btn btn-primary">
               العودة إلى {storeName}
             </Link>
@@ -302,10 +303,16 @@ function CheckoutBody(props: {
   if (lines.length === 0) {
     return (
       <div className="shell-card">
-        <p className="shell-note">
-          السلة فارغة.{" "}
-          <Link href={`/s/${encodeURIComponent(slug)}`}>تصفح المنتجات</Link>
-        </p>
+        <EmptyState
+          icon="fas fa-shopping-cart"
+          title="السلة فارغة"
+          description="أضف منتجات من المتجر ثم عُد لإتمام الشراء."
+          action={
+            <Link href={`/s/${encodeURIComponent(slug)}`} className="btn btn-outline">
+              تصفح المنتجات
+            </Link>
+          }
+        />
       </div>
     );
   }
@@ -316,7 +323,7 @@ function CheckoutBody(props: {
         <h1>إتمام الشراء</h1>
       </div>
       {props.notice && (
-        <div className="shell-notice" role="alert">
+        <div className="shell-error" role="alert">
           <i className="fas fa-exclamation-circle" aria-hidden="true"></i>
           <span>{props.notice}</span>
         </div>
@@ -327,7 +334,7 @@ function CheckoutBody(props: {
           <div key={l.id} className="shop-cart-line">
             <span className="grow">{l.product_name}</span>
             <span className="shop-cart-price" dir="ltr">{l.unit_price.toLocaleString("ar-SY")}</span>
-            <span className="shop-qty" style={{ margin: 0 }}>
+            <span className="shop-qty">
               <button
                 type="button"
                 aria-label="إنقاص"
@@ -335,7 +342,7 @@ function CheckoutBody(props: {
               >
                 −
               </button>
-              <span>{l.quantity.toLocaleString("ar-SY")}</span>
+              <span aria-live="polite">{l.quantity.toLocaleString("ar-SY")}</span>
               <button
                 type="button"
                 aria-label="زيادة"
@@ -353,7 +360,7 @@ function CheckoutBody(props: {
             </button>
           </div>
         ))}
-        <p className="shell-note" style={{ marginTop: 12 }}>
+        <p className="shell-note mt-12">
           الأسعار والإجمالي النهائي تُحسب على الخادم عند تأكيد الطلب.
         </p>
       </div>

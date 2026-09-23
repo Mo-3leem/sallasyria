@@ -40,7 +40,7 @@ export default function BuyerForgotPage({ params }: { params: { slug: string } }
       {() => (
         <div className="shell-card">
           {sent ? (
-            <p className="shell-note">
+            <p className="shell-success">
               إن كان بريدك مسجلاً ستصلك رسالة إعادة التعيين.{" "}
               <Link href={`/s/${encodeURIComponent(slug)}/account/login`}>تسجيل الدخول</Link>
             </p>
