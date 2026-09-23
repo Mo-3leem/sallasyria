@@ -12,6 +12,16 @@ type PollState =
   | { kind: "error"; message: string }
   | { kind: "ready"; status: string };
 
+// Build-baked environment gate: the stub simulator exists ONLY in
+// non-production builds. Production bundles (NODE_ENV === "production")
+// never render the buttons, so stub success is unreachable outside
+// development — the backend additionally fails closed there (503 /
+// unknown provider), never fake success.
+const STUB_SIMULATE_ENABLED = process.env.NODE_ENV !== "production";
+
+const STUB_ONLY_DEV_MESSAGE =
+  "المحاكاة التجريبية تعمل في بيئة التطوير فقط — للتفعيل على هذا الموقع استخدم بوابة الدفع أو التواصل مع الإدارة";
+
 /**
  * Provider return landing: polls the intent row after the hosted flow.
  * Never fabricates outcomes — every state comes from GET intent.
@@ -77,12 +87,21 @@ function ReturnContent() {
     try {
       // Stub provider callback through the REAL webhook endpoint — the
       // same path a production provider would hit server-to-server.
-      await billingApi.stubCallback({
+      const res = await billingApi.stubCallback({
         intent_id: intentId,
         stub_token: stubToken,
         result,
       });
+      if (!res.ok) {
+        // Stub path failed closed (e.g. non-development backend): say so
+        // honestly. The mount poll above keeps running untouched, so a
+        // genuine provider callback still resolves through it.
+        setState({ kind: "error", message: STUB_ONLY_DEV_MESSAGE });
+        return;
+      }
       await pollOnce();
+    } catch {
+      setState({ kind: "error", message: STUB_ONLY_DEV_MESSAGE });
     } finally {
       setSimulating(null);
     }
@@ -122,11 +141,21 @@ function ReturnContent() {
               </span>
             </div>
           )}
-          {state.status === "pending" && (
+          {state.status === "pending" && !STUB_SIMULATE_ENABLED && !stubToken ? (
             <div className="shell-notice" role="status">
-              <i className="fas fa-hourglass-half" aria-hidden="true"></i>
-              <span>عملية الدفع قيد الانتظار — نتحقق تلقائياً كل ثانيتين.</span>
+              <i className="fas fa-info-circle" aria-hidden="true"></i>
+              <span>
+                عملية الدفع قيد الانتظار — سيتم التفعيل تلقائياً عند تأكيد بوابة الدفع.{" "}
+                <Link href="/app/billing">العودة إلى صفحة الفوترة</Link>
+              </span>
             </div>
+          ) : (
+            state.status === "pending" && (
+              <div className="shell-notice" role="status">
+                <i className="fas fa-hourglass-half" aria-hidden="true"></i>
+                <span>عملية الدفع قيد الانتظار — نتحقق تلقائياً كل ثانيتين.</span>
+              </div>
+            )
           )}
           {state.status === "expired" && (
             <div className="shell-error" role="alert">
@@ -134,7 +163,9 @@ function ReturnContent() {
               <span>انتهت مهلة عملية الدفع. أنشئ عملية جديدة من صفحة الفوترة.</span>
             </div>
           )}
-          {stubToken && (state.status === "pending" || state.status === "failed") && (
+          {STUB_SIMULATE_ENABLED &&
+            stubToken &&
+            (state.status === "pending" || state.status === "failed") && (
             <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
               <button
                 type="button"
