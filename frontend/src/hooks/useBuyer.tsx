@@ -12,10 +12,11 @@ import { buyerApi, type BuyerAccount } from "@/lib/api";
 
 interface BuyerState {
   buyerFor: (slug: string) => BuyerAccount | null | undefined;
-  login: (slug: string, identity: string, password: string) => Promise<{ ok: true } | { ok: false; code: string }>;
+  login: (slug: string, identity: string, password: string, turnstileToken?: string) => Promise<{ ok: true } | { ok: false; code: string }>;
   register: (
     slug: string,
-    data: { name: string; phone: string; email?: string | null; password: string }
+    data: { name: string; phone: string; email?: string | null; password: string },
+    turnstileToken?: string
   ) => Promise<{ ok: true; converted: boolean } | { ok: false; code: string }>;
   logout: (slug: string) => Promise<void>;
   refresh: (slug: string) => Promise<void>;
@@ -52,9 +53,9 @@ export function BuyerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(
-    async (slug: string, identity: string, password: string) => {
+    async (slug: string, identity: string, password: string, turnstileToken?: string) => {
       try {
-        const res = await buyerApi.login(slug, { identity, password });
+        const res = await buyerApi.login(slug, { identity, password }, turnstileToken);
         if (!res.ok) return { ok: false as const, code: codeOf(res) };
         setBuyers((prev) => ({ ...prev, [slug]: res.data.buyer }));
         return { ok: true as const };
@@ -68,10 +69,11 @@ export function BuyerProvider({ children }: { children: ReactNode }) {
   const register = useCallback(
     async (
       slug: string,
-      data: { name: string; phone: string; email?: string | null; password: string }
+      data: { name: string; phone: string; email?: string | null; password: string },
+      turnstileToken?: string
     ) => {
       try {
-        const res = await buyerApi.register(slug, data);
+        const res = await buyerApi.register(slug, data, turnstileToken);
         if (!res.ok) return { ok: false as const, code: codeOf(res) };
         setBuyers((prev) => ({ ...prev, [slug]: res.data.buyer }));
         return { ok: true as const, converted: res.data.converted };

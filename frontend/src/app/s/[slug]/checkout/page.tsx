@@ -10,6 +10,7 @@ import { getErrorCode, getFieldErrors, NETWORK_ERROR_MESSAGE } from "@/lib/auth-
 import { GOVERNORATES } from "@/lib/governorates";
 import { TextField } from "@/components/auth/TextField";
 import { FormError } from "@/components/auth/FormError";
+import { TurnstileWidget, TURNSTILE_SITE_KEY } from "@/components/auth/TurnstileWidget";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -50,6 +51,13 @@ export default function ShopCheckoutPage({
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState<CheckoutResult | null>(null);
   const [key, setKey] = useState<string | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaKey, setCaptchaKey] = useState(0);
+
+  function retryCaptcha() {
+    setCaptchaToken(null);
+    setCaptchaKey((k) => k + 1);
+  }
 
   useEffect(() => {
     ensure(slug);
@@ -81,6 +89,7 @@ export default function ShopCheckoutPage({
               reference, setReference, fieldErrors, setFieldErrors,
               formError, setFormError, submitting, setSubmitting,
               done, setDone, key, setKey,
+              captchaToken, captchaKey, retryCaptcha, setCaptchaToken,
             }}
             setQuantity={setQuantity}
             forgetGuestCart={forgetGuestCart}
@@ -118,6 +127,8 @@ function CheckoutBody(props: {
     submitting: boolean; setSubmitting: (v: boolean) => void;
     done: CheckoutResult | null; setDone: (v: CheckoutResult | null) => void;
     key: string | null; setKey: (v: string | null) => void;
+    captchaToken: string | null; captchaKey: number; retryCaptcha: () => void;
+    setCaptchaToken: (v: string | null) => void;
   };
   setQuantity: (slug: string, itemId: string, quantity: number) => Promise<boolean>;
   forgetGuestCart: (slug: string) => void;
@@ -171,6 +182,10 @@ function CheckoutBody(props: {
       s.setFieldErrors(local);
       return;
     }
+    if (TURNSTILE_SITE_KEY && !s.captchaToken) {
+      s.setFormError("أكمل التحقق الأمني أولاً.");
+      return;
+    }
     const attemptKey = s.key ?? newKey();
     s.setKey(attemptKey);
     s.setSubmitting(true);
@@ -196,12 +211,18 @@ function CheckoutBody(props: {
             reference: s.reference.trim() === "" ? null : s.reference.trim(),
           },
         },
-        attemptKey
+        attemptKey,
+        s.captchaToken ?? undefined
       );
       if (!res.ok) {
         const code = getErrorCode(res);
-        if (code === "turnstile_required" || code === "turnstile_failed") {
-          s.setFormError("تعذّر التحقق الأمني. حدّث الصفحة وحاول مجدداً.");
+        if (code === "turnstile_required") {
+          s.setFormError("أكمل التحقق الأمني أولاً.");
+          return;
+        }
+        if (code === "turnstile_failed") {
+          s.setFormError("فشل التحقق الأمني. حاول مجدداً.");
+          s.retryCaptcha();
           return;
         }
         if (code === "cart_not_found") {
@@ -352,6 +373,7 @@ function CheckoutBody(props: {
           {s.method !== "cod" && (
             <TextField label="مرجع الدفع" id="co-ref" dir="ltr" value={s.reference} onChange={(e) => s.setReference(e.target.value)} error={s.fieldErrors.reference} />
           )}
+          <TurnstileWidget key={s.captchaKey} onToken={s.setCaptchaToken} />
           <button type="submit" className="btn btn-primary btn-lg auth-submit" disabled={s.submitting}>
             {s.submitting ? "جاري إرسال الطلب..." : "تأكيد الطلب"}
           </button>
