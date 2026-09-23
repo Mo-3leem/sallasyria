@@ -6,7 +6,7 @@ import { ok } from "../src/http/respond.js";
 import { GOVERNORATES, isGovernorate } from "../src/lib/governorates.js";
 import { normalizePhone } from "../src/lib/phone.js";
 import { createRateLimiter } from "../src/lib/rate-limit.js";
-import { requireTurnstile } from "../src/middleware/turnstile.js";
+import { requireTurnstile, tokenAgeBucket, verifyTurnstileToken } from "../src/middleware/turnstile.js";
 import { AppError } from "../src/http/errors.js";
 
 describe("normalizePhone", () => {
@@ -127,8 +127,7 @@ describe("requireTurnstile", () => {
     expect(denied.status).toBe(403);
   });
 
-  it("rejects an oversized token without calling siteverify", async () => {
-    let calls = 0;
+  it("rejects an oversized token without calling siteverify", async () => {    let calls = 0;
     const countingFetch = (async () => {
       calls++;
       return new Response(JSON.stringify({ success: true }), {
@@ -148,5 +147,54 @@ describe("requireTurnstile", () => {
       error: { code: "turnstile_failed", message: expect.any(String) },
     });
     expect(calls).toBe(0);
+  });
+});
+
+describe("verifyTurnstileToken verdict shape (debug-instrumentation contract)", () => {
+  const stubFetch = (payload: unknown) =>
+    (async () =>
+      new Response(JSON.stringify(payload), {
+        headers: { "Content-Type": "application/json" },
+      })) as unknown as typeof fetch;
+
+  it("passes codes/hostname/challenge_ts through on failure", async () => {
+    const v = await verifyTurnstileToken(
+      "s3cr3t",
+      "tok",
+      stubFetch({
+        success: false,
+        "error-codes": ["invalid-input-secret"],
+        hostname: "shop.example.com",
+        challenge_ts: "2026-09-23T12:00:00Z",
+      })
+    );
+    expect(v).toEqual({
+      ok: false,
+      codes: ["invalid-input-secret"],
+      hostname: "shop.example.com",
+      challengeTs: "2026-09-23T12:00:00Z",
+    });
+  });
+
+  it("strips non-string codes and maps transport failure", async () => {
+    const v = await verifyTurnstileToken(
+      "s3cr3t",
+      "tok",
+      stubFetch({ success: false, "error-codes": ["a", 42, null] })
+    );
+    expect(v.codes).toEqual(["a"]);
+    expect(v.hostname).toBeNull();
+    const down = await verifyTurnstileToken("s3cr3t", "tok", (async () => {
+      throw new Error("boom");
+    }) as unknown as typeof fetch);
+    expect(down).toEqual({ ok: false, codes: ["verify_transport_error"], hostname: null, challengeTs: null });
+  });
+
+  it("buckets token age without ever seeing the token", () => {
+    const now = Date.parse("2026-09-23T12:05:00Z");
+    expect(tokenAgeBucket("2026-09-23T12:04:30Z", now)).toBe("fresh-lt-60s");
+    expect(tokenAgeBucket("2026-09-23T12:00:00Z", now)).toBe("stale-gt-300s");
+    expect(tokenAgeBucket(null, now)).toBe("unknown");
+    expect(tokenAgeBucket("not-a-date", now)).toBe("unknown");
   });
 });
