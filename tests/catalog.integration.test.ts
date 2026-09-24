@@ -364,6 +364,138 @@ describe("B4 products", () => {
     expect(live!.is_active).toBe(1);
   });
 
+  it("business delete keeps the row, protects order history, and blocks resale", async () => {
+    type Row = {
+      id: string; store_id: string; name: string; slug: string;
+      price: number; is_active: number;
+      deleted_at: string | null; removed_at: string | null;
+    };
+    // Active product + a Damascus rate so guest checkout can run.
+    const created = await api(`${A}/products`, {
+      method: "POST",
+      body: JSON.stringify({ name: "Doomed Widget", slug: "doomed-widget", price: 7000 }),
+    }, jarA);
+    expect(created.status).toBe(201);
+    const id = ((created.body as { data: { product: Row } }).data.product).id;
+    const rate = await api(`${A}/shipping-rates`, {
+      method: "POST",
+      body: JSON.stringify({ governorate: "Damascus", shipping_method: "Standard", cost: 3000 }),
+    }, jarA);
+    expect(rate.status).toBe(201);
+
+    // Guest COD order referencing the product.
+    const co = await api(`${A}/checkout`, {
+      method: "POST",
+      headers: { "X-Idempotency-Key": `b4c-del-${Date.now()}` },
+      body: JSON.stringify({
+        customer: { name: "Doomed Buyer", phone: "+963911800001" },
+        items: [{ product_id: id, quantity: 2 }],
+        shipping: {
+          recipient_name: "Doomed Buyer",
+          phone: "+963911800001",
+          governorate: "Damascus",
+          address_line: "Street 9, Damascus",
+        },
+        payment: { method: "cod" },
+      }),
+    });
+    expect(co.status).toBe(201);
+    const orderId = ((co.body as { data: { order: { id: string } } }).data.order).id;
+    const before = await api(`${A}/orders/${orderId}`, {}, jarA);
+    expect(before.status).toBe(200);
+
+    // Delete from the active state.
+    const del = await api(`${A}/products/${id}/delete`, { method: "POST" }, jarA);
+    expect(del.status).toBe(200);
+    const gone = (del.body as { data: { product: Row } }).data.product;
+    expect(gone.removed_at).toBeTruthy();
+    expect(gone.deleted_at).toBeTruthy();
+    expect(gone.is_active).toBe(0);
+
+    // The row still exists (no hard delete) and the order is byte-identical.
+    const still = await api(`${A}/products/${id}`, {}, jarA);
+    expect(still.status).toBe(200);
+    expect(((still.body as { data: { product: Row } }).data.product.removed_at)).toBeTruthy();
+    const after = await api(`${A}/orders/${orderId}`, {}, jarA);
+    expect(after.status).toBe(200);
+    expect(after.body).toEqual(before.body);
+
+    // Repeating delete is a safe no-op; the retired product can no longer
+    // be purchased (same 409 as archived products).
+    expect((await api(`${A}/products/${id}/delete`, { method: "POST" }, jarA)).status).toBe(200);
+    const repurchase = await api(`${A}/checkout`, {
+      method: "POST",
+      headers: { "X-Idempotency-Key": `b4c-del-retry-${Date.now()}` },
+      body: JSON.stringify({
+        customer: { name: "Late Buyer", phone: "+963911800002" },
+        items: [{ product_id: id, quantity: 1 }],
+        shipping: {
+          recipient_name: "Late Buyer",
+          phone: "+963911800002",
+          governorate: "Damascus",
+          address_line: "Street 9, Damascus",
+        },
+        payment: { method: "cod" },
+      }),
+    });
+    expect(repurchase.status).toBe(409);
+
+    // Restore revives a deleted product (both flags cleared).
+    const restored = await api(`${A}/products/${id}/restore`, { method: "POST" }, jarA);
+    expect(restored.status).toBe(200);
+    const revived = (restored.body as { data: { product: Row } }).data.product;
+    expect(revived.deleted_at).toBeNull();
+    expect(revived.removed_at).toBeNull();
+    expect(revived.is_active).toBe(1);
+  });
+
+  it("delete works from archived; archive on removed is 404; cross-merchant delete is 404", async () => {
+    const created = await api(`${A}/products`, {
+      method: "POST",
+      body: JSON.stringify({ name: "Arch Then Gone", slug: "arch-then-gone", price: 100 }),
+    }, jarA);
+    expect(created.status).toBe(201);
+    const id = ((created.body as { data: { product: { id: string } } }).data.product).id;
+
+    // Archive first, then business-delete from the archived state.
+    expect((await api(`${A}/products/${id}`, { method: "DELETE" }, jarA)).status).toBe(200);
+    const del = await api(`${A}/products/${id}/delete`, { method: "POST" }, jarA);
+    expect(del.status).toBe(200);
+    expect(((del.body as { data: { product: { removed_at: string | null } } }).data.product.removed_at)).toBeTruthy();
+
+    // Archive scope excludes removed products.
+    const archiveAgain = await api(`${A}/products/${id}`, { method: "DELETE" }, jarA);
+    expect(archiveAgain.status).toBe(404);
+
+    // Another merchant cannot delete it (identical 404, no oracle: the
+    // store-access middleware rejects before the product is ever read).
+    const foreign = await api(`${A}/products/${id}/delete`, { method: "POST" }, jarB);
+    expect(foreign.status).toBe(404);
+    expect(foreign.body).toEqual({
+      ok: false,
+      error: { code: "store_not_found", message: "Store not found." },
+    });
+
+    // Anonymous delete is 401.
+    expect((await api(`${A}/products/${id}/delete`, { method: "POST" })).status).toBe(401);
+
+    // removed_at is immutable through create/PATCH like deleted_at.
+    const badPatch = await api(`${A}/products/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ removed_at: null }),
+    }, jarA);
+    expect(badPatch.status).toBe(400);
+
+    // Expired store: shared subscription gate blocks delete like PATCH.
+    expect(d1(`INSERT INTO products (id, store_id, name, slug, price) VALUES ('prod_verify_b4c_gone', 'store_verify_b4c_expired', 'Gone', 'gone-widget', 100);`).ok).toBe(true);
+    const gated = await api(`${EXP}/products/prod_verify_b4c_gone/delete`, { method: "POST" }, jarA);
+    expect(gated.status).toBe(403);
+    expect(gated.body).toEqual({
+      ok: false,
+      error: { code: "subscription_inactive", message: "Store subscription is not active." },
+    });
+  });
+
   it("plan product limit enforced; expired store blocked", async () => {
     const first = await api(`${LIM}/products`, {
       method: "POST",

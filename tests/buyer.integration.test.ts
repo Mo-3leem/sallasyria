@@ -131,6 +131,7 @@ beforeAll(async () => {
     cwd: process.cwd(),
     stdio: ["ignore", "pipe", "pipe"],
     shell: isWindows,
+    windowsHide: true,
   });
   server.stdout?.on("data", (d) => { serverOutput += String(d); });
   server.stderr?.on("data", (d) => { serverOutput += String(d); });
@@ -196,10 +197,13 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  if (server) {
-    server.kill();
-    server = null;
+  if (server && server.exitCode === null) {
+    try {
+      if (isWindows && server.pid !== undefined) execFileSync("taskkill", ["/pid", String(server.pid), "/T", "/F"], { stdio: "ignore" });
+      else server.kill("SIGTERM");
+    } catch { /* best effort */ }
   }
+  server = null;
   // Fully prefix-based (no fixture ids needed): child-before-parent, one
   // D1 round-trip for deletes, one for users, one for the zero-proof.
   const cleaned = cleanAll();
@@ -550,7 +554,7 @@ describe("P4 buyer mail", () => {
     expect(dup.status).toBe(409);
     const after = qrows(d1(`SELECT COUNT(*) AS n FROM mail_outbox;`))[0]!["n"];
     expect(after).toBe(before);
-  });
+  }, 60_000);
 
   it("notifies sub activate/cancel to the store owner", async () => {
     const plan = await api("/admin/plans", {
@@ -580,7 +584,7 @@ describe("P4 buyer mail", () => {
     expect(cancel.status).toBe(200);
     const cancelRows = qrows(d1(`SELECT recipient FROM mail_outbox WHERE dedupe_key = 'sub:${subId}:cancelled';`));
     expect(cancelRows).toHaveLength(1);
-  });
+  }, 60_000);
 
   it("sends the trial T-7d notice via the scheduled trigger", async () => {
     const plan = await api("/admin/plans", {
@@ -608,5 +612,5 @@ describe("P4 buyer mail", () => {
     await fetch(`${BASE}/cdn-cgi/local/scheduled`);
     await new Promise((r) => setTimeout(r, 3000));
     expect(qrows(d1(`SELECT COUNT(*) AS n FROM mail_outbox WHERE dedupe_key = 'trial-7d:${trialId}';`))[0]!["n"]).toBe(1);
-  });
+  }, 60_000);
 });

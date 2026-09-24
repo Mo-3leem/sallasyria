@@ -48,6 +48,7 @@ export interface ProductRow {
   stock_quantity: number | null;
   is_active: number;
   deleted_at: string | null;
+  removed_at: string | null;
 }
 
 export interface ProductImageRow {
@@ -375,9 +376,10 @@ export async function updateProduct(
   return getProduct(db, storeId, id);
 }
 
-// Soft retirement (idempotent): sets deleted_at AND is_active = 0 atomically
-// in one UPDATE, preserves the row for order history. There is intentionally
-// no hard-delete route in MVP.
+// Soft retirement / archive (idempotent): sets deleted_at AND is_active = 0
+// atomically in one UPDATE, preserves the row for order history. Removed
+// (business-deleted) products are outside archive scope — archiving one is
+// a 404 at the route (null here), never a state change.
 export async function softDeleteProduct(
   db: D1Database,
   storeId: string,
@@ -385,7 +387,7 @@ export async function softDeleteProduct(
   nowIso: string = touch()
 ): Promise<ProductRow | null> {
   const current = await getProduct(db, storeId, id);
-  if (!current) return null;
+  if (!current || current.removed_at !== null) return null;
   await db
     .prepare("UPDATE products SET deleted_at = ?, is_active = 0, updated_at = ? WHERE store_id = ? AND id = ?")
     .bind(nowIso, nowIso, storeId, id)
@@ -393,10 +395,34 @@ export async function softDeleteProduct(
   return getProduct(db, storeId, id);
 }
 
-// Restore clears deleted_at AND reactivates (is_active = 1) atomically in
-// one UPDATE — the inverse of softDeleteProduct, which deactivates on
-// delete. Fails 409 when a live row already holds the slug (partial-unique
-// rule proven at DB level); the caller renames first, then retries.
+// Business delete (soft delete, idempotent): sets removed_at AND deleted_at
+// AND is_active = 0 atomically in one UPDATE. The row is never removed, so
+// order_items references (ON DELETE RESTRICT) and historical orders stay
+// intact. Because deleted_at is always set alongside removed_at, every
+// existing deleted_at IS NULL guard (storefront, checkout, cart, plan
+// limit, live-slug partial index) automatically excludes deleted products.
+// Works from both active and archived states; repeating it is a no-op.
+export async function removeProduct(
+  db: D1Database,
+  storeId: string,
+  id: string,
+  nowIso: string = touch()
+): Promise<ProductRow | null> {
+  const current = await getProduct(db, storeId, id);
+  if (!current) return null;
+  if (current.removed_at !== null) return current;
+  await db
+    .prepare("UPDATE products SET deleted_at = COALESCE(deleted_at, ?), removed_at = ?, is_active = 0, updated_at = ? WHERE store_id = ? AND id = ?")
+    .bind(nowIso, nowIso, nowIso, storeId, id)
+    .run();
+  return getProduct(db, storeId, id);
+}
+
+// Restore clears deleted_at AND removed_at AND reactivates (is_active = 1)
+// atomically in one UPDATE — the inverse of both softDeleteProduct and
+// removeProduct. Fails 409 when a live row already holds the slug
+// (partial-unique rule proven at DB level); the caller renames first, then
+// retries. Order history is untouched (order_items snapshots are immutable).
 export async function restoreProduct(
   db: D1Database,
   storeId: string,
@@ -407,7 +433,7 @@ export async function restoreProduct(
   if (!current) return null;
   try {
     await db
-      .prepare("UPDATE products SET deleted_at = NULL, is_active = 1, updated_at = ? WHERE store_id = ? AND id = ?")
+      .prepare("UPDATE products SET deleted_at = NULL, removed_at = NULL, is_active = 1, updated_at = ? WHERE store_id = ? AND id = ?")
       .bind(nowIso, storeId, id)
       .run();
   } catch (err) {

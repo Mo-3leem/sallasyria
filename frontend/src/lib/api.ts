@@ -238,10 +238,16 @@ export const productsApi = {
       storePath(storeId, `/products/${encodeURIComponent(id)}`),
       data
     ),
-  /** Soft retire (idempotent, releases the slug). */
+  /** Soft retire / archive (idempotent, releases the slug). */
   remove: (storeId: string, id: string) =>
     api.delete<{ product: Product }>(
       storePath(storeId, `/products/${encodeURIComponent(id)}`)
+    ),
+  /** Business delete (soft delete, idempotent, keeps order history). */
+  deleteProduct: (storeId: string, id: string) =>
+    api.post<{ product: Product }>(
+      storePath(storeId, `/products/${encodeURIComponent(id)}/delete`),
+      {}
     ),
   restore: (storeId: string, id: string) =>
     api.post<{ product: Product }>(

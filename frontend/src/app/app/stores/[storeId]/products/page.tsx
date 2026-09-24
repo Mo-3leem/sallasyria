@@ -33,7 +33,8 @@ export default function ProductsPage({
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "archived">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "archived" | "deleted">("all");
+  const [pendingDelete, setPendingDelete] = useState<Product | null>(null);
 
   const base = `/app/stores/${encodeURIComponent(storeId)}`;
 
@@ -157,27 +158,73 @@ export default function ProductsPage({
     }
   }
 
+  async function doDelete(product: Product) {
+    setWorking(true);
+    setActionError(null);
+    setActionNotice(null);
+    try {
+      const res = await productsApi.deleteProduct(storeId, product.id);
+      if (!res.ok) {
+        const code = getErrorCode(res);
+        if (code === "unauthorized") {
+          await refreshAuth();
+          return;
+        }
+        if (code === "store_not_found" || code === "product_not_found") {
+          await load();
+          return;
+        }
+        if (code === "subscription_inactive") {
+          subGate();
+          return;
+        }
+        setActionError(authErrorMessage(res, 400));
+        return;
+      }
+      setPendingDelete(null);
+      setActionNotice(`تم حذف «${product.name}» من الكتالوج — بيانات الطلبات السابقة محفوظة.`);
+      await load();
+    } catch {
+      setActionError(NETWORK_ERROR_MESSAGE);
+    } finally {
+      setWorking(false);
+    }
+  }
+
   const categoryName = (categories: Category[], id: string | null) =>
     id === null ? "بدون تصنيف" : (categories.find((c) => c.id === id)?.name ?? "—");
 
   // Client-side search + status filter over the already-loaded list (no extra
-  // API calls). Archived = retired (deleted_at !== null), matching the
-  // existing أرشيف badge/أرشفة action terminology.
+  // API calls). Active = live row; archived = retired (deleted_at set,
+  // removed_at unset); deleted = business-removed (removed_at set).
   const readyProducts = state.kind === "ready" ? state.products : [];
   const needle = query.trim().toLowerCase();
   const matched = readyProducts.filter(
     (p) =>
       (statusFilter === "all" ||
-        (statusFilter === "archived" ? p.deleted_at !== null : p.deleted_at === null)) &&
+        (statusFilter === "active"
+          ? p.deleted_at === null && p.removed_at === null
+          : statusFilter === "archived"
+            ? p.deleted_at !== null && p.removed_at === null
+            : p.removed_at !== null)) &&
       (needle === "" || p.name.toLowerCase().includes(needle))
   );
-  const activeVisible = matched.filter((p) => p.deleted_at === null);
-  const archivedVisible = matched.filter((p) => p.deleted_at !== null);
-  const showActiveSection = statusFilter !== "archived" && activeVisible.length > 0;
-  const showArchivedSection = statusFilter !== "active" && archivedVisible.length > 0;
+  const activeVisible = matched.filter((p) => p.deleted_at === null && p.removed_at === null);
+  const archivedVisible = matched.filter((p) => p.deleted_at !== null && p.removed_at === null);
+  const deletedVisible = matched.filter((p) => p.removed_at !== null);
+  const showActiveSection = statusFilter !== "archived" && statusFilter !== "deleted" && activeVisible.length > 0;
+  const showArchivedSection =
+    statusFilter !== "active" && statusFilter !== "deleted" && archivedVisible.length > 0;
+  const showDeletedSection = statusFilter !== "active" && statusFilter !== "archived" && deletedVisible.length > 0;
 
   function renderProductRow(product: Product, categories: Category[]) {
     const retired = product.deleted_at !== null;
+    const removed = product.removed_at !== null;
+    const askDelete = () => {
+      setActionError(null);
+      setActionNotice(null);
+      setPendingDelete(product);
+    };
     return (
       <div key={product.id} className="store-row">
         <span className="store-row-icon" aria-hidden="true">
@@ -188,7 +235,8 @@ export default function ProductsPage({
             <Link href={`${base}/products/${encodeURIComponent(product.id)}`}>
               {product.name}
             </Link>{" "}
-            {retired && <span className="sub-badge sub-badge-unknown">أرشيف</span>}
+            {retired && !removed && <span className="sub-badge sub-badge-unknown">أرشيف</span>}
+            {removed && <span className="sub-badge sub-badge-inactive">محذوف</span>}
             {product.is_active !== 1 && !retired && (
               <span className="sub-badge sub-badge-inactive">غير نشط</span>
             )}
@@ -214,7 +262,7 @@ export default function ProductsPage({
           >
             تعديل
           </Link>
-          {retired ? (
+          {removed ? (
             <button
               type="button"
               className="btn btn-ghost btn-shell-dark btn-sm"
@@ -223,18 +271,45 @@ export default function ProductsPage({
             >
               استعادة
             </button>
+          ) : retired ? (
+            <>
+              <button
+                type="button"
+                className="btn btn-ghost btn-shell-dark btn-sm"
+                disabled={working}
+                onClick={() => doRestore(product)}
+              >
+                استعادة
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-shell-dark btn-sm"
+                onClick={askDelete}
+              >
+                حذف
+              </button>
+            </>
           ) : (
-            <button
-              type="button"
-              className="btn btn-ghost btn-shell-dark btn-sm"
-              onClick={() => {
-                setActionError(null);
-                setActionNotice(null);
-                setPendingRetire(product);
-              }}
-            >
-              أرشفة
-            </button>
+            <>
+              <button
+                type="button"
+                className="btn btn-ghost btn-shell-dark btn-sm"
+                onClick={() => {
+                  setActionError(null);
+                  setActionNotice(null);
+                  setPendingRetire(product);
+                }}
+              >
+                أرشفة
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-shell-dark btn-sm"
+                onClick={askDelete}
+              >
+                حذف
+              </button>
+            </>
           )}
         </span>
       </div>
@@ -335,12 +410,13 @@ export default function ProductsPage({
                   aria-label="الحالة"
                   value={statusFilter}
                   onChange={(e) =>
-                    setStatusFilter(e.target.value as "all" | "active" | "archived")
+                    setStatusFilter(e.target.value as "all" | "active" | "archived" | "deleted")
                   }
                 >
                   <option value="all">الكل</option>
                   <option value="active">نشطة</option>
                   <option value="archived">مؤرشفة</option>
+                  <option value="deleted">محذوفة</option>
                 </select>
               </label>
             </div>
@@ -373,6 +449,28 @@ export default function ProductsPage({
                 </div>
               </>
             )}
+            {(showActiveSection || showArchivedSection) && showDeletedSection && (
+              <hr
+                aria-hidden="true"
+                style={{
+                  border: "none",
+                  borderTop: "1px solid var(--gray-5)",
+                  margin: "20px 0 4px",
+                }}
+              />
+            )}
+            {showDeletedSection && (
+              <>
+                <h2 className="shell-card-title" style={{ marginTop: showActiveSection || showArchivedSection ? 12 : 0 }}>
+                  المنتجات المحذوفة
+                </h2>
+                <div className="shell-stack">
+                  {deletedVisible.map((product) =>
+                    renderProductRow(product, state.categories)
+                  )}
+                </div>
+              </>
+            )}
             <div style={{ marginTop: 16 }}>
               <Link href={`${base}/products/new`} className="btn btn-outline">
                 <i className="fas fa-plus" aria-hidden="true"></i>
@@ -395,6 +493,21 @@ export default function ProductsPage({
         confirming={working}
         onClose={() => setPendingRetire(null)}
         onConfirm={() => pendingRetire && doRetire(pendingRetire)}
+      />
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="حذف المنتج"
+        description={
+          pendingDelete
+            ? `هل أنت متأكد من حذف «${pendingDelete.name}»؟ سيتم إخفاء المنتج من الكتالوج والمتجر، ولن يتم حذف بيانات الطلبات السابقة المرتبطة به.`
+            : undefined
+        }
+        confirmLabel="حذف المنتج"
+        cancelLabel="تراجع"
+        confirming={working}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={() => pendingDelete && doDelete(pendingDelete)}
       />
     </>
   );
