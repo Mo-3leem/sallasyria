@@ -102,6 +102,7 @@ export interface Product {
   category_id: string | null;
   name: string;
   slug: string;
+  description: string | null;
   price: number;
   stock_quantity: number | null;
   is_active: number;

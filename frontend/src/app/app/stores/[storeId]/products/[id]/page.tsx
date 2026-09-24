@@ -357,9 +357,23 @@ export default function ProductDetailPage({
         <div className="info-row">
           <span className="key">الحالة</span>
           <span className="value">
-            {retired ? "مؤرشف" : product.is_active === 1 ? "نشط" : "غير نشط"}
+            {product.removed_at !== null
+              ? "محذوف"
+              : retired
+                ? "مؤرشف"
+                : product.is_active === 1
+                  ? "نشط"
+                  : "غير نشط"}
           </span>
         </div>
+        {product.description && (
+          <div className="info-row">
+            <span className="key">الوصف</span>
+            <span className="value" style={{ whiteSpace: "pre-wrap" }}>
+              {product.description}
+            </span>
+          </div>
+        )}
         {!retired && (
           <div style={{ marginTop: 16 }}>
             <Link

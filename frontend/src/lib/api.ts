@@ -217,6 +217,7 @@ export const productsApi = {
       name: string;
       slug: string;
       category_id?: string | null;
+      description?: string | null;
       price: number;
       stock_quantity?: number | null;
       is_active?: 0 | 1;
@@ -229,6 +230,7 @@ export const productsApi = {
       name?: string;
       slug?: string;
       category_id?: string | null;
+      description?: string | null;
       price?: number;
       stock_quantity?: number | null;
       is_active?: 0 | 1;

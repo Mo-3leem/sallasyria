@@ -44,6 +44,7 @@ export interface ProductRow {
   category_id: string | null;
   name: string;
   slug: string;
+  description: string | null;
   price: number;
   stock_quantity: number | null;
   is_active: number;
@@ -266,6 +267,7 @@ export interface ProductInput {
   name: string;
   slug: string;
   category_id?: string | null;
+  description?: string | null;
   price: number;
   stock_quantity?: number | null;
   is_active?: number;
@@ -298,11 +300,11 @@ export async function createProduct(
   try {
     await db
       .prepare(
-        `INSERT INTO products (id, store_id, category_id, name, slug, price, stock_quantity, is_active, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO products (id, store_id, category_id, name, slug, description, price, stock_quantity, is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
-        id, storeId, categoryId, input.name, input.slug, input.price,
+        id, storeId, categoryId, input.name, input.slug, input.description ?? null, input.price,
         input.stock_quantity ?? null, input.is_active ?? 1, nowIso, nowIso
       )
       .run();
@@ -337,6 +339,7 @@ export interface ProductPatch {
   name?: string;
   slug?: string;
   category_id?: string | null;
+  description?: string | null;
   price?: number;
   stock_quantity?: number | null;
   is_active?: number;
@@ -359,6 +362,7 @@ export async function updateProduct(
     name: patch.name ?? current.name,
     slug: patch.slug ?? current.slug,
     category_id: nextCategory,
+    description: patch.description === undefined ? current.description : patch.description,
     price: patch.price ?? current.price,
     stock_quantity: patch.stock_quantity === undefined ? current.stock_quantity : patch.stock_quantity,
     is_active: patch.is_active ?? current.is_active,
@@ -366,9 +370,9 @@ export async function updateProduct(
   try {
     await db
       .prepare(
-        "UPDATE products SET name = ?, slug = ?, category_id = ?, price = ?, stock_quantity = ?, is_active = ?, updated_at = ? WHERE store_id = ? AND id = ?"
+        "UPDATE products SET name = ?, slug = ?, category_id = ?, description = ?, price = ?, stock_quantity = ?, is_active = ?, updated_at = ? WHERE store_id = ? AND id = ?"
       )
-      .bind(next.name, next.slug, next.category_id, next.price, next.stock_quantity, next.is_active, nowIso, storeId, id)
+      .bind(next.name, next.slug, next.category_id, next.description, next.price, next.stock_quantity, next.is_active, nowIso, storeId, id)
       .run();
   } catch (err) {
     mapCatalogError(err, "slug_taken");

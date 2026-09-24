@@ -92,12 +92,15 @@ export default function EditProductPage({
       name?: string;
       slug?: string;
       category_id?: string | null;
+      description?: string | null;
       price?: number;
       stock_quantity?: number | null;
       is_active?: 0 | 1;
     } = {};
     if (values.name !== state.product.name) diff.name = values.name;
     if (values.slug !== state.product.slug) diff.slug = values.slug;
+    if (values.description !== state.product.description)
+      diff.description = values.description;
     if (values.category_id !== state.product.category_id)
       diff.category_id = values.category_id;
     if (values.price !== state.product.price) diff.price = values.price;
@@ -223,11 +226,12 @@ export default function EditProductPage({
           </div>
         )}
         <ProductForm
-          key={`${state.product.id}:${state.product.name}:${state.product.slug}:${state.product.category_id}:${state.product.price}:${state.product.stock_quantity}:${state.product.is_active}`}
+          key={`${state.product.id}:${state.product.name}:${state.product.slug}:${state.product.category_id}:${state.product.description}:${state.product.price}:${state.product.stock_quantity}:${state.product.is_active}`}
           initial={{
             name: state.product.name,
             slug: state.product.slug,
             category_id: state.product.category_id,
+            description: state.product.description,
             price: state.product.price,
             stock_quantity: state.product.stock_quantity,
             is_active: state.product.is_active === 1 ? 1 : 0,
