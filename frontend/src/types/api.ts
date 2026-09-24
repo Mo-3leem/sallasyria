@@ -74,6 +74,7 @@ export interface Store {
   name: string;
   currency: string;
   status: string;
+  is_published: number;
 }
 
 export interface Plan {

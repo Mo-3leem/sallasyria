@@ -8,6 +8,7 @@ export type AuditAction =
   | "admin.store.update"
   | "store.create"
   | "store.update"
+  | "store.publish"
   | "admin.subscription.activate"
   | "admin.subscription.cancel"
   | "admin.subscription.renew"
