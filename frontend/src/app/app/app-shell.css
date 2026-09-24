@@ -191,7 +191,6 @@
   font-size: 1rem;
 }
 .shell-header-user {
-  margin-inline-start: auto;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -208,6 +207,77 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Profile dropdown: wrapper owns the header-end placement + menu anchor. */
+.shell-user-wrap {
+  position: relative;
+  margin-inline-start: auto;
+}
+.shell-user-trigger {
+  background: none;
+  border: none;
+  padding: 4px;
+  border-radius: 10px;
+  cursor: pointer;
+  font: inherit;
+}
+.shell-user-trigger:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.shell-user-trigger:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.shell-header-avatar-img {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.shell-header-user .shell-user-caret {
+  font-size: 0.7rem;
+  color: var(--gray-3);
+}
+.shell-user-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  inset-inline-end: 0;
+  min-width: 220px;
+  background: var(--white);
+  border: 1px solid var(--gray-5);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 8px;
+  z-index: 200;
+}
+.shell-user-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--font);
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--gray-1);
+  text-align: start;
+  cursor: pointer;
+}
+.shell-user-item:hover {
+  background: var(--green-50);
+  color: var(--primary);
+}
+.shell-user-item:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.shell-user-separator {
+  border-top: 1px solid var(--gray-5);
+  margin: 6px 4px;
 }
 .shell-content {
   flex: 1;
