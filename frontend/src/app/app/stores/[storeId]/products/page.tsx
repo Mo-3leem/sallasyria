@@ -32,6 +32,8 @@ export default function ProductsPage({
   const [working, setWorking] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "archived">("all");
 
   const base = `/app/stores/${encodeURIComponent(storeId)}`;
 
@@ -158,6 +160,87 @@ export default function ProductsPage({
   const categoryName = (categories: Category[], id: string | null) =>
     id === null ? "بدون تصنيف" : (categories.find((c) => c.id === id)?.name ?? "—");
 
+  // Client-side search + status filter over the already-loaded list (no extra
+  // API calls). Archived = retired (deleted_at !== null), matching the
+  // existing أرشيف badge/أرشفة action terminology.
+  const readyProducts = state.kind === "ready" ? state.products : [];
+  const needle = query.trim().toLowerCase();
+  const matched = readyProducts.filter(
+    (p) =>
+      (statusFilter === "all" ||
+        (statusFilter === "archived" ? p.deleted_at !== null : p.deleted_at === null)) &&
+      (needle === "" || p.name.toLowerCase().includes(needle))
+  );
+  const activeVisible = matched.filter((p) => p.deleted_at === null);
+  const archivedVisible = matched.filter((p) => p.deleted_at !== null);
+  const showActiveSection = statusFilter !== "archived" && activeVisible.length > 0;
+  const showArchivedSection = statusFilter !== "active" && archivedVisible.length > 0;
+
+  function renderProductRow(product: Product, categories: Category[]) {
+    const retired = product.deleted_at !== null;
+    return (
+      <div key={product.id} className="store-row">
+        <span className="store-row-icon" aria-hidden="true">
+          <i className={`fas ${retired ? "fa-archive" : "fa-box"}`}></i>
+        </span>
+        <span className="store-row-body">
+          <span className="store-row-name">
+            <Link href={`${base}/products/${encodeURIComponent(product.id)}`}>
+              {product.name}
+            </Link>{" "}
+            {retired && <span className="sub-badge sub-badge-unknown">أرشيف</span>}
+            {product.is_active !== 1 && !retired && (
+              <span className="sub-badge sub-badge-inactive">غير نشط</span>
+            )}
+          </span>
+          <span className="store-row-meta">
+            <span dir="ltr">{product.slug}</span>
+            <span>·</span>
+            <span>{product.price.toLocaleString("ar-SY")} قرش</span>
+            <span>·</span>
+            <span>
+              {product.stock_quantity === null
+                ? "مخزون غير متتبع"
+                : `المخزون: ${product.stock_quantity.toLocaleString("ar-SY")}`}
+            </span>
+            <span>·</span>
+            <span>{categoryName(categories, product.category_id)}</span>
+          </span>
+        </span>
+        <span className="store-card-links">
+          <Link
+            href={`${base}/products/${encodeURIComponent(product.id)}/edit`}
+            className="btn btn-ghost btn-shell-dark btn-sm"
+          >
+            تعديل
+          </Link>
+          {retired ? (
+            <button
+              type="button"
+              className="btn btn-ghost btn-shell-dark btn-sm"
+              disabled={working}
+              onClick={() => doRestore(product)}
+            >
+              استعادة
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-ghost btn-shell-dark btn-sm"
+              onClick={() => {
+                setActionError(null);
+                setActionNotice(null);
+                setPendingRetire(product);
+              }}
+            >
+              أرشفة
+            </button>
+          )}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="shell-page-head">
@@ -216,74 +299,80 @@ export default function ProductsPage({
               </Link>
             }
           />
+        ) : matched.length === 0 ? (
+          <EmptyState
+            icon="fas fa-search"
+            title="لا توجد منتجات مطابقة للبحث أو الفلتر."
+            description="جرّب كلمة بحث مختلفة أو غيّر فلتر الحالة."
+          />
         ) : (
           <>
-            <div className="shell-stack">
-              {state.products.map((product) => {
-                const retired = product.deleted_at !== null;
-                return (
-                  <div key={product.id} className="store-row">
-                    <span className="store-row-icon" aria-hidden="true">
-                      <i className={`fas ${retired ? "fa-archive" : "fa-box"}`}></i>
-                    </span>
-                    <span className="store-row-body">
-                      <span className="store-row-name">
-                        <Link href={`${base}/products/${encodeURIComponent(product.id)}`}>
-                          {product.name}
-                        </Link>{" "}
-                        {retired && <span className="sub-badge sub-badge-unknown">أرشيف</span>}
-                        {product.is_active !== 1 && !retired && (
-                          <span className="sub-badge sub-badge-inactive">غير نشط</span>
-                        )}
-                      </span>
-                      <span className="store-row-meta">
-                        <span dir="ltr">{product.slug}</span>
-                        <span>·</span>
-                        <span>{product.price.toLocaleString("ar-SY")} قرش</span>
-                        <span>·</span>
-                        <span>
-                          {product.stock_quantity === null
-                            ? "مخزون غير متتبع"
-                            : `المخزون: ${product.stock_quantity.toLocaleString("ar-SY")}`}
-                        </span>
-                        <span>·</span>
-                        <span>{categoryName(state.categories, product.category_id)}</span>
-                      </span>
-                    </span>
-                    <span className="store-card-links">
-                      <Link
-                        href={`${base}/products/${encodeURIComponent(product.id)}/edit`}
-                        className="btn btn-ghost btn-shell-dark btn-sm"
-                      >
-                        تعديل
-                      </Link>
-                      {retired ? (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-shell-dark btn-sm"
-                          disabled={working}
-                          onClick={() => doRestore(product)}
-                        >
-                          استعادة
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-shell-dark btn-sm"
-                          onClick={() => {
-                            setActionError(null);
-                            setActionNotice(null);
-                            setPendingRetire(product);
-                          }}
-                        >
-                          أرشفة
-                        </button>
-                      )}
-                    </span>
-                  </div>
-                );
-              })}
+            <div
+              style={{
+                display: "flex",
+                gap: 12,
+                flexWrap: "wrap",
+                alignItems: "center",
+                marginBottom: 16,
+              }}
+            >
+              <input
+                type="search"
+                className="auth-input"
+                style={{ flex: "1 1 200px" }}
+                placeholder="ابحث عن منتج..."
+                aria-label="ابحث عن منتج"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+              <label
+                style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
+              >
+                <span>الحالة:</span>
+                <select
+                  className="auth-input"
+                  style={{ width: "auto" }}
+                  aria-label="الحالة"
+                  value={statusFilter}
+                  onChange={(e) =>
+                    setStatusFilter(e.target.value as "all" | "active" | "archived")
+                  }
+                >
+                  <option value="all">الكل</option>
+                  <option value="active">نشطة</option>
+                  <option value="archived">مؤرشفة</option>
+                </select>
+              </label>
             </div>
+            {showActiveSection && (
+              <div className="shell-stack">
+                {activeVisible.map((product) =>
+                  renderProductRow(product, state.categories)
+                )}
+              </div>
+            )}
+            {showActiveSection && showArchivedSection && (
+              <hr
+                aria-hidden="true"
+                style={{
+                  border: "none",
+                  borderTop: "1px solid var(--gray-5)",
+                  margin: "20px 0 4px",
+                }}
+              />
+            )}
+            {showArchivedSection && (
+              <>
+                <h2 className="shell-card-title" style={{ marginTop: showActiveSection ? 12 : 0 }}>
+                  المنتجات المؤرشفة
+                </h2>
+                <div className="shell-stack">
+                  {archivedVisible.map((product) =>
+                    renderProductRow(product, state.categories)
+                  )}
+                </div>
+              </>
+            )}
             <div style={{ marginTop: 16 }}>
               <Link href={`${base}/products/new`} className="btn btn-outline">
                 <i className="fas fa-plus" aria-hidden="true"></i>
