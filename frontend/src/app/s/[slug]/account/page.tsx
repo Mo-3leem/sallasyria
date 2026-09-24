@@ -125,6 +125,25 @@ function AccountBody({ slug }: { slug: string }) {
         </div>
       </div>
 
+      <div className="shell-card" id="settings">
+        <h2 className="shell-card-title">إعدادات الحساب</h2>
+        <div className="shell-stack">
+          <Link
+            href={`/s/${encodeURIComponent(slug)}/account/change-password`}
+            className="store-row"
+          >
+            <span className="store-row-icon" aria-hidden="true">
+              <i className="fas fa-key"></i>
+            </span>
+            <span className="store-row-body">
+              <span className="store-row-name">تغيير كلمة المرور</span>
+              <span className="store-row-meta">تتطلب كلمة المرور الحالية؛ جلستك تبقى سارية</span>
+            </span>
+            <i className="fas fa-chevron-left" aria-hidden="true" style={{ color: "var(--gray-3)" }}></i>
+          </Link>
+        </div>
+      </div>
+
       <div className="shell-card">
         <h2 className="shell-card-title">طلباتي</h2>
         {orders === null ? (

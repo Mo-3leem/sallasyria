@@ -788,6 +788,8 @@ export const buyerApi = {
   me: (slug: string) => api.get<{ buyer: BuyerAccount }>(buyerPath(slug, "/me")),
   updateName: (slug: string, name: string) =>
     api.patch<{ buyer: BuyerAccount }>(buyerPath(slug, "/me"), { name }),
+  changePassword: (slug: string, data: { current_password: string; new_password: string }) =>
+    api.post<{ changed: boolean }>(buyerPath(slug, "/change-password"), data),
   verifyEmail: (slug: string, token: string) =>
     api.post<{ verified: boolean }>(buyerPath(slug, "/verify-email"), { token }),
   forgotPassword: (slug: string, identity: string) =>

@@ -82,6 +82,66 @@
 .shop-account-link:hover {
   background: rgba(0, 0, 0, 0.06);
 }
+/* Customer dropdown: wrapper owns the header-end placement + menu anchor. */
+.shop-user-wrap {
+  position: relative;
+  margin-inline-start: auto;
+}
+.shop-account-trigger {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+.shop-account-trigger:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.shop-user-caret {
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+.shop-user-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  inset-inline-end: 0;
+  min-width: 220px;
+  background: var(--white);
+  border: 1px solid var(--gray-5);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 8px;
+  z-index: 200;
+}
+.shop-user-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--font);
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--gray-1);
+  text-align: start;
+  cursor: pointer;
+  min-height: 44px;
+}
+.shop-user-item:hover {
+  background: var(--green-50);
+  color: var(--primary);
+}
+.shop-user-item:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.shop-user-separator {
+  border-top: 1px solid var(--gray-5);
+  margin: 6px 4px;
+}
 .shop-cart-count {
   background: rgba(255, 255, 255, 0.25);
   border-radius: 100px;
