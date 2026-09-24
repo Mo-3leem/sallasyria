@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { StoreSwitcher } from "./StoreSwitcher";
 
@@ -26,12 +26,39 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   async function handleLogout() {
     if (loggingOut) return;
     setLoggingOut(true);
+    setMenuOpen(false);
     await logout();
   }
+
+  // Close the profile menu on outside click or Escape; a route change also
+  // resets it (covers keyboard/mouse navigation from inside the menu).
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
 
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
@@ -182,10 +209,58 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <i className="fas fa-bars" aria-hidden="true"></i>
           </button>
           <StoreSwitcher />
-          <span className="shell-header-user" title={user?.name ?? ""}>
-            <i className="fas fa-user-circle" aria-hidden="true"></i>
-            <span>{user?.name ?? ""}</span>
-          </span>
+          <div className="shell-user-wrap" ref={menuRef}>
+            <button
+              type="button"
+              className="shell-header-user shell-user-trigger"
+              title={user?.name ?? ""}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              {user?.avatar_url ? (
+                <img src={user.avatar_url} alt="" className="shell-header-avatar-img" />
+              ) : (
+                <i className="fas fa-user-circle" aria-hidden="true"></i>
+              )}
+              <span>{user?.name ?? ""}</span>
+              <i className="fas fa-chevron-down shell-user-caret" aria-hidden="true"></i>
+            </button>
+            {menuOpen && (
+              <div className="shell-user-menu" role="menu" aria-label="قائمة الحساب">
+                {[
+                  { href: "/auth/profile", label: "الملف الشخصي", icon: "fas fa-id-card" },
+                  { href: "/app/settings", label: "الإعدادات", icon: "fas fa-cog" },
+                  { href: "/auth/sessions", label: "الجلسات", icon: "fas fa-laptop" },
+                  { href: "/auth/change-password", label: "تغيير كلمة المرور", icon: "fas fa-key" },
+                  { href: "/app/stores", label: "متاجري", icon: "fas fa-store" },
+                  { href: "/app/stores/new", label: "إنشاء متجر", icon: "fas fa-plus" },
+                ].map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    role="menuitem"
+                    className="shell-user-item"
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    <i className={item.icon} aria-hidden="true"></i>
+                    <span>{item.label}</span>
+                  </Link>
+                ))}
+                <div className="shell-user-separator" role="separator" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="shell-user-item"
+                  onClick={handleLogout}
+                  disabled={loggingOut}
+                >
+                  <i className="fas fa-sign-out-alt" aria-hidden="true"></i>
+                  <span>{loggingOut ? "جاري الخروج..." : "تسجيل الخروج"}</span>
+                </button>
+              </div>
+            )}
+          </div>
         </header>
         <main className="shell-content">{children}</main>
       </div>
