@@ -9,7 +9,7 @@ import Link from "next/link";
  */
 export function BackButton({ href, label = "رجوع" }: { href: string; label?: string }) {
   return (
-    <div style={{ marginBottom: 12 }}>
+    <div style={{ marginBottom: 12, textAlign: "left" }}>
       <Link href={href} className="btn btn-outline" aria-label={label}>
         <i className="fas fa-arrow-right" aria-hidden="true"></i>
         {label}
