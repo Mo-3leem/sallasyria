@@ -136,6 +136,7 @@ export default function NewProductPage({
             name: "",
             slug: "",
             category_id: null,
+            description: null,
             price: 0,
             stock_quantity: null,
             is_active: 1,

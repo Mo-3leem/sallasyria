@@ -10,6 +10,7 @@ export interface ProductFormValues {
   name: string;
   slug: string;
   category_id: string | null;
+  description: string | null;
   price: number;
   stock_quantity: number | null;
   is_active: 0 | 1;
@@ -45,6 +46,7 @@ export function ProductForm({
 }) {
   const [name, setName] = useState(initial.name);
   const [slug, setSlug] = useState(initial.slug);
+  const [description, setDescription] = useState(initial.description ?? "");
   const [categoryId, setCategoryId] = useState<string>(initial.category_id ?? "");
   const [price, setPrice] = useState(String(initial.price));
   const [stock, setStock] = useState(
@@ -67,6 +69,8 @@ export function ProductForm({
     const local: Record<string, string> = {};
     if (name.trim().length < 1) local.name = "اسم المنتج مطلوب.";
     if (name.trim().length > 200) local.name = "الاسم طويل جداً (200 حرف كحد أقصى).";
+    if (description.trim().length > 2000)
+      local.description = "الوصف طويل جداً (2000 حرف كحد أقصى).";
     if (!isValidSlug(slug.trim()))
       local.slug = "الرابط غير صالح: حروف صغيرة وأرقام وشرطات فقط.";
     const priceNum = parsePriceMinor(price);
@@ -85,6 +89,7 @@ export function ProductForm({
       name: name.trim(),
       slug: slug.trim(),
       category_id: categoryId === "" ? null : categoryId,
+      description: description.trim() === "" ? null : description.trim(),
       price: priceNum,
       stock_quantity: stockNum,
       is_active: isActive ? 1 : 0,
@@ -118,6 +123,27 @@ export function ProductForm({
         }}
         error={err("slug")}
       />
+      <div className="auth-field">
+        <label className="auth-label" htmlFor="field-description">
+          الوصف (اختياري)
+        </label>
+        <textarea
+          id="field-description"
+          className="auth-input"
+          placeholder="اكتب وصفًا مختصرًا للمنتج..."
+          rows={4}
+          maxLength={2000}
+          value={description}
+          onChange={(e) => {
+            setDescription(e.target.value);
+            clearLocal("description");
+          }}
+          aria-invalid={err("description") ? "true" : "false"}
+        />
+        {err("description") && (
+          <p className="auth-field-error">{err("description")}</p>
+        )}
+      </div>
       <div className="auth-field">
         <label className="auth-label" htmlFor="field-category">
           التصنيف (اختياري)
