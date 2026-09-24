@@ -117,9 +117,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <div className="shell-account">
         <div className="shell-account-info">
-          <span className="shell-account-avatar" aria-hidden="true">
-            <i className="fas fa-user"></i>
-          </span>
+          {user?.avatar_url ? (
+            <img src={user.avatar_url} alt="" className="shell-account-avatar-img" />
+          ) : (
+            <span className="shell-account-avatar" aria-hidden="true">
+              <i className="fas fa-user"></i>
+            </span>
+          )}
           <span className="shell-account-text">
             <strong>{user?.name ?? "…"}</strong>
             <small>

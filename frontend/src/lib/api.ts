@@ -12,6 +12,7 @@ import type {
   ShippingRate,
   Store,
   Subscription,
+  User,
 } from "@/types/api";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8787";
@@ -31,10 +32,13 @@ async function request<T>(
 ): Promise<ApiResponse<T>> {
   const url = `${API_BASE_URL}${path}`;
 
+  // FormData bodies must NOT get a JSON Content-Type: the browser sets the
+  // multipart boundary itself, and a preset header would break the parse.
+  const isForm = typeof FormData !== "undefined" && options.body instanceof FormData;
   const response = await fetch(url, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
+      ...(isForm ? {} : { "Content-Type": "application/json" }),
       ...options.headers,
     },
     credentials: "include",
@@ -65,6 +69,9 @@ export const api = {
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  /** Multipart POST (FormData body passes through unstringified). */
+  postForm: <T>(path: string, form: FormData) =>
+    request<T>(path, { method: "POST", body: form }),
 };
 
 export const authApi = {
@@ -73,16 +80,24 @@ export const authApi = {
     phone: string;
     password: string;
     name: string;
-  }) => api.post<{ user: { id: string; phone: string; email: string | null; name: string; role: string; email_verified: number } }>("/auth/register", data),
+  }) => api.post<{ user: { id: string; phone: string; email: string | null; name: string; role: string; email_verified: number; avatar_url: string | null } }>("/auth/register", data),
 
   login: (data: { email: string; password: string }) =>
-    api.post<{ user: { id: string; phone: string; email: string | null; name: string; role: string; email_verified: number }; must_rotate: boolean }>("/auth/login", data),
+    api.post<{ user: { id: string; phone: string; email: string | null; name: string; role: string; email_verified: number; avatar_url: string | null }; must_rotate: boolean }>("/auth/login", data),
 
   logout: () => api.post<{ loggedOut: boolean }>("/auth/logout", {}),
 
   logoutOthers: () => api.post<{ revoked: number }>("/auth/logout-others", {}),
 
-  me: () => api.get<{ user: { id: string; phone: string; email: string | null; name: string; role: string; email_verified: number } }>("/auth/me"),
+  me: () => api.get<{ user: User }>("/auth/me"),
+
+  uploadAvatar: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api.postForm<{ user: User }>("/auth/me/avatar", form);
+  },
+
+  deleteAvatar: () => api.delete<{ user: User }>("/auth/me/avatar"),
 
   updateProfile: (data: {
     name?: string;
@@ -91,7 +106,7 @@ export const authApi = {
     current_password?: string;
     logout_other_sessions?: boolean;
   }) =>
-    api.patch<{ user: { id: string; phone: string; email: string | null; name: string; role: string; email_verified: number }; reauth_required: boolean }>("/auth/me", data),
+    api.patch<{ user: { id: string; phone: string; email: string | null; name: string; role: string; email_verified: number; avatar_url: string | null }; reauth_required: boolean }>("/auth/me", data),
 
   changePassword: (data: {
     current_password: string;

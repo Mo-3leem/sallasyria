@@ -62,6 +62,7 @@ export interface AuthUser {
   email: string | null;
   name: string;
   email_verified: number;
+  avatar_url: string | null;
 }
 
 // Buyer identity shape (populated by P4 requireBuyer). Same one-type rule as

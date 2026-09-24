@@ -15,6 +15,7 @@ export interface UserPublic {
   name: string;
   role: string;
   email_verified: number;
+  avatar_url: string | null;
 }
 
 export interface MerchantRegistration {
@@ -85,9 +86,37 @@ async function emailTakenByOther(db: D1Database, email: string, selfId: string):
 
 export async function getUserPublic(db: D1Database, id: string): Promise<UserPublic | null> {
   return db
-    .prepare("SELECT id, phone, email, name, role, email_verified FROM users WHERE id = ?")
+    .prepare("SELECT id, phone, email, name, role, email_verified, avatar_url FROM users WHERE id = ?")
     .bind(id)
     .first<UserPublic>();
+}
+
+// Avatar self-service writers (POST/DELETE /auth/me/avatar). The route owns
+// authorization (requireAuth ⇒ session user id); these take only the
+// resolved id plus the validated reference — never client-supplied identity.
+export async function setUserAvatar(
+  db: D1Database,
+  id: string,
+  avatarUrl: string,
+  nowIso: string = touch()
+): Promise<UserPublic | null> {
+  await db
+    .prepare("UPDATE users SET avatar_url = ?, updated_at = ? WHERE id = ?")
+    .bind(avatarUrl, nowIso, id)
+    .run();
+  return getUserPublic(db, id);
+}
+
+export async function clearUserAvatar(
+  db: D1Database,
+  id: string,
+  nowIso: string = touch()
+): Promise<UserPublic | null> {
+  await db
+    .prepare("UPDATE users SET avatar_url = NULL, updated_at = ? WHERE id = ?")
+    .bind(nowIso, id)
+    .run();
+  return getUserPublic(db, id);
 }
 
 // Self-service profile update (PATCH /me). Only name/email/phone reach
@@ -166,7 +195,7 @@ export async function createMerchant(
     throw err;
   }
   const row = await db
-    .prepare("SELECT id, phone, email, name, role, email_verified FROM users WHERE id = ?")
+    .prepare("SELECT id, phone, email, name, role, email_verified, avatar_url FROM users WHERE id = ?")
     .bind(id)
     .first<UserPublic>();
   if (!row) throw new AppError("internal", 500, "Something went wrong.");

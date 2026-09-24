@@ -340,3 +340,79 @@ export async function resolveImageUrl(
   }
   return signImageUrl(secret, storeId, ref.file, Math.floor(nowMs / 1000) + ttlSec);
 }
+
+// ---------------------------------------------------------------------------
+// User avatars (merchant/admin profile pictures). Same security posture as
+// product images — private R2 objects, magic-byte validation, short-lived
+// HMAC links — but scoped to a USER id instead of a store id, because
+// avatars belong to accounts, not storefronts. R2 key layout:
+// avatars/{userId}/{file}; the stored DB reference is the r2:// URL below.
+// The file route authenticates via the signature itself (bearer-style, like
+// product files), so <img> tags work without session cookies.
+
+// Stored DB reference prefix for user avatars (parallels R2_URL_PREFIX).
+export const AVATAR_R2_PREFIX = "r2://avatars/";
+
+export function avatarRefFor(userId: string, file: string): string {
+  return `${AVATAR_R2_PREFIX}${userId}/${file}`;
+}
+
+// Parse a stored avatar reference back into its parts. Strict shape
+// (userId/file, FILE_RE filename, no traversal): anything else is null and
+// the caller treats it as missing — never resolved, never served.
+export function avatarKeyFromUrl(url: string): { userId: string; file: string } | null {
+  if (!url.startsWith(AVATAR_R2_PREFIX)) return null;
+  const inner = url.slice(AVATAR_R2_PREFIX.length);
+  const idx = inner.indexOf("/");
+  if (idx <= 0 || idx === inner.length - 1) return null;
+  const userId = inner.slice(0, idx);
+  const file = inner.slice(idx + 1);
+  if (file.includes("/") || !FILE_RE.test(file)) return null;
+  return { userId, file };
+}
+
+// Short-lived read URL for a private avatar object. The signature binds
+// userId + file + expiry, so a URL minted for one user cannot be replayed
+// for another user's file (the route re-verifies with its own uid).
+export async function signAvatarUrl(
+  secret: string,
+  userId: string,
+  file: string,
+  expUnixSec: number
+): Promise<string> {
+  const sig = await hmacHex(secret, `avatar/${userId}/${file}/${expUnixSec}`);
+  const path = `/auth/avatar/file/${encodeURIComponent(file)}`;
+  return `${path}?uid=${encodeURIComponent(userId)}&exp=${expUnixSec}&sig=${sig}`;
+}
+
+export async function verifyAvatarUrl(
+  secret: string,
+  userId: string,
+  file: string,
+  expUnixSec: number,
+  sig: string
+): Promise<boolean> {
+  if (!Number.isInteger(expUnixSec) || expUnixSec * 1000 <= Date.now()) return false;
+  if (userId.length === 0 || !FILE_RE.test(file)) return false;
+  const expected = await hmacHex(secret, `avatar/${userId}/${file}/${expUnixSec}`);
+  return constantTimeEqualHex(expected, sig);
+}
+
+// Resolve a stored users.avatar_url for API responses: managed references
+// become short-lived signed URLs; a userId mismatch refuses (treat as
+// missing): rows must never resolve across accounts, even if mislabeled.
+// A null secret (signing not configured) resolves to null — fail-closed
+// display rather than an unsigned or permanent private link.
+export async function resolveAvatarUrl(
+  storedUrl: string | null,
+  userId: string,
+  secret: string | undefined,
+  nowMs: number = Date.now(),
+  ttlSec: number = IMAGE_URL_TTL_SEC
+): Promise<string | null> {
+  if (!storedUrl) return null;
+  const ref = avatarKeyFromUrl(storedUrl);
+  if (ref === null || ref.userId !== userId) return null;
+  if (!secret) return null;
+  return signAvatarUrl(secret, userId, ref.file, Math.floor(nowMs / 1000) + ttlSec);
+}
