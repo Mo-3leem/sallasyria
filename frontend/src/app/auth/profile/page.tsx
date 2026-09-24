@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { authApi } from "@/lib/api";
 import {
   authErrorMessage,
@@ -28,6 +28,9 @@ export default function ProfilePage() {
   );
 }
 
+const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
+const AVATAR_ACCEPT = "image/jpeg,image/png,image/webp";
+
 function ProfileContent() {
   const { user, refresh, logout } = useAuth();
   const [name, setName] = useState<string | null>(null);
@@ -40,6 +43,83 @@ function ProfileContent() {
   const [saved, setSaved] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  function clearPreview() {
+    setPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    if (fileRef.current) fileRef.current.value = "";
+  }
+
+  function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAvatarError(null);
+    if (!file.type.startsWith("image/")) {
+      setAvatarError("الملف المختار ليس صورة مدعومة.");
+      return;
+    }
+    if (file.size > AVATAR_MAX_BYTES) {
+      setAvatarError("حجم الصورة كبير جداً (الحد الأقصى 5 م.ب).");
+      return;
+    }
+    setPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file);
+    });
+  }
+
+  async function onSaveAvatar() {
+    const file = fileRef.current?.files?.[0];
+    if (!file || avatarBusy) return;
+    setAvatarError(null);
+    setAvatarBusy(true);
+    try {
+      const res = await authApi.uploadAvatar(file);
+      if (!res.ok) {
+        const code = (res as { error?: { code?: string } }).error?.code;
+        setAvatarError(
+          code === "body_too_large"
+            ? "حجم الصورة كبير جداً (الحد الأقصى 5 م.ب)."
+            : code === "invalid_image"
+              ? "الملف المختار ليس صورة مدعومة."
+              : code === "storage_unavailable"
+                ? "خدمة تخزين الصور غير مفعّلة حالياً."
+                : NETWORK_ERROR_MESSAGE
+        );
+        return;
+      }
+      clearPreview();
+      await refresh();
+    } catch {
+      setAvatarError(NETWORK_ERROR_MESSAGE);
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
+
+  async function onDeleteAvatar() {
+    if (avatarBusy) return;
+    setAvatarError(null);
+    setAvatarBusy(true);
+    try {
+      const res = await authApi.deleteAvatar();
+      if (!res.ok) {
+        setAvatarError(NETWORK_ERROR_MESSAGE);
+        return;
+      }
+      await refresh();
+    } catch {
+      setAvatarError(NETWORK_ERROR_MESSAGE);
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
 
   if (!user) return null;
   const curName = name ?? user.name;
@@ -127,6 +207,49 @@ function ProfileContent() {
         </>
       }
     >
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, marginBottom: 20 }}>
+        {preview ? (
+          <img src={preview} alt="معاينة الصورة الشخصية" className="auth-avatar-img" />
+        ) : user.avatar_url ? (
+          <img src={user.avatar_url} alt="الصورة الشخصية الحالية" className="auth-avatar-img" />
+        ) : (
+          <span className="auth-avatar-fallback" aria-hidden="true">
+            {(user.name.trim()[0] ?? "م").toUpperCase()}
+          </span>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept={AVATAR_ACCEPT}
+          hidden
+          aria-label="اختيار صورة شخصية"
+          onChange={onPickFile}
+        />
+        {avatarError && (
+          <p className="auth-field-error" role="alert">{avatarError}</p>
+        )}
+        {preview ? (
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" className="btn btn-primary" disabled={avatarBusy} onClick={onSaveAvatar}>
+              {avatarBusy ? "جاري الحفظ..." : "حفظ"}
+            </button>
+            <button type="button" className="btn btn-outline" disabled={avatarBusy} onClick={clearPreview}>
+              إلغاء
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+            <button type="button" className="btn btn-outline" disabled={avatarBusy} onClick={() => fileRef.current?.click()}>
+              تغيير الصورة الشخصية
+            </button>
+            {user.avatar_url && (
+              <button type="button" className="btn btn-outline" disabled={avatarBusy} onClick={onDeleteAvatar}>
+                {avatarBusy ? "جاري الحذف..." : "حذف الصورة"}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
       <div className="auth-form" style={{ marginBottom: 20 }}>
         <div className="auth-profile-row">
           <span className="key">الدور</span>

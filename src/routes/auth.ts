@@ -4,7 +4,7 @@ import { getDb } from "../db.js";
 import { AppError } from "../http/errors.js";
 import { ok } from "../http/respond.js";
 import { z, assertNoImmutableFields, validationHook } from "../http/validate.js";
-import { createMerchant, emailTaken, getUserByEmail, getUserPublic, phoneTaken, resetUserPassword, setPasswordHash, updateUserProfile } from "../services/users.js";
+import { clearUserAvatar, createMerchant, emailTaken, getUserByEmail, getUserPublic, phoneTaken, resetUserPassword, setPasswordHash, setUserAvatar, updateUserProfile } from "../services/users.js";
 import {
   RESET_TOKEN_TTL_MS,
   VERIFY_TOKEN_TTL_MS,
@@ -16,7 +16,20 @@ import { buildResetEmail, buildResetSuccessEmail, buildVerificationEmail, dispat
 import { normalizeEmail } from "../lib/email.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { auditLog } from "../lib/audit.js";
+import { resourceId } from "../db/tenant.js";
 import { uuidv7 } from "../lib/ids.js";
+import {
+  ALLOWED_IMAGE_MIME,
+  PRODUCT_IMAGE_MAX_BYTES,
+  avatarKeyFromUrl,
+  avatarRefFor,
+  extensionFor,
+  resolveAvatarUrl,
+  sanitizeImage,
+  signingSecretOrThrow,
+  sniffImageMime,
+  verifyAvatarUrl,
+} from "../lib/uploads.js";
 import { dummyHash, hashPassword, verifyPassword, PASSWORD_RULES } from "../lib/password.js";
 import {
   buildClearCookie,
@@ -51,6 +64,7 @@ const loginUserSchema = z
     email_verified: z.number().openapi({ example: 0 }),
     name: z.string().openapi({ example: "Owner One" }),
     role: z.string().openapi({ example: "merchant" }),
+    avatar_url: z.string().nullable().openapi({ example: null }),
   })
   .openapi("LoginUser");
 
@@ -460,8 +474,19 @@ auth.openapi(resetPasswordRoute, async (c) => {
   return ok(c, { reset: true });
 }, validationHook);
 
-function publicUser(u: { id: string; phone: string; email: string | null; name: string; role: string; email_verified?: number | null }) {
-  return { id: u.id, phone: u.phone, email: u.email, name: u.name, role: u.role, email_verified: u.email_verified ?? 0 };
+function publicUser(u: { id: string; phone: string; email: string | null; name: string; role: string; email_verified?: number | null; avatar_url?: string | null }) {
+  return { id: u.id, phone: u.phone, email: u.email, name: u.name, role: u.role, email_verified: u.email_verified ?? 0, avatar_url: u.avatar_url ?? null };
+}
+
+// Resolve the stored avatar reference into a short-lived signed URL for API
+// responses. The raw r2:// reference never leaves the server; without a
+// signing secret the field resolves to null (fail-closed display).
+async function userWithAvatar(
+  c: { env: Env },
+  u: { id: string; phone: string; email: string | null; name: string; role: string; email_verified?: number | null; avatar_url?: string | null }
+) {
+  const avatar_url = await resolveAvatarUrl(u.avatar_url ?? null, u.id, c.env.URL_SIGNING_SECRET);
+  return publicUser({ ...u, avatar_url });
 }
 
 function cookieSecure(c: { env: Env }): boolean {
@@ -594,7 +619,7 @@ auth.openapi(loginRoute, async (c) => {
   const bootstrap = c.env.ADMIN_BOOTSTRAP_PASSWORD;
   const must_rotate =
     user.role === "admin" && !!bootstrap && verifyPassword(bootstrap, user.password_hash);
-  return ok(c, { user: publicUser(user), must_rotate }, 200);
+  return ok(c, { user: await userWithAvatar(c, user), must_rotate }, 200);
 }, validationHook);
 
 // POST /auth/logout — immediate server-side revocation (revoked_at=now),
@@ -686,9 +711,9 @@ const meRoute = createRoute({
   },
 });
 
-auth.openapi(meRoute, (c) => {
+auth.openapi(meRoute, async (c) => {
   const user: AuthUser = currentUser(c);
-  return ok(c, { user: publicUser(user) });
+  return ok(c, { user: await userWithAvatar(c, user) });
 }, validationHook);
 
 const mePatchSchema = z.object({
@@ -702,7 +727,7 @@ const mePatchSchema = z.object({
 // Identity and security fields can never be written through this endpoint.
 // (updated_at is app-managed and ignored; the schema already strips anything
 // else silently, but these fail closed loudly by design.)
-const ME_FORBIDDEN = ["id", "role", "is_active", "password_hash", "created_at"] as const;
+const ME_FORBIDDEN = ["id", "role", "is_active", "password_hash", "created_at", "avatar_url"] as const;
 
 // PATCH /auth/me — self-service profile update. Name-only edits need no
 // password and touch no sessions. Phone/email edits are credential-identity
@@ -790,7 +815,174 @@ auth.openapi(patchMeRoute, async (c) => {
       .run();
   }
   auditLog("user.profile.update", { actor: user.id, result: user.id });
-  return ok(c, { user: publicUser(updated), reauth_required: false });
+  return ok(c, { user: await userWithAvatar(c, updated), reauth_required: false });
+}, validationHook);
+
+// POST /auth/me/avatar — self-service profile picture upload. Multipart
+// field "file". Enforcement order mirrors the product-image upload route:
+// File check -> size cap (5 MB, before buffering) -> magic-byte sniff
+// (claimed MIME ignored) -> metadata sanitize -> private R2 put under a
+// random user-namespaced key -> users.avatar_url reference. The previous
+// avatar object is deleted best-effort AFTER the DB write commits, so a
+// failed put never orphans the live reference. 503 without R2 or signing
+// secret (fail-closed, never a fake success). Identity flows ONLY from the
+// session — no target id exists to smuggle.
+const avatarUploadRoute = createRoute({
+  method: "post",
+  path: "/me/avatar",
+  summary: "Upload own profile picture",
+  description:
+    "Multipart file (JPEG, PNG, WebP, or GIF, max 5 MB). Verified by magic " +
+    "bytes server-side, metadata-stripped, and stored as a private R2 object " +
+    "linked to the caller. Replaces any previous picture. 503 without storage.",
+  middleware: [requireAuth],
+  responses: {
+    200: {
+      content: { "application/json": { schema: okOf(z.object({ user: loginUserSchema })) } },
+      description: "Updated public profile with fresh avatar link",
+    },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Missing file or unsupported image" },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    413: { content: { "application/json": { schema: failEnvelope } }, description: "Image exceeds the size limit" },
+    503: { content: { "application/json": { schema: failEnvelope } }, description: "Image storage is not configured" },
+  },
+});
+
+auth.openapi(avatarUploadRoute, async (c) => {
+  const user = currentUser(c);
+  const form = await c.req.parseBody().catch(() => ({}));
+  const file = (form as Record<string, unknown>)["file"];
+  if (!(file instanceof File)) {
+    throw new AppError("validation_failed", 400, "Multipart field 'file' is required.");
+  }
+  if (file.size > PRODUCT_IMAGE_MAX_BYTES || file.size === 0) {
+    throw new AppError("body_too_large", 413, "Image exceeds the size limit.");
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const sniffed = sniffImageMime(bytes);
+  if (sniffed === null || !(ALLOWED_IMAGE_MIME as readonly string[]).includes(sniffed)) {
+    throw new AppError("invalid_image", 400, "Uploaded file is not a supported image.");
+  }
+  const clean = sanitizeImage(bytes, sniffed);
+  const secret = signingSecretOrThrow(c.env);
+  // No-R2 production demo: fail closed with 503 (never a TypeError-500,
+  // never a fake success) — same guard as the product-image upload route.
+  const r2 = c.env.R2;
+  if (!r2) {
+    throw new AppError("storage_unavailable", 503, "Image storage is not configured.");
+  }
+  const fileName = `${uuidv7()}.${extensionFor(sniffed)}`;
+  const objectKey = `avatars/${user.id}/${fileName}`;
+  await r2.put(objectKey, clean.bytes, {
+    httpMetadata: { contentType: sniffed },
+  });
+  const updated = await setUserAvatar(getDb(c), user.id, avatarRefFor(user.id, fileName));
+  if (!updated) throw new AppError("internal", 500, "Something went wrong.");
+  // Retire the previous object best-effort (post-commit; a failure here
+  // must never fail the upload, and the old link is already unreferenced).
+  const prev = avatarKeyFromUrl(user.avatar_url ?? "");
+  if (prev && prev.file !== fileName) {
+    try {
+      await r2.delete(`avatars/${prev.userId}/${prev.file}`);
+    } catch {
+      // Best-effort only.
+    }
+  }
+  auditLog("user.profile.update", { actor: user.id, result: user.id });
+  return ok(c, { user: await userWithAvatar(c, updated) });
+}, validationHook);
+
+// DELETE /auth/me/avatar — remove own profile picture. Idempotent: no
+// picture is still 200 with avatar_url null. The R2 object is deleted
+// best-effort; the DB clear is authoritative either way.
+const avatarDeleteRoute = createRoute({
+  method: "delete",
+  path: "/me/avatar",
+  summary: "Remove own profile picture",
+  description: "Clears the picture and falls back to the default avatar. Idempotent.",
+  middleware: [requireAuth],
+  responses: {
+    200: {
+      content: { "application/json": { schema: okOf(z.object({ user: loginUserSchema })) } },
+      description: "Updated public profile without avatar",
+    },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+  },
+});
+
+auth.openapi(avatarDeleteRoute, async (c) => {
+  const user = currentUser(c);
+  const updated = await clearUserAvatar(getDb(c), user.id);
+  if (!updated) throw new AppError("internal", 500, "Something went wrong.");
+  const prev = avatarKeyFromUrl(user.avatar_url ?? "");
+  if (prev && c.env.R2) {
+    try {
+      await c.env.R2.delete(`avatars/${prev.userId}/${prev.file}`);
+    } catch {
+      // Best-effort only.
+    }
+  }
+  auditLog("user.profile.update", { actor: user.id, result: user.id });
+  return ok(c, { user: await userWithAvatar(c, updated) });
+}, validationHook);
+
+// NOTE: registered BEFORE any /:param-style auth route could capture the
+// "avatar" segment (same precedence discipline as the product file route).
+const avatarFileRoute = createRoute({
+  method: "get",
+  path: "/avatar/file/:key",
+  summary: "Serve a private avatar file",
+  description:
+    "Public bearer-URL reader: the user-bound HMAC signature plus expiry are verified, " +
+    "so links are unforgeable and short-lived. Missing, expired, or tampered links 404 identically.",
+  request: {
+    params: z.object({ key: z.string().openapi({ param: { name: "key", in: "path" }, example: "01J....jpg" }) }),
+    query: z.object({
+      uid: z.string().optional().openapi({ example: "user_01J..." }),
+      exp: z.string().optional().openapi({ example: "1758000000" }),
+      sig: z.string().optional().openapi({ example: "9f2c..." }),
+    }),
+  },
+  responses: {
+    200: { description: "Image bytes (content-typed, private cache)" },
+    404: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Missing, expired, or tampered link",
+    },
+    503: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Image storage is not configured",
+    },
+  },
+});
+
+auth.openapi(avatarFileRoute, async (c) => {
+  const secret = signingSecretOrThrow(c.env);
+  const file = resourceId(c, "key");
+  const uid = c.req.query("uid") ?? "";
+  const expRaw = c.req.query("exp");
+  const sig = c.req.query("sig") ?? "";
+  const exp = expRaw !== undefined ? Number(expRaw) : NaN;
+  if (!(await verifyAvatarUrl(secret, uid, file, exp, sig))) {
+    throw new AppError("avatar_not_found", 404, "Avatar not found.");
+  }
+  // No-R2 production demo: fail closed with 503 (see upload route note).
+  const r2 = c.env.R2;
+  if (!r2) {
+    throw new AppError("storage_unavailable", 503, "Image storage is not configured.");
+  }
+  const object = await r2.get(`avatars/${uid}/${file}`);
+  if (!object) {
+    throw new AppError("avatar_not_found", 404, "Avatar not found.");
+  }
+  const remaining = Math.max(0, exp - Math.floor(Date.now() / 1000));
+  return new Response(object.body, {
+    status: 200,
+    headers: {
+      "Content-Type": object.httpMetadata?.contentType ?? "application/octet-stream",
+      "Cache-Control": `private, max-age=${remaining}`,
+    },
+  });
 }, validationHook);
 
 const changePasswordSchema = z.object({

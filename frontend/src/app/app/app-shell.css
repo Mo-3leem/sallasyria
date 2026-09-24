@@ -101,6 +101,13 @@
   color: var(--white);
   flex-shrink: 0;
 }
+.shell-account-avatar-img {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
 .shell-account-text {
   display: flex;
   flex-direction: column;

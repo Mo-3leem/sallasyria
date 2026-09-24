@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { AppError } from "../src/http/errors.js";
 import {
+  avatarKeyFromUrl,
+  avatarRefFor,
   r2FileFromUrl,
   r2KeyFromUrl,
   r2UrlFor,
+  resolveAvatarUrl,
   resolveImageUrl,
   sanitizeImage,
+  signAvatarUrl,
   signImageUrl,
   signingSecretOrThrow,
   sniffImageMime,
+  verifyAvatarUrl,
   verifyImageUrl,
 } from "../src/lib/uploads.js";
 
@@ -152,5 +157,46 @@ describe("signed image URLs", () => {
     } catch (err) {
       expect(err).toMatchObject({ code: "url_signing_misconfigured" });
     }
+  });
+});
+
+describe("avatar references and links", () => {
+  const SECRET = "avatar-unit-secret";
+  const UID = "user_01Junit";
+  const FILE = "01Junit.jpg";
+
+  it("round-trips references and signs user-bound links", async () => {
+    const ref = avatarRefFor(UID, FILE);
+    expect(ref.startsWith("r2://avatars/")).toBe(true);
+    expect(avatarKeyFromUrl(ref)).toEqual({ userId: UID, file: FILE });
+    const exp = Math.floor(Date.now() / 1000) + 600;
+    const url = await signAvatarUrl(SECRET, UID, FILE, exp);
+    expect(url).toContain("/auth/avatar/file/");
+    expect(url).toContain(`uid=${UID}`);
+    expect(url).toContain("sig=");
+    expect(await verifyAvatarUrl(SECRET, UID, FILE, exp, url.split("sig=")[1]!)).toBe(true);
+  });
+
+  it("rejects tampered, expired, foreign, and malformed links", async () => {
+    const exp = Math.floor(Date.now() / 1000) + 600;
+    const sig = (await signAvatarUrl(SECRET, UID, FILE, exp)).split("sig=")[1]!;
+    // Wrong user: a link minted for one account never validates for another.
+    expect(await verifyAvatarUrl(SECRET, "user_01Jother", FILE, exp, sig)).toBe(false);
+    // Tampered signature and expired links fail identically (false).
+    expect(await verifyAvatarUrl(SECRET, UID, FILE, exp, `${sig.slice(0, -2)}xx`)).toBe(false);
+    expect(await verifyAvatarUrl(SECRET, UID, FILE, Math.floor(Date.now() / 1000) - 10, sig)).toBe(false);
+    // Traversal and shapeless references never parse.
+    expect(await verifyAvatarUrl(SECRET, UID, "../../evil", exp, sig)).toBe(false);
+    expect(avatarKeyFromUrl("r2://avatars/noslash")).toBeNull();
+    expect(avatarKeyFromUrl("https://x/evil")).toBeNull();
+  });
+
+  it("resolves owned references, refuses foreign ones, nulls without a secret", async () => {
+    const ref = avatarRefFor(UID, FILE);
+    const signed = await resolveAvatarUrl(ref, UID, SECRET);
+    expect(signed).toContain("/auth/avatar/file/");
+    await expect(resolveAvatarUrl(avatarRefFor("user_01Jother", FILE), UID, SECRET)).resolves.toBeNull();
+    await expect(resolveAvatarUrl(ref, UID, undefined)).resolves.toBeNull();
+    await expect(resolveAvatarUrl(null, UID, SECRET)).resolves.toBeNull();
   });
 });

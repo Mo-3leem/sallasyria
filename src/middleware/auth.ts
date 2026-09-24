@@ -26,6 +26,7 @@ interface SessionJoinRow {
   email: string | null;
   name: string;
   email_verified: number | null;
+  avatar_url: string | null;
   is_active: number;
   password_hash: string;
 }
@@ -70,7 +71,7 @@ async function authenticate(c: AuthedContext): Promise<AuthUser> {
   const row = await getDb(c)
     .prepare(
       `SELECT s.id AS sid, s.revoked_at, s.expires_at, s.last_used_at,
-              u.id AS uid, u.role, u.phone, u.email, u.name, u.email_verified, u.is_active,
+              u.id AS uid, u.role, u.phone, u.email, u.name, u.email_verified, u.avatar_url, u.is_active,
               u.password_hash
          FROM sessions s JOIN users u ON u.id = s.user_id
         WHERE s.token_hash = ?`
@@ -121,7 +122,7 @@ async function authenticate(c: AuthedContext): Promise<AuthUser> {
       .bind(touch(nowMs), row.sid)
       .run();
   }
-  const user: AuthUser = { id: row.uid, role: row.role, phone: row.phone, email: row.email, name: row.name, email_verified: row.email_verified ?? 0 };
+  const user: AuthUser = { id: row.uid, role: row.role, phone: row.phone, email: row.email, name: row.name, email_verified: row.email_verified ?? 0, avatar_url: row.avatar_url };
   c.set("user", user);
   c.set("sessionId", row.sid);
   return user;
