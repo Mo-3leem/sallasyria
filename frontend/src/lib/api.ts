@@ -141,6 +141,13 @@ export const storesApi = {
       `/stores/${encodeURIComponent(storeId)}`,
       data
     ),
+
+  /** Set store visibility (1 published / 0 draft). Owner or admin. */
+  publish: (storeId: string, is_published: 0 | 1) =>
+    api.post<{ store: Store | null }>(
+      `/stores/${encodeURIComponent(storeId)}/publish`,
+      { is_published }
+    ),
 };
 
 export const plansApi = {

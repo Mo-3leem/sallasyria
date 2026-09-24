@@ -10,7 +10,7 @@ import { auditLog } from "../lib/audit.js";
 import { currentUser, requireAuth } from "../middleware/auth.js";
 import { requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
-import { listAllStores, getStoreById, getStoreOwner, listStoresForOwner, updateStore, createStore } from "../services/stores.js";
+import { listAllStores, getStoreById, getStoreOwner, listStoresForOwner, setStorePublished, updateStore, createStore } from "../services/stores.js";
 import { grantTrial } from "../services/billing.js";
 
 export const stores = new OpenAPIHono<AppEnv>();
@@ -28,6 +28,7 @@ const storeDocSchema = z
     name: z.string().openapi({ example: "Demo Store" }),
     currency: z.string().openapi({ example: "SYP" }),
     status: z.string().openapi({ example: "active" }),
+    is_published: z.number().openapi({ example: 0 }),
   })
   .openapi("Store");
 
@@ -202,10 +203,11 @@ const storePatchSchema = z.object({
   currency: z.string().min(1).max(8).optional(),
 });
 
-// Identity, ownership, lifecycle, and counters can never be written through
-// this endpoint (status stays operator-only until something consumes
-// paused/archived; order_counter is allocator state).
-const UPDATE_FORBIDDEN = ["store_id", "id", "owner_id", "status", "order_counter", "created_at"] as const;
+// Identity, ownership, lifecycle, visibility, and counters can never be
+// written through this endpoint (status stays operator-only until something
+// consumes paused/archived; is_published has its own POST /:storeId/publish
+// endpoint; order_counter is allocator state).
+const UPDATE_FORBIDDEN = ["store_id", "id", "owner_id", "status", "is_published", "order_counter", "created_at"] as const;
 
 const renameRoute = createRoute({
   method: "patch",
@@ -268,5 +270,70 @@ stores.openapi(renameRoute, async (c) => {
   } else {
     auditLog("store.update", { actor: user.id, store: storeId, result: "ok" });
   }
+  return ok(c, { store: updated });
+}, validationHook);
+
+const publishSchema = z.object({
+  is_published: z.union([z.literal(0), z.literal(1)]).openapi({ example: 1 }),
+});
+
+// Only is_published may be written through this endpoint: every other
+// store field in the body is 400 (same immutable-field philosophy as PATCH).
+const PUBLISH_FORBIDDEN = ["store_id", "id", "owner_id", "status", "order_counter", "created_at", "name", "slug", "currency"] as const;
+
+const publishRoute = createRoute({
+  method: "post",
+  path: "/:storeId/publish",
+  summary: "Publish or unpublish a store",
+  description:
+    "Sets store visibility for the public storefront (/s/:slug). " +
+    "is_published=1 makes the store publicly resolvable; 0 hides it again. " +
+    "Owner or admin only (foreign ids are 404, no oracle). " +
+    "Deliberately NOT subscription-gated: publishing is visibility, not a " +
+    "premium write — a brand-new store must be publishable right after " +
+    "creation. Audited as store.publish.",
+  middleware: [requireAuth, resolveStore, requireStoreAccess],
+  request: {
+    params: z.object({ storeId: storeIdParam }),
+    body: { content: { "application/json": { schema: publishSchema } } },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: okOf(z.object({ store: storeDocSchema.nullable() })) },
+      },
+      description: "Store with updated visibility (null only if deleted mid-request)",
+    },
+    400: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Invalid body or immutable field",
+    },
+    401: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Unauthenticated",
+    },
+    404: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Unknown or foreign store",
+    },
+  },
+});
+
+// POST /stores/:storeId/publish — the single writer of is_published.
+// requireStoreAccess proves ownership (admins bypass per convention); the
+// service writes only the flag plus updated_at and returns the store.
+stores.openapi(publishRoute, async (c) => {
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  assertNoImmutableFields(raw, PUBLISH_FORBIDDEN);
+  const { storeId } = storeScope(c);
+  const user = currentUser(c);
+  const { is_published } = c.req.valid("json");
+  const updated = await setStorePublished(getDb(c), storeId, is_published);
+  if (updated === null) {
+    // Defensive only: requireStoreAccess proved access above, so a null here
+    // means deletion raced the middlewares — still 404, never unscoped data.
+    return ok(c, { store: null });
+  }
+  auditLog("store.publish", { actor: user.id, store: storeId, result: is_published === 1 ? "published" : "unpublished" });
   return ok(c, { store: updated });
 }, validationHook);

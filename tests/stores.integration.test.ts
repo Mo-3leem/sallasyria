@@ -150,7 +150,7 @@ describe("B3 store listing", () => {
       ["store_verify_b3_a", "store_verify_b3_expired"].sort()
     );
     for (const s of body.data.stores) {
-      expect(Object.keys(s).sort()).toEqual(["currency", "id", "name", "slug", "status"]);
+      expect(Object.keys(s).sort()).toEqual(["currency", "id", "is_published", "name", "slug", "status"]);
     }
     expect(JSON.stringify(body)).not.toContain("order_counter");
   });
@@ -363,12 +363,13 @@ describe("B3 store settings update", () => {
     expect(store.currency).toBe("EUR");
   });
 
-  it("all six immutable fields are 400", async () => {
+  it("all seven immutable fields are 400", async () => {
     for (const [key, value] of [
       ["id", "forged"],
       ["owner_id", "user_verify_b3_b"],
       ["store_id", "store_verify_b3_b"],
       ["status", "archived"],
+      ["is_published", 1],
       ["order_counter", 1],
       ["created_at", "2020-01-01T00:00:00Z"],
     ] as const) {
@@ -387,5 +388,85 @@ describe("B3 store settings update", () => {
   it("session survives store updates", async () => {
     const me = await api("/stores", {}, jarA);
     expect(me.status).toBe(200);
+  });
+});
+
+describe("B3 store publish visibility", () => {
+  let pubStoreId = "";
+  const PUB_SLUG = "b3-publish-shop";
+
+  it("merchant creates a draft store (is_published = 0)", async () => {
+    const res = await api("/stores", {
+      method: "POST",
+      body: JSON.stringify({ name: "B3 Publish Shop", slug: PUB_SLUG }),
+    }, jarA);
+    expect(res.status).toBe(201);
+    const store = (res.body as { data: { store: { id: string; is_published: number } } }).data.store;
+    pubStoreId = store.id;
+    expect(store.is_published).toBe(0);
+  });
+
+  it("draft store is inaccessible publicly", async () => {
+    const pub = await api(`/stores/by-slug/${PUB_SLUG}`);
+    expect(pub.status).toBe(404);
+  });
+
+  it("owner publishes their own store", async () => {
+    const res = await api(`/stores/${pubStoreId}/publish`, {
+      method: "POST",
+      body: JSON.stringify({ is_published: 1 }),
+    }, jarA);
+    expect(res.status).toBe(200);
+    expect(((res.body as { data: { store: { is_published: number } } }).data.store.is_published)).toBe(1);
+  });
+
+  it("published store is accessible publicly", async () => {
+    const pub = await api(`/stores/by-slug/${PUB_SLUG}`);
+    expect(pub.status).toBe(200);
+  });
+
+  it("another merchant cannot publish the store (404, no oracle)", async () => {
+    const res = await api(`/stores/${pubStoreId}/publish`, {
+      method: "POST",
+      body: JSON.stringify({ is_published: 1 }),
+    }, jarB);
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({
+      ok: false,
+      error: { code: "store_not_found", message: "Store not found." },
+    });
+  });
+
+  it("anonymous publish is 401", async () => {
+    const res = await api(`/stores/${pubStoreId}/publish`, {
+      method: "POST",
+      body: JSON.stringify({ is_published: 0 }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("invalid body is 400", async () => {
+    const bad = await api(`/stores/${pubStoreId}/publish`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }, jarA);
+    expect(bad.status).toBe(400);
+    const wrong = await api(`/stores/${pubStoreId}/publish`, {
+      method: "POST",
+      body: JSON.stringify({ name: "Hijacked" }),
+    }, jarA);
+    expect(wrong.status).toBe(400);
+  });
+
+  it("owner unpublishes their own store; public access gone again", async () => {
+    const res = await api(`/stores/${pubStoreId}/publish`, {
+      method: "POST",
+      body: JSON.stringify({ is_published: 0 }),
+    }, jarA);
+    expect(res.status).toBe(200);
+    expect(((res.body as { data: { store: { is_published: number } } }).data.store.is_published)).toBe(0);
+    expect((await api(`/stores/by-slug/${PUB_SLUG}`)).status).toBe(404);
+    // Cleanup the fixture store (plus its auto-granted trial subscription).
+    expect(d1(`DELETE FROM subscriptions WHERE store_id = '${pubStoreId}';DELETE FROM stores WHERE id = '${pubStoreId}';`).ok).toBe(true);
   });
 });

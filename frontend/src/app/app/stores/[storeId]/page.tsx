@@ -28,6 +28,8 @@ export default function StorePage({
   const { storeId } = params;
   const { refresh: refreshAuth } = useAuth();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -114,6 +116,37 @@ export default function StorePage({
 
   const { store } = state;
 
+  async function onTogglePublish() {
+    if (state.kind !== "ready" || publishing) return;
+    setPublishError(null);
+    setPublishing(true);
+    try {
+      const next = state.store.is_published === 1 ? 0 : 1;
+      const res = await storesApi.publish(storeId, next as 0 | 1);
+      if (!res.ok) {
+        if (isApiError(res) && res.error.code === "unauthorized") {
+          await refreshAuth();
+          return;
+        }
+        if (isApiError(res) && res.error.code === "store_not_found") {
+          setState({ kind: "missing" });
+          return;
+        }
+        setPublishError(
+          isApiError(res) && res.error.message
+            ? res.error.message
+            : "تعذّر تحديث حالة النشر. حاول مجدداً."
+        );
+        return;
+      }
+      if (res.data.store) setState({ kind: "ready", store: res.data.store });
+    } catch {
+      setPublishError("تعذّر الاتصال بالخادم.");
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   return (
     <>
       <div className="shell-page-head">
@@ -146,6 +179,36 @@ export default function StorePage({
         <div className="info-row">
           <span className="key">الحالة</span>
           <span className="value">{store.status}</span>
+        </div>
+        <div className="info-row">
+          <span className="key">النشر</span>
+          <span className="value">
+            {store.is_published === 1 ? "منشور" : "مسودة"}
+          </span>
+        </div>
+        {publishError && (
+          <p className="shell-note" role="alert" style={{ color: "var(--danger, #b91c1c)" }}>
+            {publishError}
+          </p>
+        )}
+        <div style={{ marginTop: 12 }}>
+          <button
+            type="button"
+            className="btn btn-outline"
+            disabled={publishing}
+            onClick={onTogglePublish}
+          >
+            {publishing
+              ? "جاري تحديث النشر..."
+              : store.is_published === 1
+                ? "إلغاء النشر"
+                : "نشر المتجر"}
+          </button>
+          <p className="shell-note" style={{ marginTop: 8 }}>
+            {store.is_published === 1
+              ? "متجرك ظاهر للعملاء عبر رابط المتجر. إلغاء النشر يخفيه فوراً."
+              : "متجرك مخفي عن العملاء حالياً. انشره ليصبح رابطه متاحاً."}
+          </p>
         </div>
         <div className="info-row">
           <span className="key">الاشتراك</span>

@@ -14,9 +14,10 @@ export interface StorePublic {
   name: string;
   currency: string;
   status: string;
+  is_published: number;
 }
 
-const PUBLIC_COLUMNS = "id, slug, name, currency, status";
+const PUBLIC_COLUMNS = "id, slug, name, currency, status, is_published";
 // NOTE: order_counter is deliberately NEVER selected (counter oracle).
 
 export async function listStoresForOwner(
@@ -78,6 +79,26 @@ export async function createStore(
   if (!row) throw new AppError("internal", 500, "Something went wrong.");
   return row;
 }
+// Store visibility toggle (POST /stores/:storeId/publish). Single writer of
+// is_published: sets the flag (0 draft / 1 published) and bumps updated_at.
+// Callers resolve authorization via requireStoreAccess; this function takes
+// only the resolved storeId plus the validated flag — never raw client scope.
+export async function setStorePublished(
+  db: D1Database,
+  storeId: string,
+  isPublished: 0 | 1,
+  nowIso: string = touch()
+): Promise<StorePublic | null> {
+  const current = await getStoreById(db, storeId);
+  if (!current) return null;
+  if (current.is_published === isPublished) return current;
+  await db
+    .prepare("UPDATE stores SET is_published = ?, updated_at = ? WHERE id = ?")
+    .bind(isPublished, nowIso, storeId)
+    .run();
+  return getStoreById(db, storeId);
+}
+
 // null only in the impossible case (deleted between middlewares) — callers
 // map that to 404, never to an unscoped read.
 export async function getStoreById(
