@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useBuyer } from "@/hooks/useBuyer";
 import { useCart } from "@/hooks/useCart";
 import { useStorefront } from "@/hooks/useStorefront";
@@ -31,13 +32,53 @@ export function ShopPage({
 }) {
   const { state, reload } = useStorefront(slug);
   const { countFor, ensure } = useCart();
-  const { buyerFor, refresh } = useBuyer();
+  const { buyerFor, refresh, logout } = useBuyer();
+  const router = useRouter();
+  const pathname = usePathname();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     refresh(slug);
     ensure(slug);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
+
+  // Customer menu: outside click / Escape / route change close it.
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
+
+  async function handleLogout() {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    setMenuOpen(false);
+    try {
+      await logout(slug);
+    } finally {
+      setLoggingOut(false);
+      router.replace(`/s/${encodeURIComponent(slug)}/account/login`);
+    }
+  }
 
   if (state.kind === "loading") {
     return (
@@ -104,14 +145,62 @@ export function ShopPage({
               </Link>
             ))}
           </nav>
-          <Link
-            href={`/s/${encodeURIComponent(slug)}/account`}
-            className="shop-account-link"
-            aria-label={buyer ? "حسابي" : "تسجيل الدخول"}
-          >
-            <i className="fas fa-user" aria-hidden="true"></i>
-            {buyer ? buyer.name.split(" ")[0] : "دخول"}
-          </Link>
+          {buyer ? (
+            <div className="shop-user-wrap" ref={menuRef}>
+              <button
+                type="button"
+                className="shop-account-link shop-account-trigger"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                aria-label="حساب العميل"
+                onClick={() => setMenuOpen((open) => !open)}
+              >
+                <i className="fas fa-user" aria-hidden="true"></i>
+                {buyer.name.split(" ")[0]}
+                <i className="fas fa-chevron-down shop-user-caret" aria-hidden="true"></i>
+              </button>
+              {menuOpen && (
+                <div className="shop-user-menu" role="menu" aria-label="قائمة العميل">
+                  {[
+                    { href: `/s/${encodeURIComponent(slug)}/account`, label: "حسابي", icon: "fas fa-id-card" },
+                    { href: `/s/${encodeURIComponent(slug)}/account#settings`, label: "إعدادات الحساب", icon: "fas fa-cog" },
+                    { href: `/s/${encodeURIComponent(slug)}/account/change-password`, label: "تغيير كلمة المرور", icon: "fas fa-key" },
+                  ].map((item) => (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      role="menuitem"
+                      className="shop-user-item"
+                      onClick={() => setMenuOpen(false)}
+                    >
+                      <i className={item.icon} aria-hidden="true"></i>
+                      <span>{item.label}</span>
+                    </Link>
+                  ))}
+                  <div className="shop-user-separator" role="separator" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="shop-user-item"
+                    onClick={handleLogout}
+                    disabled={loggingOut}
+                  >
+                    <i className="fas fa-sign-out-alt" aria-hidden="true"></i>
+                    <span>{loggingOut ? "جاري الخروج..." : "تسجيل الخروج"}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <Link
+              href={`/s/${encodeURIComponent(slug)}/account`}
+              className="shop-account-link"
+              aria-label="تسجيل الدخول"
+            >
+              <i className="fas fa-user" aria-hidden="true"></i>
+              دخول
+            </Link>
+          )}
           <Link
             href={`/s/${encodeURIComponent(slug)}/checkout`}
             className="shop-cart-link"

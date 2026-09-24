@@ -252,6 +252,32 @@ export async function setBuyerPassword(
   ]);
 }
 
+// Self-service password change (POST /:slug/account/change-password).
+// Verifies the current password (same invalid_credentials code as merchant
+// change-password: no oracle), stores the new hash. Unlike setBuyerPassword
+// (reset flow), the caller's session — and every other session — survives,
+// mirroring the merchant default (logout_other_sessions false).
+export async function changeBuyerPassword(
+  db: D1Database,
+  storeId: string,
+  buyerId: string,
+  currentPassword: string,
+  newPassword: string,
+  nowIso: string = touch()
+): Promise<void> {
+  const row = await db
+    .prepare("SELECT password_hash FROM customers WHERE store_id = ? AND id = ?")
+    .bind(storeId, buyerId)
+    .first<{ password_hash: string | null }>();
+  if (!row?.password_hash || !(await verifyPassword(currentPassword, row.password_hash))) {
+    throw new AppError("invalid_credentials", 401, "Invalid email or password.");
+  }
+  await db
+    .prepare("UPDATE customers SET password_hash = ?, updated_at = ? WHERE store_id = ? AND id = ?")
+    .bind(await hashPassword(newPassword), nowIso, storeId, buyerId)
+    .run();
+}
+
 // Store that owns a customer (token-store binding check for verify/reset).
 export async function buyerStoreOf(db: D1Database, customerId: string): Promise<string | null> {
   const row = await db

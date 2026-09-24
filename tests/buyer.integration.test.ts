@@ -438,6 +438,49 @@ describe("P4 buyer accounts", () => {
     expect(d1(`DELETE FROM subscriptions WHERE store_id = '${otherId}';DELETE FROM stores WHERE id = '${otherId}';`).ok).toBe(true);
   });
 
+  it("changes password with current password and keeps the session", async () => {
+    const NEW_PASS = "Buyer-New-9x";
+    const path = `/s/${SLUG}/account/change-password`;
+    const body = (c: string, n: string) => ({ method: "POST", body: JSON.stringify({ current_password: c, new_password: n }) });
+
+    // Unauthenticated → 401.
+    expect((await api(path, body(PASS, NEW_PASS))).status).toBe(401);
+    // Too-short new password → 400.
+    const short = await api(path, body(PASS, "short"), buyerJar);
+    expect(short.status).toBe(400);
+    // Wrong current password → 401 invalid_credentials; stored hash untouched.
+    const wrong = await api(path, body("Wrong-Pass-9x", NEW_PASS), buyerJar);
+    expect(wrong.status).toBe(401);
+    expect(code(wrong)).toBe("invalid_credentials");
+    const stillOld = await api(`/s/${SLUG}/account/login`, {
+      method: "POST",
+      body: JSON.stringify({ identity: BUYER_PHONE, password: PASS }),
+    });
+    expect(stillOld.status).toBe(200);
+
+    // Correct rotation → 200; the same session survives (no re-login needed).
+    const changed = await api(path, body(PASS, NEW_PASS), buyerJar);
+    expect(changed.status).toBe(200);
+    expect((await api(`/s/${SLUG}/account/me`, {}, buyerJar)).status).toBe(200);
+
+    // Old password dead (404, same as login), new password works.
+    const deadOld = await api(`/s/${SLUG}/account/login`, {
+      method: "POST",
+      body: JSON.stringify({ identity: BUYER_PHONE, password: PASS }),
+    });
+    expect(deadOld.status).toBe(404);
+    const fresh = await api(`/s/${SLUG}/account/login`, {
+      method: "POST",
+      body: JSON.stringify({ identity: BUYER_PHONE, password: NEW_PASS }),
+    });
+    expect(fresh.status).toBe(200);
+    const freshJar = cookieOf(fresh.headers.get("set-cookie"), "ss_buyer");
+
+    // Restore the original password so later tests keep working.
+    const back = await api(path, body(NEW_PASS, PASS), freshJar);
+    expect(back.status).toBe(200);
+  });
+
   it("merges a guest cart on login and checks out linked to the account", async () => {
     const guest = await api(`/s/${SLUG}/cart`, { method: "POST", body: JSON.stringify({}) });
     const gid = (data(guest).cart as { id: string }).id;

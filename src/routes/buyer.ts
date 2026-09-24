@@ -22,6 +22,7 @@ import { resolvePublishedStoreBySlug } from "../middleware/store.js";
 import { requireTurnstile } from "../middleware/turnstile.js";
 import { currentBuyer, requireBuyer } from "../middleware/buyer.js";
 import {
+  changeBuyerPassword,
   createBuyerSession,
   findAccountByEmail,
   buyerStoreOf,
@@ -408,6 +409,39 @@ buyer.openapi(resetRoute, async (c) => {
   }
   await setBuyerPassword(getDb(c), redeemed.customer_id, input.password);
   return ok(c, { reset: true });
+}, validationHook);
+
+const changePasswordSchema = z.object({
+  current_password: z.string().min(1).max(PASSWORD_RULES.maxChars),
+  new_password: passwordSchema,
+});
+
+const changePasswordRoute = createRoute({
+  method: "post",
+  path: "/:slug/account/change-password",
+  summary: "Change my buyer password",
+  description:
+    "Authenticated self-service rotation (no Turnstile: the session is the " +
+    "credential, mirroring merchant change-password). Verifies the current " +
+    "password (same 401 as login: no oracle), stores the new hash. The " +
+    "caller's session — and every other session — survives.",
+  middleware: [...authed],
+  request: {
+    params: slugParams,
+    body: { content: { "application/json": { schema: changePasswordSchema } } },
+  },
+  responses: {
+    200: { content: { "application/json": { schema: okOf(z.object({ changed: z.boolean() })) } }, description: "Changed" },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid body" },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated or wrong current password" },
+  },
+});
+
+buyer.openapi(changePasswordRoute, async (c) => {
+  const { storeId } = storeScope(c);
+  const input = c.req.valid("json");
+  await changeBuyerPassword(getDb(c), storeId, currentBuyer(c).id, input.current_password, input.new_password);
+  return ok(c, { changed: true });
 }, validationHook);
 
 // Ownership reads (verify/reset token binding, reset lookup) live in the
