@@ -183,6 +183,11 @@ describe("B2 login", () => {
     expect(res.setCookie).toContain("HttpOnly");
     expect(res.setCookie).toContain("SameSite=Lax");
     expect(res.setCookie).toContain("Path=/");
+    // Host-only (no Domain attribute): the cookie is first-party wherever
+    // the frontend is served, so browsers with third-party-cookie blocking
+    // (mobile Safari ITP, WebViews) still persist the session. The app calls
+    // the API same-origin via the /api/backend proxy for the same reason.
+    expect(res.setCookie).not.toContain("Domain=");
 
     const body = res.body as { ok: boolean; data: { user: Record<string, unknown> } };
     expect(body.ok).toBe(true);
