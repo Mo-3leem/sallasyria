@@ -88,9 +88,127 @@ function AccountBody({ slug }: { slug: string }) {
     }
   }
 
+  async function onLogout() {
+    await logout(slug);
+    router.replace(`/s/${encodeURIComponent(slug)}`);
+  }
+
   return (
-    <>
+    <div style={{ maxWidth: 720, margin: "0 auto", width: "100%" }}>
+      <p className="shell-note" style={{ textAlign: "center", marginBottom: 16 }}>
+        إدارة بياناتك وعناوينك وطلباتك في مكان واحد.
+      </p>
+
       <div className="shell-card">
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <span
+            aria-hidden="true"
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: "50%",
+              background: "var(--primary-xlight)",
+              color: "var(--primary)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "1.5rem",
+              flexShrink: 0,
+            }}
+          >
+            <i className="fas fa-user"></i>
+          </span>
+          <span className="store-row-body">
+            <span className="store-row-name" style={{ fontSize: "1.05rem" }}>
+              {buyer.name}
+            </span>
+            <span className="store-row-meta">
+              <span dir="ltr">{buyer.phone}</span>
+              {buyer.email && (
+                <>
+                  <span>·</span>
+                  <span dir="ltr">{buyer.email}</span>
+                </>
+              )}
+            </span>
+          </span>
+        </div>
+      </div>
+
+      <div className="shell-card">
+        <h2 className="shell-card-title">أقسام الحساب</h2>
+        <div className="shell-stack">
+          <p className="store-row-meta" style={{ margin: 0 }}>الحساب</p>
+          <a href="#profile" className="store-row">
+            <span className="store-row-icon" aria-hidden="true">
+              <i className="fas fa-id-card"></i>
+            </span>
+            <span className="store-row-body">
+              <span className="store-row-name">بيانات الحساب</span>
+              <span className="store-row-meta">عرض الاسم والهاتف والبريد وتعديل الاسم</span>
+            </span>
+            <i className="fas fa-chevron-left" aria-hidden="true" style={{ color: "var(--gray-3)" }}></i>
+          </a>
+          <a href="#settings" className="store-row">
+            <span className="store-row-icon" aria-hidden="true">
+              <i className="fas fa-cog"></i>
+            </span>
+            <span className="store-row-body">
+              <span className="store-row-name">إعدادات الحساب</span>
+              <span className="store-row-meta">العناوين وخيارات الحساب</span>
+            </span>
+            <i className="fas fa-chevron-left" aria-hidden="true" style={{ color: "var(--gray-3)" }}></i>
+          </a>
+          <p className="store-row-meta" style={{ margin: "4px 0 0" }}>الأمان</p>
+          <Link
+            href={`/s/${encodeURIComponent(slug)}/account/change-password`}
+            className="store-row"
+          >
+            <span className="store-row-icon" aria-hidden="true">
+              <i className="fas fa-key"></i>
+            </span>
+            <span className="store-row-body">
+              <span className="store-row-name">تغيير كلمة المرور</span>
+              <span className="store-row-meta">تتطلب كلمة المرور الحالية؛ جلستك تبقى سارية</span>
+            </span>
+            <i className="fas fa-chevron-left" aria-hidden="true" style={{ color: "var(--gray-3)" }}></i>
+          </Link>
+          <p className="store-row-meta" style={{ margin: "4px 0 0" }}>الطلبات</p>
+          <a href="#orders" className="store-row">
+            <span className="store-row-icon" aria-hidden="true">
+              <i className="fas fa-shopping-cart"></i>
+            </span>
+            <span className="store-row-body">
+              <span className="store-row-name">طلباتي</span>
+              <span className="store-row-meta">
+                {orders === null
+                  ? "عرض سجل الطلبات"
+                  : orders.length === 0
+                    ? "لا توجد طلبات بعد"
+                    : `${orders.length.toLocaleString("ar-SY")} طلبات — عرض السجل`}
+              </span>
+            </span>
+            <i className="fas fa-chevron-left" aria-hidden="true" style={{ color: "var(--gray-3)" }}></i>
+          </a>
+          <p className="store-row-meta" style={{ margin: "4px 0 0" }}>الجلسة</p>
+          <button
+            type="button"
+            className="btn btn-outline"
+            style={{
+              width: "100%",
+              justifyContent: "center",
+              color: "#b91c1c",
+              borderColor: "#fecaca",
+            }}
+            onClick={onLogout}
+          >
+            <i className="fas fa-sign-out-alt" aria-hidden="true"></i>
+            تسجيل الخروج
+          </button>
+        </div>
+      </div>
+
+      <div className="shell-card" id="profile">
         <h2 className="shell-card-title">البيانات</h2>
         <FormError message={error} />
         <div className="info-row">
@@ -111,18 +229,6 @@ function AccountBody({ slug }: { slug: string }) {
           </button>
           {nameSaved && <p className="shell-success">تم الحفظ.</p>}
         </form>
-        <div className="mt-12">
-          <button
-            type="button"
-            className="btn btn-ghost btn-shell-dark btn-sm"
-            onClick={async () => {
-              await logout(slug);
-              router.replace(`/s/${encodeURIComponent(slug)}`);
-            }}
-          >
-            تسجيل الخروج
-          </button>
-        </div>
       </div>
 
       <div className="shell-card" id="settings">
@@ -144,7 +250,7 @@ function AccountBody({ slug }: { slug: string }) {
         </div>
       </div>
 
-      <div className="shell-card">
+      <div className="shell-card" id="orders">
         <h2 className="shell-card-title">طلباتي</h2>
         {orders === null ? (
           <div className="shell-loading" role="status">
@@ -168,8 +274,10 @@ function AccountBody({ slug }: { slug: string }) {
         )}
       </div>
 
-      <AddressBook slug={slug} addresses={addresses} setAddresses={setAddresses} />
-    </>
+      <div id="addresses">
+        <AddressBook slug={slug} addresses={addresses} setAddresses={setAddresses} />
+      </div>
+    </div>
   );
 }
 
