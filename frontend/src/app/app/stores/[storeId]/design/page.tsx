@@ -10,6 +10,7 @@ import {
   NETWORK_ERROR_MESSAGE,
 } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
+import { BackButton } from "@/components/common/BackButton";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { TextField } from "@/components/auth/TextField";
@@ -374,6 +375,7 @@ export default function DesignPage({
 
   return (
     <>
+      <BackButton href={base} />
       <div className="shell-page-head">
         <h1>تصميم المتجر</h1>
         <p>خصّص الألوان واللافتات والأقسام — الحفظ تلقائي، والنشر يدوي.</p>

@@ -5,6 +5,7 @@ import { authApi } from "@/lib/api";
 import { authErrorMessage, NETWORK_ERROR_MESSAGE } from "@/lib/auth-errors";
 import { RequireAuth } from "@/components/guards/RequireAuth";
 import { AuthCard } from "@/components/auth/AuthCard";
+import { BackButton } from "@/components/common/BackButton";
 import { FormError } from "@/components/auth/FormError";
 import { Button } from "@/components/ui/Button";
 import { Loading } from "@/components/ui/Loading";
@@ -43,7 +44,9 @@ function SessionsContent() {
   }
 
   return (
-    <AuthCard
+    <>
+      <BackButton href="/app/settings" />
+      <AuthCard
       title="الجلسات النشطة"
       subtitle="جلستك الحالية تبقى دائماً. يمكنك إنهاء بقية الجلسات من هنا."
       footer={
@@ -76,5 +79,6 @@ function SessionsContent() {
         </Button>
       </div>
     </AuthCard>
+    </>
   );
 }

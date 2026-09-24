@@ -15,6 +15,7 @@ import {
   CategoryForm,
   type CategoryFormValues,
 } from "@/components/catalog/CategoryForm";
+import { BackButton } from "@/components/common/BackButton";
 import { EmptyState } from "@/components/common/EmptyState";
 import type { Category } from "@/types/api";
 
@@ -106,6 +107,7 @@ export default function NewCategoryPage({
 
   return (
     <>
+      <BackButton href={`${base}/categories`} />
       <div className="shell-page-head">
         <h1>إنشاء تصنيف</h1>
         <p>

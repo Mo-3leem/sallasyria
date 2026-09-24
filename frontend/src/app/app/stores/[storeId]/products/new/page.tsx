@@ -15,6 +15,7 @@ import {
   ProductForm,
   type ProductFormValues,
 } from "@/components/catalog/ProductForm";
+import { BackButton } from "@/components/common/BackButton";
 import { EmptyState } from "@/components/common/EmptyState";
 import type { Category } from "@/types/api";
 
@@ -120,6 +121,7 @@ export default function NewProductPage({
 
   return (
     <>
+      <BackButton href={`${base}/products`} />
       <div className="shell-page-head">
         <h1>إنشاء منتج</h1>
         <p>

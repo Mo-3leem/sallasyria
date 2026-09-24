@@ -14,6 +14,7 @@ import {
   CustomerForm,
   type CustomerFormValues,
 } from "@/components/buyers/CustomerForm";
+import { BackButton } from "@/components/common/BackButton";
 import { EmptyState } from "@/components/common/EmptyState";
 import type { Customer } from "@/types/api";
 
@@ -173,6 +174,7 @@ export default function EditCustomerPage({
 
   return (
     <>
+      <BackButton href={`${base}/customers/${encodeURIComponent(id)}`} />
       <div className="shell-page-head">
         <h1>تعديل العميل</h1>
         <p>

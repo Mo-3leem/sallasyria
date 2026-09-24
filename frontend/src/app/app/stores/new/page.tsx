@@ -11,6 +11,7 @@ import {
 } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
 import { useStores } from "@/hooks/useStores";
+import { BackButton } from "@/components/common/BackButton";
 import { StoreForm, type StoreFormValues } from "@/components/store/StoreForm";
 
 /** Create store: POST /stores → new store dashboard (URL-first). */
@@ -60,6 +61,7 @@ export default function NewStorePage() {
 
   return (
     <>
+      <BackButton href="/app/stores" />
       <div className="shell-page-head">
         <h1>إنشاء متجر</h1>
         <p>أنشئ متجراً جديداً — ستتمكن من إضافة المنتجات والبيع بعد التفعيل.</p>

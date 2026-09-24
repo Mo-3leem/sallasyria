@@ -15,6 +15,7 @@ import {
   ShippingRateForm,
   type ShippingRateFormValues,
 } from "@/components/buyers/ShippingRateForm";
+import { BackButton } from "@/components/common/BackButton";
 import { EmptyState } from "@/components/common/EmptyState";
 import { GOVERNORATES } from "@/lib/governorates";
 
@@ -111,6 +112,7 @@ export default function NewShippingRatePage({
 
   return (
     <>
+      <BackButton href={`${base}/shipping-rates`} />
       <div className="shell-page-head">
         <h1>إضافة سعر شحن</h1>
         <p>

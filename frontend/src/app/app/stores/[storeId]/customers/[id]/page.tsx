@@ -10,6 +10,7 @@ import {
   NETWORK_ERROR_MESSAGE,
 } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
+import { BackButton } from "@/components/common/BackButton";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import {
@@ -256,6 +257,7 @@ export default function CustomerDetailPage({
 
   return (
     <>
+      <BackButton href={`${base}/customers`} />
       <div className="shell-page-head">
         <h1>{customer.name}</h1>
         <p>

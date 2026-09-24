@@ -11,6 +11,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { RequireAuth } from "@/components/guards/RequireAuth";
 import { AuthCard } from "@/components/auth/AuthCard";
+import { BackButton } from "@/components/common/BackButton";
 import { TextField } from "@/components/auth/TextField";
 import { PasswordInput } from "@/components/auth/PasswordInput";
 import { FormError } from "@/components/auth/FormError";
@@ -99,7 +100,9 @@ function ProfileContent() {
   }
 
   return (
-    <AuthCard
+    <>
+      <BackButton href="/app/settings" />
+      <AuthCard
       title="حسابي"
       subtitle="بياناتك الأساسية في سلة سوريا."
       footer={
@@ -215,5 +218,6 @@ function ProfileContent() {
         </Button>
       </form>
     </AuthCard>
+    </>
   );
 }

@@ -13,6 +13,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { RequireAuth } from "@/components/guards/RequireAuth";
 import { AuthCard } from "@/components/auth/AuthCard";
+import { BackButton } from "@/components/common/BackButton";
 import { PasswordInput } from "@/components/auth/PasswordInput";
 import { FormError } from "@/components/auth/FormError";
 import { Button } from "@/components/ui/Button";
@@ -93,7 +94,9 @@ function ChangePasswordContent() {
   }
 
   return (
-    <AuthCard
+    <>
+      {!required && <BackButton href="/app/settings" />}
+      <AuthCard
       title="تغيير كلمة المرور"
       subtitle={
         required
@@ -160,5 +163,6 @@ function ChangePasswordContent() {
         </Button>
       </form>
     </AuthCard>
+    </>
   );
 }
