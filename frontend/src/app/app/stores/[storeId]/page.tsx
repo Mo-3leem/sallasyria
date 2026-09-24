@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { storesApi } from "@/lib/api";
 import { isApiError } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
+import { BackButton } from "@/components/common/BackButton";
 import { SubscriptionBadge } from "@/components/common/SubscriptionBadge";
 import { EmptyState } from "@/components/common/EmptyState";
 import type { Store } from "@/types/api";
@@ -149,6 +150,7 @@ export default function StorePage({
 
   return (
     <>
+      <BackButton href="/app/stores" />
       <div className="shell-page-head">
         <h1>{store.name}</h1>
         <p>

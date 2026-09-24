@@ -16,6 +16,7 @@ import {
   paymentMethodLabel,
   paymentStatusLabel,
 } from "@/lib/orders";
+import { BackButton } from "@/components/common/BackButton";
 import { EmptyState } from "@/components/common/EmptyState";
 import type { Order, OrderItem } from "@/types/api";
 
@@ -173,6 +174,7 @@ export default function OrderDetailPage({
 
   return (
     <>
+      <BackButton href={`${base}/orders`} />
       <div className="shell-page-head">
         <h1>
           <span dir="ltr">#{order.order_number.toLocaleString("ar-SY")}</span>

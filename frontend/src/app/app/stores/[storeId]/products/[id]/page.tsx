@@ -10,6 +10,7 @@ import {
   NETWORK_ERROR_MESSAGE,
 } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
+import { BackButton } from "@/components/common/BackButton";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import {
@@ -306,6 +307,7 @@ export default function ProductDetailPage({
 
   return (
     <>
+      <BackButton href={`${base}/products`} />
       <div className="shell-page-head">
         <h1>{product.name}</h1>
         <p>

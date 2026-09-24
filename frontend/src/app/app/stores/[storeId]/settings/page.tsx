@@ -12,6 +12,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { useStores } from "@/hooks/useStores";
 import { StoreForm, type StoreFormValues } from "@/components/store/StoreForm";
+import { BackButton } from "@/components/common/BackButton";
 import { EmptyState } from "@/components/common/EmptyState";
 import type { Store } from "@/types/api";
 
@@ -177,6 +178,7 @@ export default function StoreSettingsPage({
 
   return (
     <>
+      <BackButton href={`/app/stores/${encodeURIComponent(storeId)}`} />
       <div className="shell-page-head">
         <h1>إعدادات المتجر</h1>
         <p>{state.store.name} — تعديل الاسم والرابط والعملة فقط.</p>

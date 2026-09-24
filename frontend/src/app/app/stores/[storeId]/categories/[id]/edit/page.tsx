@@ -14,6 +14,7 @@ import {
   CategoryForm,
   type CategoryFormValues,
 } from "@/components/catalog/CategoryForm";
+import { BackButton } from "@/components/common/BackButton";
 import { EmptyState } from "@/components/common/EmptyState";
 import type { Category } from "@/types/api";
 
@@ -194,6 +195,7 @@ export default function EditCategoryPage({
 
   return (
     <>
+      <BackButton href={`${base}/categories`} />
       <div className="shell-page-head">
         <h1>تعديل التصنيف</h1>
         <p>

@@ -14,6 +14,7 @@ import {
   ShippingRateForm,
   type ShippingRateFormValues,
 } from "@/components/buyers/ShippingRateForm";
+import { BackButton } from "@/components/common/BackButton";
 import { EmptyState } from "@/components/common/EmptyState";
 import type { ShippingRate } from "@/types/api";
 
@@ -167,6 +168,7 @@ export default function EditShippingRatePage({
 
   return (
     <>
+      <BackButton href={`${base}/shipping-rates`} />
       <div className="shell-page-head">
         <h1>تعديل سعر الشحن</h1>
         <p>
