@@ -32,7 +32,7 @@ describe("OpenAPI docs", () => {
       }
     }
     // One entry per route in src/routes (health 2, auth 11, stores 5,
-    // categories 5, products 6, product-images 8, customers 5,
+    // categories 5, products 7, product-images 8, customers 5,
     // customer-addresses 6, shipping-rates 5, checkout 1, orders 4,
     // admin 11, plans 1, buyer 22).
     const expected = [
@@ -78,6 +78,7 @@ describe("OpenAPI docs", () => {
       "PATCH /stores/{storeId}/products/{id}",
       "DELETE /stores/{storeId}/products/{id}",
       "POST /stores/{storeId}/products/{id}/restore",
+      "POST /stores/{storeId}/products/{id}/delete",
       "GET /stores/{storeId}/product-images",
       "GET /stores/{storeId}/product-images/file/{key}",
       "GET /stores/{storeId}/product-images/{id}",

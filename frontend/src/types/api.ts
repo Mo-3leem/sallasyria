@@ -106,6 +106,7 @@ export interface Product {
   stock_quantity: number | null;
   is_active: number;
   deleted_at: string | null;
+  removed_at: string | null;
 }
 
 export interface ProductImage {

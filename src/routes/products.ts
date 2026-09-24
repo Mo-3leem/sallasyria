@@ -14,6 +14,7 @@ import {
   createProduct,
   getProduct,
   listProducts,
+  removeProduct,
   restoreProduct,
   softDeleteProduct,
   updateProduct,
@@ -54,7 +55,7 @@ const productPatchSchema = z.object({
   is_active: flag.optional(),
 });
 
-const FORBIDDEN = ["store_id", "id", "deleted_at"] as const;
+const FORBIDDEN = ["store_id", "id", "deleted_at", "removed_at"] as const;
 
 const productDocSchema = z
   .object({
@@ -67,6 +68,7 @@ const productDocSchema = z
     stock_quantity: z.number().nullable(),
     is_active: z.number(),
     deleted_at: z.string().nullable(),
+    removed_at: z.string().nullable(),
   })
   .openapi("Product");
 
@@ -185,14 +187,16 @@ products.openapi(updateProductRoute, async (c) => {
   return ok(c, { product: row });
 }, validationHook);
 
-// Soft retirement (idempotent). No hard-delete route exists in MVP.
+// Soft retirement / archive (idempotent). Removed (business-deleted)
+// products are outside archive scope and answer 404 here. No hard-delete
+// route exists in MVP.
 const softDeleteProductRoute = createRoute({
   method: "delete",
   path: "/:id",
-  summary: "Retire a product (soft delete)",
+  summary: "Archive a product (soft retirement)",
   description:
     "Sets deleted_at and deactivates instead of erasing, so order history stays intact. " +
-    "Idempotent; releases the slug. There is no hard-delete route.",
+    "Idempotent; releases the slug. Removed products answer 404. There is no hard-delete route.",
   middleware: [...mutating],
   request: { params: idParams },
   responses: {
@@ -213,12 +217,46 @@ products.openapi(softDeleteProductRoute, async (c) => {
   return ok(c, { product: row });
 }, validationHook);
 
+// Business delete (soft delete, idempotent). Sets removed_at (plus
+// deleted_at, so every live-product guard keeps excluding it) and
+// deactivates instead of erasing: the row stays, so order_items references
+// and historical orders stay intact. Works from active or archived;
+// repeating it is a no-op. There is intentionally no hard-delete route.
+const removeProductRoute = createRoute({
+  method: "post",
+  path: "/:id/delete",
+  summary: "Delete a product (business soft delete)",
+  description:
+    "Removes the product from the catalog without erasing the row: sets " +
+    "removed_at and deactivates, so order history stays intact. Idempotent; " +
+    "releases the slug. Deleted products never appear in the storefront and " +
+    "cannot be purchased. Restore with POST /:id/restore. There is no hard-delete route.",
+  middleware: [...mutating],
+  request: { params: idParams },
+  responses: {
+    200: {
+      content: { "application/json": { schema: productOkSchema } },
+      description: "Deleted product",
+    },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Inactive subscription" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store or product" },
+  },
+});
+
+products.openapi(removeProductRoute, async (c) => {
+  const { storeId } = storeScope(c);
+  const row = await removeProduct(getDb(c), storeId, resourceId(c));
+  if (!row) throw new AppError("product_not_found", 404, "Product not found.");
+  return ok(c, { product: row });
+}, validationHook);
+
 // Restore fails 409 while a live row holds the slug (partial-unique rule).
 const restoreProductRoute = createRoute({
   method: "post",
   path: "/:id/restore",
-  summary: "Restore a retired product",
-  description: "Clears deleted_at and reactivates. 409 while another live product holds the slug — rename first.",
+  summary: "Restore an archived or deleted product",
+  description: "Clears deleted_at and removed_at and reactivates. 409 while another live product holds the slug — rename first.",
   middleware: [...mutating],
   request: { params: idParams },
   responses: {

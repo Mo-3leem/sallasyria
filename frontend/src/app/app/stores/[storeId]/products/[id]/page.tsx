@@ -312,10 +312,16 @@ export default function ProductDetailPage({
           <Link href={`${base}/products`}>المنتجات</Link>
           {" / "}
           <span dir="ltr">{product.slug}</span>
-          {retired && (
+          {retired && product.removed_at === null && (
             <>
               {" · "}
               <span className="sub-badge sub-badge-unknown">أرشيف</span>
+            </>
+          )}
+          {product.removed_at !== null && (
+            <>
+              {" · "}
+              <span className="sub-badge sub-badge-inactive">محذوف</span>
             </>
           )}
         </p>
