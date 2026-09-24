@@ -15,7 +15,16 @@ import type {
   User,
 } from "@/types/api";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8787";
+// Same-origin API proxy (next.config.js rewrites /api/backend/* to the
+// Worker; NEXT_PUBLIC_API_URL remains the proxy destination there). The
+// session cookie is third-party when the browser calls the Worker directly
+// (pages.dev -> workers.dev), and mobile browsers with third-party-cookie
+// blocking (Safari ITP, WebViews) silently drop the login Set-Cookie: login
+// returns 200 but /auth/me then 401s, so the app bounces back to /auth/login
+// forever. First-party cookies are stored everywhere, so all browser API
+// traffic goes through the proxy (works in dev too: localhost:3000 proxies
+// to localhost:8787, same-site).
+const API_BASE_URL = "/api/backend";
 
 // Latest X-Request-Id seen (backend emits it on every response). Exposed
 // for failure logs so client reports correlate with server access logs.
