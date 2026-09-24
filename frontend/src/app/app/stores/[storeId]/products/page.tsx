@@ -374,12 +374,6 @@ export default function ProductsPage({
               </Link>
             }
           />
-        ) : matched.length === 0 ? (
-          <EmptyState
-            icon="fas fa-search"
-            title="لا توجد منتجات مطابقة للبحث أو الفلتر."
-            description="جرّب كلمة بحث مختلفة أو غيّر فلتر الحالة."
-          />
         ) : (
           <>
             <div
@@ -420,6 +414,14 @@ export default function ProductsPage({
                 </select>
               </label>
             </div>
+            {matched.length === 0 ? (
+              <EmptyState
+                icon="fas fa-search"
+                title="لا توجد منتجات مطابقة للبحث أو الفلتر."
+                description="جرّب كلمة بحث مختلفة أو غيّر فلتر الحالة."
+              />
+            ) : (
+              <>
             {showActiveSection && (
               <div className="shell-stack">
                 {activeVisible.map((product) =>
@@ -477,6 +479,8 @@ export default function ProductsPage({
                 إنشاء منتج
               </Link>
             </div>
+              </>
+            )}
           </>
         )}
       </div>
