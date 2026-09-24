@@ -133,6 +133,7 @@ export function ProductForm({
           placeholder="اكتب وصفًا مختصرًا للمنتج..."
           rows={4}
           maxLength={2000}
+          style={{ minHeight: 140, resize: "vertical" }}
           value={description}
           onChange={(e) => {
             setDescription(e.target.value);
