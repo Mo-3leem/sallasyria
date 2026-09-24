@@ -301,6 +301,8 @@ export default function StorePage({
           <a
             href={`/s/${encodeURIComponent(store.slug)}`}
             className="store-row"
+            target="_blank"
+            rel="noopener noreferrer"
           >
             <span className="store-row-icon" aria-hidden="true">
               <i className="fas fa-eye"></i>
