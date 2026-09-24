@@ -32,6 +32,9 @@
     "production": {
       "vars": {
         "ENVIRONMENT": "production",
+        "APP_URL": "https://sallasyria-7qx.pages.dev",
+        "FRONTEND_URL": "https://sallasyria-7qx.pages.dev",
+        "MAIL_FROM": "moahmedabdelaleem2@gmail.com",
       },
       "d1_databases": [
         {
