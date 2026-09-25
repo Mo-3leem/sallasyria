@@ -5,7 +5,6 @@ import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useBuyer } from "@/hooks/useBuyer";
-import { useAuth } from "@/hooks/useAuth";
 import { useCart } from "@/hooks/useCart";
 import { useStorefront } from "@/hooks/useStorefront";
 import { EmptyState } from "@/components/common/EmptyState";
@@ -34,18 +33,11 @@ export function ShopPage({
   const { state, reload } = useStorefront(slug);
   const { countFor, ensure } = useCart();
   const { buyerFor, refresh, logout } = useBuyer();
-  // Merchant/admin session reuses the root AuthProvider (GET /auth/me over
-  // the existing ss_session HttpOnly cookie). The storefront never had a
-  // reader for it — buyers (ss_buyer) and merchants stay fully separate.
-  const { user: authUser, loading: authLoading, logout: authLogout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [merchantOpen, setMerchantOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const [merchantLoggingOut, setMerchantLoggingOut] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const merchantRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     refresh(slug);
@@ -55,20 +47,14 @@ export function ShopPage({
 
   // Customer menu: outside click / Escape / route change close it.
   useEffect(() => {
-    if (!menuOpen && !merchantOpen) return;
+    if (!menuOpen) return;
     function onPointerDown(e: PointerEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false);
       }
-      if (merchantRef.current && !merchantRef.current.contains(e.target as Node)) {
-        setMerchantOpen(false);
-      }
     }
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setMenuOpen(false);
-        setMerchantOpen(false);
-      }
+      if (e.key === "Escape") setMenuOpen(false);
     }
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
@@ -76,11 +62,10 @@ export function ShopPage({
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [menuOpen, merchantOpen]);
+  }, [menuOpen]);
 
   useEffect(() => {
     setMenuOpen(false);
-    setMerchantOpen(false);
   }, [pathname]);
 
   async function handleLogout() {
@@ -92,19 +77,6 @@ export function ShopPage({
     } finally {
       setLoggingOut(false);
       router.replace(`/s/${encodeURIComponent(slug)}/account/login`);
-    }
-  }
-
-  // Existing merchant logout behavior (server revocation + /auth/login);
-  // context clears instantly so the navbar flips to guest state at once.
-  async function handleMerchantLogout() {
-    if (merchantLoggingOut) return;
-    setMerchantLoggingOut(true);
-    setMerchantOpen(false);
-    try {
-      await authLogout();
-    } finally {
-      setMerchantLoggingOut(false);
     }
   }
 
@@ -173,97 +145,7 @@ export function ShopPage({
               </Link>
             ))}
           </nav>
-          {authLoading || buyer === undefined ? (
-            <span className="shop-account-skeleton" role="status" aria-label="جاري التحقق من الجلسة"></span>
-          ) : authUser ? (
-            <div className="shop-user-wrap" ref={merchantRef}>
-              <button
-                type="button"
-                className="shop-account-link shop-account-trigger"
-                aria-haspopup="menu"
-                aria-expanded={merchantOpen}
-                aria-label="حساب التاجر"
-                onClick={() => setMerchantOpen((open) => !open)}
-              >
-                {authUser.avatar_url ? (
-                  <img src={authUser.avatar_url} alt="" className="shop-avatar-img" />
-                ) : (
-                  <span className="shop-avatar" aria-hidden="true">
-                    {(authUser.name.trim()[0] ?? "م").toUpperCase()}
-                  </span>
-                )}
-                {authUser.name.split(" ")[0]}
-                <i className="fas fa-chevron-down shop-user-caret" aria-hidden="true"></i>
-              </button>
-              {merchantOpen && (
-                <div className="shop-user-menu" role="menu" aria-label="قائمة التاجر">
-                  <div className="shop-user-header">
-                    {authUser.avatar_url ? (
-                      <img src={authUser.avatar_url} alt="" className="shop-avatar-img" />
-                    ) : (
-                      <span className="shop-avatar" aria-hidden="true">
-                        {(authUser.name.trim()[0] ?? "م").toUpperCase()}
-                      </span>
-                    )}
-                    <span className="shop-user-header-text">
-                      <strong>{authUser.name}</strong>
-                      <small>{authUser.role === "admin" ? "مدير المنصة" : "تاجر"}</small>
-                    </span>
-                  </div>
-                  <div className="shop-user-separator" role="separator" />
-                  <Link
-                    href="/app/dashboard"
-                    role="menuitem"
-                    className="shop-user-item"
-                    onClick={() => setMerchantOpen(false)}
-                  >
-                    <i className="fas fa-th-large" aria-hidden="true"></i>
-                    <span>لوحة التحكم</span>
-                  </Link>
-                  <Link
-                    href={`/s/${encodeURIComponent(slug)}`}
-                    role="menuitem"
-                    className="shop-user-item"
-                    onClick={() => setMerchantOpen(false)}
-                  >
-                    <i className="fas fa-store" aria-hidden="true"></i>
-                    <span>عرض المتجر</span>
-                  </Link>
-                  <Link
-                    href="/auth/profile"
-                    role="menuitem"
-                    className="shop-user-item"
-                    onClick={() => setMerchantOpen(false)}
-                  >
-                    <i className="fas fa-id-card" aria-hidden="true"></i>
-                    <span>الملف الشخصي</span>
-                  </Link>
-                  {buyer && (
-                    <Link
-                      href={`/s/${encodeURIComponent(slug)}/account`}
-                      role="menuitem"
-                      className="shop-user-item"
-                      onClick={() => setMerchantOpen(false)}
-                    >
-                      <i className="fas fa-user" aria-hidden="true"></i>
-                      <span>حسابي في المتجر</span>
-                    </Link>
-                  )}
-                  <div className="shop-user-separator" role="separator" />
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="shop-user-item"
-                    onClick={handleMerchantLogout}
-                    disabled={merchantLoggingOut}
-                  >
-                    <i className="fas fa-sign-out-alt" aria-hidden="true"></i>
-                    <span>{merchantLoggingOut ? "جاري الخروج..." : "تسجيل الخروج"}</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : buyer ? (
+          {buyer ? (
             <div className="shop-user-wrap" ref={menuRef}>
               <button
                 type="button"
