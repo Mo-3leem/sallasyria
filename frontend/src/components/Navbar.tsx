@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useAuth } from "@/hooks/useAuth";
 
 const NAV_LINKS = [
   { href: "#sectors", label: "القطاعات" },
@@ -14,6 +15,42 @@ export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeHash, setActiveHash] = useState<string | null>(null);
+  // Existing merchant/admin session (ss_session HttpOnly cookie, hydrated
+  // once by the root AuthProvider via GET /auth/me). No new auth system.
+  const { user, loading, logout } = useAuth();
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const accountRef = useRef<HTMLDivElement | null>(null);
+
+  // Account dropdown: outside click / Escape / route action closes it.
+  useEffect(() => {
+    if (!accountOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      if (accountRef.current && !accountRef.current.contains(e.target as Node)) {
+        setAccountOpen(false);
+      }
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setAccountOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [accountOpen]);
+
+  async function handleLogout() {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    setAccountOpen(false);
+    try {
+      await logout();
+    } finally {
+      setLoggingOut(false);
+    }
+  }
 
   // 1. Navbar scroll effect (reference main.js §1)
   useEffect(() => {
@@ -71,12 +108,85 @@ export function Navbar() {
         </nav>
 
         <div className="nav-actions">
-          <a href="/auth/login" className="btn btn-outline">
-            تسجيل الدخول
-          </a>
-          <a href="/auth/register" className="btn btn-primary">
-            ابدأ مجاناً
-          </a>
+          {loading ? (
+            <span className="platform-account-skeleton" role="status" aria-label="جاري التحقق من الجلسة"></span>
+          ) : user ? (
+            <div className="platform-account-wrap" ref={accountRef}>
+              <button
+                type="button"
+                className="platform-account-trigger"
+                aria-haspopup="menu"
+                aria-expanded={accountOpen}
+                aria-label="حساب المستخدم"
+                onClick={() => setAccountOpen((open) => !open)}
+              >
+                {user.avatar_url ? (
+                  <img src={user.avatar_url} alt="" className="platform-avatar-img" />
+                ) : (
+                  <span className="platform-avatar" aria-hidden="true">
+                    {(user.name.trim()[0] ?? "م").toUpperCase()}
+                  </span>
+                )}
+                {user.name.split(" ")[0]}
+                <i className="fas fa-chevron-down platform-account-caret" aria-hidden="true"></i>
+              </button>
+              {accountOpen && (
+                <div className="platform-menu" role="menu" aria-label="قائمة الحساب">
+                  <div className="platform-menu-header">
+                    {user.avatar_url ? (
+                      <img src={user.avatar_url} alt="" className="platform-avatar-img" />
+                    ) : (
+                      <span className="platform-avatar" aria-hidden="true">
+                        {(user.name.trim()[0] ?? "م").toUpperCase()}
+                      </span>
+                    )}
+                    <span className="platform-menu-header-text">
+                      <strong>{user.name}</strong>
+                      <small>{user.role === "admin" ? "مدير المنصة" : "تاجر"}</small>
+                    </span>
+                  </div>
+                  <div className="platform-menu-separator" role="separator" />
+                  {[
+                    { href: "/app/dashboard", label: "لوحة التحكم", icon: "fas fa-th-large" },
+                    { href: "/app/stores", label: "متاجري", icon: "fas fa-store" },
+                    { href: "/app/stores/new", label: "إنشاء متجر", icon: "fas fa-plus" },
+                    { href: "/auth/profile", label: "الملف الشخصي", icon: "fas fa-id-card" },
+                  ].map((item) => (
+                    <a
+                      key={item.href}
+                      href={item.href}
+                      role="menuitem"
+                      className="platform-menu-item"
+                      onClick={() => setAccountOpen(false)}
+                    >
+                      <i className={item.icon} aria-hidden="true"></i>
+                      <span>{item.label}</span>
+                    </a>
+                  ))}
+                  <div className="platform-menu-separator" role="separator" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="platform-menu-item"
+                    onClick={handleLogout}
+                    disabled={loggingOut}
+                  >
+                    <i className="fas fa-sign-out-alt" aria-hidden="true"></i>
+                    <span>{loggingOut ? "جاري الخروج..." : "تسجيل الخروج"}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              <a href="/auth/login" className="btn btn-outline">
+                تسجيل الدخول
+              </a>
+              <a href="/auth/register" className="btn btn-primary">
+                ابدأ مجاناً
+              </a>
+            </>
+          )}
           <button
             className="hamburger"
             id="hamburger"
