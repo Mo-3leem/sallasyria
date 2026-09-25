@@ -148,57 +148,6 @@
   padding: 1px 9px;
   font-size: 0.78rem;
 }
-/* Merchant session pill: skeleton while auth resolves (no login flicker),
-   avatar/initial + name once the existing session is known. */
-.shop-account-skeleton {
-  margin-inline-start: auto;
-  width: 120px;
-  height: 40px;
-  border-radius: 100px;
-  background: linear-gradient(90deg, #eef2f6 25%, #e2e8f0 50%, #eef2f6 75%);
-  background-size: 200% 100%;
-  animation: account-shimmer 1.4s ease-in-out infinite;
-}
-.shop-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--primary-xlight);
-  color: var(--primary-dark);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.85rem;
-  font-weight: 800;
-  flex-shrink: 0;
-}
-.shop-avatar-img {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  object-fit: cover;
-  flex-shrink: 0;
-}
-.shop-user-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-}
-.shop-user-header-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.shop-user-header-text strong {
-  font-size: 0.9rem;
-  color: var(--dark);
-  overflow-wrap: anywhere;
-}
-.shop-user-header-text small {
-  font-size: 0.75rem;
-  color: var(--gray-2);
-}
 
 .shop-main {
   flex: 1;
