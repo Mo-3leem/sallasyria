@@ -4,14 +4,15 @@ import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { ShopPage } from "@/components/shop/ShopPage";
+import { BuyerAddressBook } from "@/components/shop/BuyerAddressBook";
 import { useBuyer } from "@/hooks/useBuyer";
 import { buyerApi, type BuyerAddress, type BuyerOrderSummary } from "@/lib/api";
 import { orderStatusLabel, paymentStatusLabel } from "@/lib/orders";
-import { GOVERNORATES } from "@/lib/governorates";
 import { TextField } from "@/components/auth/TextField";
 import { FormError } from "@/components/auth/FormError";
+import { EmptyState } from "@/components/common/EmptyState";
 
-/** Buyer account home: profile, order history, address book, logout. */
+/** Buyer account home: overview, order history, profile, address book, logout. */
 export default function BuyerAccountPage({ params }: { params: { slug: string } }) {
   const { slug } = params;
   return (
@@ -21,12 +22,52 @@ export default function BuyerAccountPage({ params }: { params: { slug: string } 
   );
 }
 
+const NAV_ITEMS = [
+  { href: "#overview", label: "نظرة عامة", icon: "fas fa-th-large" },
+  { href: "#orders", label: "طلباتي", icon: "fas fa-receipt" },
+  { href: "#profile", label: "البيانات", icon: "fas fa-user" },
+  { href: "#addresses", label: "العناوين", icon: "fas fa-location-dot" },
+  { href: "#settings", label: "الأمان", icon: "fas fa-key" },
+];
+
+/** Presentational status badges — labels come from the shared order maps. */
+function orderBadgeClass(status: string): string {
+  switch (status) {
+    case "delivered":
+      return "account-badge is-green";
+    case "cancelled":
+      return "account-badge is-red";
+    case "confirmed":
+    case "processing":
+    case "shipped":
+      return "account-badge is-blue";
+    default:
+      return "account-badge is-amber";
+  }
+}
+
+function paymentBadgeClass(status: string): string {
+  switch (status) {
+    case "paid":
+      return "account-badge is-green";
+    case "failed":
+      return "account-badge is-red";
+    case "refunded":
+      return "account-badge is-gray";
+    default:
+      return "account-badge is-amber";
+  }
+}
+
 function AccountBody({ slug }: { slug: string }) {
   const router = useRouter();
   const { buyerFor, refresh, logout, updateName } = useBuyer();
   const buyer = buyerFor(slug);
   const [orders, setOrders] = useState<BuyerOrderSummary[] | null>(null);
   const [addresses, setAddresses] = useState<BuyerAddress[] | null>(null);
+  const [ordersError, setOrdersError] = useState(false);
+  const [addressesError, setAddressesError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [name, setName] = useState("");
   const [nameSaved, setNameSaved] = useState(false);
   const [savingName, setSavingName] = useState(false);
@@ -44,30 +85,54 @@ function AccountBody({ slug }: { slug: string }) {
       return;
     }
     setName(buyer.name);
+    setOrders(null);
+    setAddresses(null);
+    setOrdersError(false);
+    setAddressesError(false);
     let live = true;
-    buyerApi.orders(slug).then((res) => {
-      if (live && res.ok) setOrders(res.data.orders);
-    });
-    buyerApi.addresses.list(slug).then((res) => {
-      if (live && res.ok) setAddresses(res.data.addresses);
-    });
+    buyerApi.orders(slug).then(
+      (res) => {
+        if (!live) return;
+        if (res.ok) setOrders(res.data.orders);
+        else setOrdersError(true);
+      },
+      () => {
+        if (live) setOrdersError(true);
+      }
+    );
+    buyerApi.addresses.list(slug).then(
+      (res) => {
+        if (!live) return;
+        if (res.ok) setAddresses(res.data.addresses);
+        else setAddressesError(true);
+      },
+      () => {
+        if (live) setAddressesError(true);
+      }
+    );
     return () => {
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buyer, slug]);
+  }, [buyer, slug, reloadKey]);
 
   if (buyer === undefined) {
     return (
-      <div className="shell-card">
-        <div className="shell-loading" role="status">
-          <span className="shell-spinner" aria-hidden="true"></span>
-          جاري تحميل الحساب...
+      <div className="account-wrap" aria-label="جاري تحميل الحساب">
+        <div className="account-skeleton-list" role="status">
+          <span className="account-skeleton" style={{ height: 120 }}></span>
+          <span className="account-skeleton" style={{ height: 64 }}></span>
+          <span className="account-skeleton" style={{ height: 220 }}></span>
         </div>
       </div>
     );
   }
   if (buyer === null) return null;
+
+  const defaultAddress =
+    addresses?.find((a) => a.is_default === 1) ?? addresses?.[0] ?? null;
+  const recentOrders = orders?.slice(0, 3) ?? [];
+  const initial = buyer.name.trim().slice(0, 1) || "م";
 
   async function onSaveName(e: FormEvent) {
     e.preventDefault();
@@ -93,307 +158,312 @@ function AccountBody({ slug }: { slug: string }) {
     router.replace(`/s/${encodeURIComponent(slug)}`);
   }
 
-  return (
-    <div style={{ maxWidth: 720, margin: "0 auto", width: "100%" }}>
-      <p className="shell-note" style={{ textAlign: "center", marginBottom: 16 }}>
-        إدارة بياناتك وعناوينك وطلباتك في مكان واحد.
-      </p>
-
-      <div className="shell-card">
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <span
-            aria-hidden="true"
-            style={{
-              width: 56,
-              height: 56,
-              borderRadius: "50%",
-              background: "var(--primary-xlight)",
-              color: "var(--primary)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "1.5rem",
-              flexShrink: 0,
-            }}
-          >
-            <i className="fas fa-user"></i>
-          </span>
-          <span className="store-row-body">
-            <span className="store-row-name" style={{ fontSize: "1.05rem" }}>
-              {buyer.name}
-            </span>
-            <span className="store-row-meta">
-              <span dir="ltr">{buyer.phone}</span>
-              {buyer.email && (
-                <>
-                  <span>·</span>
-                  <span dir="ltr">{buyer.email}</span>
-                </>
-              )}
-            </span>
-          </span>
-        </div>
-      </div>
-
-      <div className="shell-card">
-        <h2 className="shell-card-title">أقسام الحساب</h2>
-        <div className="shell-stack">
-          <p className="store-row-meta" style={{ margin: 0 }}>الحساب</p>
-          <a href="#profile" className="store-row">
-            <span className="store-row-icon" aria-hidden="true">
-              <i className="fas fa-id-card"></i>
-            </span>
-            <span className="store-row-body">
-              <span className="store-row-name">بيانات الحساب</span>
-              <span className="store-row-meta">عرض الاسم والهاتف والبريد وتعديل الاسم</span>
-            </span>
-            <i className="fas fa-chevron-left" aria-hidden="true" style={{ color: "var(--gray-3)" }}></i>
-          </a>
-          <a href="#settings" className="store-row">
-            <span className="store-row-icon" aria-hidden="true">
-              <i className="fas fa-cog"></i>
-            </span>
-            <span className="store-row-body">
-              <span className="store-row-name">إعدادات الحساب</span>
-              <span className="store-row-meta">العناوين وخيارات الحساب</span>
-            </span>
-            <i className="fas fa-chevron-left" aria-hidden="true" style={{ color: "var(--gray-3)" }}></i>
-          </a>
-          <p className="store-row-meta" style={{ margin: "4px 0 0" }}>الأمان</p>
-          <Link
-            href={`/s/${encodeURIComponent(slug)}/account/change-password`}
-            className="store-row"
-          >
-            <span className="store-row-icon" aria-hidden="true">
-              <i className="fas fa-key"></i>
-            </span>
-            <span className="store-row-body">
-              <span className="store-row-name">تغيير كلمة المرور</span>
-              <span className="store-row-meta">تتطلب كلمة المرور الحالية؛ جلستك تبقى سارية</span>
-            </span>
-            <i className="fas fa-chevron-left" aria-hidden="true" style={{ color: "var(--gray-3)" }}></i>
-          </Link>
-          <p className="store-row-meta" style={{ margin: "4px 0 0" }}>الطلبات</p>
-          <a href="#orders" className="store-row">
-            <span className="store-row-icon" aria-hidden="true">
-              <i className="fas fa-shopping-cart"></i>
-            </span>
-            <span className="store-row-body">
-              <span className="store-row-name">طلباتي</span>
-              <span className="store-row-meta">
-                {orders === null
-                  ? "عرض سجل الطلبات"
-                  : orders.length === 0
-                    ? "لا توجد طلبات بعد"
-                    : `${orders.length.toLocaleString("ar-SY")} طلبات — عرض السجل`}
-              </span>
-            </span>
-            <i className="fas fa-chevron-left" aria-hidden="true" style={{ color: "var(--gray-3)" }}></i>
-          </a>
-          <p className="store-row-meta" style={{ margin: "4px 0 0" }}>الجلسة</p>
-          <button
-            type="button"
-            className="btn btn-outline"
-            style={{
-              width: "100%",
-              justifyContent: "center",
-              color: "#b91c1c",
-              borderColor: "#fecaca",
-            }}
-            onClick={onLogout}
-          >
-            <i className="fas fa-sign-out-alt" aria-hidden="true"></i>
-            تسجيل الخروج
-          </button>
-        </div>
-      </div>
-
-      <div className="shell-card" id="profile">
-        <h2 className="shell-card-title">البيانات</h2>
-        <FormError message={error} />
-        <div className="info-row">
-          <span className="key">الهاتف</span>
-          <span className="value" dir="ltr">{buyer.phone}</span>
-        </div>
-        <div className="info-row">
-          <span className="key">البريد</span>
-          <span className="value" dir="ltr">
-            {buyer.email ?? "—"}
-            {buyer.email && (buyer.email_verified ? " (مؤكد)" : " (غير مؤكد)")}
-          </span>
-        </div>
-        <form className="auth-form mt-12" onSubmit={onSaveName} noValidate>
-          <TextField label="الاسم" id="ba-name" value={name} onChange={(e) => setName(e.target.value)} />
-          <button type="submit" className="btn btn-outline" disabled={savingName}>
-            {savingName ? "جاري الحفظ..." : "حفظ الاسم"}
-          </button>
-          {nameSaved && <p className="shell-success">تم الحفظ.</p>}
-        </form>
-      </div>
-
-      <div className="shell-card" id="settings">
-        <h2 className="shell-card-title">إعدادات الحساب</h2>
-        <div className="shell-stack">
-          <Link
-            href={`/s/${encodeURIComponent(slug)}/account/change-password`}
-            className="store-row"
-          >
-            <span className="store-row-icon" aria-hidden="true">
-              <i className="fas fa-key"></i>
-            </span>
-            <span className="store-row-body">
-              <span className="store-row-name">تغيير كلمة المرور</span>
-              <span className="store-row-meta">تتطلب كلمة المرور الحالية؛ جلستك تبقى سارية</span>
-            </span>
-            <i className="fas fa-chevron-left" aria-hidden="true" style={{ color: "var(--gray-3)" }}></i>
-          </Link>
-        </div>
-      </div>
-
-      <div className="shell-card" id="orders">
-        <h2 className="shell-card-title">طلباتي</h2>
-        {orders === null ? (
-          <div className="shell-loading" role="status">
-            <span className="shell-spinner" aria-hidden="true"></span>
-            جاري التحميل...
-          </div>
-        ) : orders.length === 0 ? (
-          <p className="shell-note">
-            لا توجد طلبات بعد.{" "}
-            <Link href={`/s/${encodeURIComponent(slug)}`}>تصفح المنتجات</Link>
-          </p>
-        ) : (
-          orders.map((o) => (
-            <div key={o.id} className="info-row">
-              <span className="key" dir="ltr">#{o.order_number}</span>
-              <span className="value">
-                {orderStatusLabel(o.status)} · {paymentStatusLabel(o.payment_status)} · {o.total.toLocaleString("ar-SY")} قرش
-              </span>
-            </div>
-          ))
-        )}
-      </div>
-
-      <div id="addresses">
-        <AddressBook slug={slug} addresses={addresses} setAddresses={setAddresses} />
-      </div>
-    </div>
-  );
-}
-
-function AddressBook({
-  slug,
-  addresses,
-  setAddresses,
-}: {
-  slug: string;
-  addresses: BuyerAddress[] | null;
-  setAddresses: (v: BuyerAddress[] | null) => void;
-}) {
-  const [recipient, setRecipient] = useState("");
-  const [phone, setPhone] = useState("");
-  const [governorate, setGovernorate] = useState<string>(GOVERNORATES[0]);
-  const [city, setCity] = useState("");
-  const [line, setLine] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function reload() {
-    const res = await buyerApi.addresses.list(slug);
-    if (res.ok) setAddresses(res.data.addresses);
-  }
-
-  async function onAdd(e: FormEvent) {
-    e.preventDefault();
-    if (busy) return;
-    setFormError(null);
-    if (!recipient.trim() || !phone.trim() || !line.trim()) {
-      setFormError("المستلم والهاتف والعنوان مطلوبة.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const res = await buyerApi.addresses.create(slug, {
-        recipient_name: recipient.trim(),
-        phone: phone.trim(),
-        governorate,
-        city: city.trim() === "" ? null : city.trim(),
-        address_line: line.trim(),
-      });
-      if (!res.ok) {
-        setFormError("تعذّر إضافة العنوان.");
-        return;
-      }
-      setRecipient("");
-      setPhone("");
-      setCity("");
-      setLine("");
-      await reload();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onRemove(id: string) {
-    const res = await buyerApi.addresses.remove(slug, id);
-    if (res.ok) await reload();
-  }
-
-  async function onDefault(id: string) {
-    const res = await buyerApi.addresses.makeDefault(slug, id);
-    if (res.ok) await reload();
+  function onRetry() {
+    setReloadKey((k) => k + 1);
   }
 
   return (
-    <div className="shell-card">
-      <h2 className="shell-card-title">دفتر العناوين</h2>
-      {addresses === null ? (
-        <div className="shell-loading" role="status">
-          <span className="shell-spinner" aria-hidden="true"></span>
-          جاري التحميل...
-        </div>
-      ) : (
-        addresses.map((a) => (
-          <div key={a.id} className="info-row">
-            <span className="key">
-              {a.recipient_name} · {a.governorate}
-              {a.is_default === 1 && " (افتراضي)"}
-            </span>
-            <span className="value">
-              {a.is_default !== 1 && (
-                <button type="button" className="btn btn-ghost btn-shell-dark btn-sm" onClick={() => onDefault(a.id)}>
-                  افتراضي
-                </button>
-              )}{" "}
-              <button type="button" className="btn btn-ghost btn-shell-dark btn-sm" onClick={() => onRemove(a.id)}>
-                حذف
-              </button>
-            </span>
-          </div>
-        ))
-      )}
-      {addresses !== null && addresses.length === 0 && (
-        <p className="shell-note">لا توجد عناوين محفوظة.</p>
-      )}
-      <form className="auth-form mt-12" onSubmit={onAdd} noValidate>
-        <h3 className="shell-card-title">عنوان جديد</h3>
-        <FormError message={formError} />
-        <TextField label="اسم المستلم" id="ba-recipient" value={recipient} onChange={(e) => setRecipient(e.target.value)} />
-        <TextField label="الهاتف" id="ba-phone" dir="ltr" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
-        <div className="auth-field">
-          <label className="auth-label" htmlFor="ba-gov">المحافظة</label>
-          <select id="ba-gov" className="auth-input" value={governorate} onChange={(e) => setGovernorate(e.target.value)}>
-            {GOVERNORATES.map((g) => (
-              <option key={g} value={g}>{g}</option>
+    <div className="account-wrap">
+      <div className="account-hero">
+        <span className="account-avatar" aria-hidden="true">
+          {initial}
+        </span>
+        <span className="account-hero-body">
+          <span className="account-hero-name">{buyer.name}</span>
+          <span className="account-hero-meta">
+            <span dir="ltr">{buyer.phone}</span>
+            {buyer.email && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span dir="ltr">{buyer.email}</span>
+              </>
+            )}
+          </span>
+          <span className="account-hero-badges">
+            <span className="account-badge">حساب عميل</span>
+            {buyer.email && (
+              <span className={`account-badge ${buyer.email_verified ? "is-green" : "is-amber"}`}>
+                {buyer.email_verified ? "بريد مؤكد" : "بريد غير مؤكد"}
+              </span>
+            )}
+          </span>
+        </span>
+        <Link href={`/s/${encodeURIComponent(slug)}`} className="btn btn-outline account-hero-cta">
+          <i className="fas fa-store" aria-hidden="true"></i>
+          متابعة التسوق
+        </Link>
+      </div>
+
+      <nav className="account-tabs" aria-label="أقسام الحساب">
+        {NAV_ITEMS.map((item) => (
+          <a key={item.href} href={item.href} className="account-tab">
+            <i className={item.icon} aria-hidden="true"></i>
+            {item.label}
+            {item.href === "#orders" && orders !== null && orders.length > 0 && (
+              <span className="account-tab-count">{orders.length.toLocaleString("ar-SY")}</span>
+            )}
+          </a>
+        ))}
+      </nav>
+
+      <div className="account-layout">
+        <aside className="account-side">
+          <nav className="account-nav" aria-label="أقسام الحساب">
+            {NAV_ITEMS.map((item) => (
+              <a key={item.href} href={item.href} className="account-nav-item">
+                <i className={item.icon} aria-hidden="true"></i>
+                {item.label}
+                {item.href === "#orders" && orders !== null && orders.length > 0 && (
+                  <span className="count">{orders.length.toLocaleString("ar-SY")}</span>
+                )}
+              </a>
             ))}
-          </select>
+          </nav>
+          <Link href={`/s/${encodeURIComponent(slug)}`} className="account-back-link">
+            <i className="fas fa-arrow-right" aria-hidden="true"></i>
+            عودة إلى المتجر
+          </Link>
+        </aside>
+
+        <div className="account-main">
+          <section className="account-section" id="overview" aria-labelledby="overview-heading">
+            <h2 className="account-section-title" id="overview-heading">
+              <i className="fas fa-th-large" aria-hidden="true"></i>
+              نظرة عامة
+            </h2>
+            {ordersError || addressesError ? (
+              <div className="account-error" role="alert">
+                <i className="fas fa-exclamation-triangle" aria-hidden="true"></i>
+                <span>تعذّر تحميل بعض بيانات الحساب.</span>
+                <button type="button" className="btn btn-outline btn-sm" onClick={onRetry}>
+                  <i className="fas fa-rotate-right" aria-hidden="true"></i>
+                  إعادة المحاولة
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="account-stats">
+                  <div className="account-stat">
+                    <span className="account-stat-icon" aria-hidden="true">
+                      <i className="fas fa-receipt"></i>
+                    </span>
+                    <span className="account-stat-body">
+                      <span className="account-stat-value">
+                        {orders === null ? (
+                          <span className="account-skeleton account-skeleton-inline" aria-label="جاري التحميل"></span>
+                        ) : (
+                          orders.length.toLocaleString("ar-SY")
+                        )}
+                      </span>
+                      <span className="account-stat-label">طلباتي</span>
+                    </span>
+                  </div>
+                  <div className="account-stat">
+                    <span className="account-stat-icon" aria-hidden="true">
+                      <i className="fas fa-location-dot"></i>
+                    </span>
+                    <span className="account-stat-body">
+                      <span className="account-stat-value">
+                        {addresses === null ? (
+                          <span className="account-skeleton account-skeleton-inline" aria-label="جاري التحميل"></span>
+                        ) : (
+                          addresses.length.toLocaleString("ar-SY")
+                        )}
+                      </span>
+                      <span className="account-stat-label">عناوين محفوظة</span>
+                    </span>
+                  </div>
+                  <div className="account-stat">
+                    <span className="account-stat-icon" aria-hidden="true">
+                      <i className="fas fa-truck"></i>
+                    </span>
+                    <span className="account-stat-body">
+                      <span className="account-stat-value account-stat-text">
+                        {addresses === null ? (
+                          <span className="account-skeleton account-skeleton-inline" aria-label="جاري التحميل"></span>
+                        ) : defaultAddress ? (
+                          `${defaultAddress.governorate}${defaultAddress.city ? ` · ${defaultAddress.city}` : ""}`
+                        ) : (
+                          "لا يوجد عنوان"
+                        )}
+                      </span>
+                      <span className="account-stat-label">عنوان التوصيل</span>
+                    </span>
+                  </div>
+                </div>
+                {orders !== null && orders.length > 0 && (
+                  <div className="account-recent">
+                    <h3 className="account-recent-title">أحدث الطلبات</h3>
+                    {recentOrders.map((o) => (
+                      <div key={o.id} className="account-order-line">
+                        <span className="account-order-num" dir="ltr">
+                          #{o.order_number}
+                        </span>
+                        <span className={orderBadgeClass(o.status)}>{orderStatusLabel(o.status)}</span>
+                        <span className="account-order-total">
+                          {o.total.toLocaleString("ar-SY")} قرش
+                        </span>
+                      </div>
+                    ))}
+                    {orders.length > recentOrders.length && (
+                      <a href="#orders" className="account-more-link">
+                        عرض كل الطلبات
+                        <i className="fas fa-chevron-left" aria-hidden="true"></i>
+                      </a>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+
+          <section className="account-section" id="orders" aria-labelledby="orders-heading">
+            <h2 className="account-section-title" id="orders-heading">
+              <i className="fas fa-receipt" aria-hidden="true"></i>
+              طلباتي
+              {orders !== null && orders.length > 0 && (
+                <span className="count">{orders.length.toLocaleString("ar-SY")}</span>
+              )}
+            </h2>
+            {orders === null ? (
+              ordersError ? (
+                <div className="account-error" role="alert">
+                  <i className="fas fa-exclamation-triangle" aria-hidden="true"></i>
+                  <span>تعذّر تحميل الطلبات.</span>
+                  <button type="button" className="btn btn-outline btn-sm" onClick={onRetry}>
+                    <i className="fas fa-rotate-right" aria-hidden="true"></i>
+                    إعادة المحاولة
+                  </button>
+                </div>
+              ) : (
+                <div className="account-skeleton-list" role="status" aria-label="جاري تحميل الطلبات">
+                  <span className="account-skeleton" style={{ height: 92 }}></span>
+                  <span className="account-skeleton" style={{ height: 92 }}></span>
+                  <span className="account-skeleton" style={{ height: 92 }}></span>
+                </div>
+              )
+            ) : orders.length === 0 ? (
+              <EmptyState
+                icon="fas fa-receipt"
+                title="لا توجد طلبات بعد"
+                description="ابدأ التسوق لاكتشاف منتجات هذا المتجر — ستظهر طلباتك هنا مع حالتها وإجماليها."
+                action={
+                  <Link href={`/s/${encodeURIComponent(slug)}`} className="btn btn-primary">
+                    تصفح المنتجات
+                  </Link>
+                }
+              />
+            ) : (
+              <div className="account-order-list">
+                {orders.map((o) => (
+                  <article key={o.id} className="account-order-card">
+                    <div className="account-order-top">
+                      <span className="account-order-icon" aria-hidden="true">
+                        <i className="fas fa-receipt"></i>
+                      </span>
+                      <span className="account-order-body">
+                        <span className="account-order-num" dir="ltr">
+                          #{o.order_number}
+                        </span>
+                        <span className="account-order-badges">
+                          <span className={orderBadgeClass(o.status)}>{orderStatusLabel(o.status)}</span>
+                          <span className={paymentBadgeClass(o.payment_status)}>
+                            {paymentStatusLabel(o.payment_status)}
+                          </span>
+                        </span>
+                      </span>
+                    </div>
+                    <div className="account-order-bottom">
+                      <span className="account-order-total-label">الإجمالي</span>
+                      <span className="account-order-total">
+                        {o.total.toLocaleString("ar-SY")} قرش
+                      </span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="account-section" id="profile" aria-labelledby="profile-heading">
+            <h2 className="account-section-title" id="profile-heading">
+              <i className="fas fa-user" aria-hidden="true"></i>
+              البيانات الشخصية
+            </h2>
+            <FormError message={error} />
+            <dl className="account-fields">
+              <div className="account-field">
+                <dt>الهاتف</dt>
+                <dd dir="ltr">{buyer.phone}</dd>
+              </div>
+              <div className="account-field">
+                <dt>البريد الإلكتروني</dt>
+                <dd dir="ltr">
+                  {buyer.email ?? "—"}
+                  {buyer.email && (
+                    <span className={`account-badge ${buyer.email_verified ? "is-green" : "is-amber"}`}>
+                      {buyer.email_verified ? "مؤكد" : "غير مؤكد"}
+                    </span>
+                  )}
+                </dd>
+              </div>
+            </dl>
+            <form onSubmit={onSaveName} noValidate aria-label="تعديل الاسم" className="account-edit-form">
+              <TextField
+                label="الاسم"
+                id="ba-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+              <div className="account-form-actions">
+                <button type="submit" className="btn btn-primary" disabled={savingName}>
+                  {savingName ? "جاري الحفظ..." : "حفظ الاسم"}
+                </button>
+                {nameSaved && (
+                  <span className="account-saved" role="status">
+                    <i className="fas fa-check-circle" aria-hidden="true"></i>
+                    تم الحفظ.
+                  </span>
+                )}
+              </div>
+            </form>
+          </section>
+
+          <div id="addresses">
+            <BuyerAddressBook
+              slug={slug}
+              addresses={addresses}
+              setAddresses={setAddresses}
+              loadError={addressesError}
+              onRetry={onRetry}
+            />
+          </div>
+
+          <section className="account-section" id="settings" aria-labelledby="settings-heading">
+            <h2 className="account-section-title" id="settings-heading">
+              <i className="fas fa-key" aria-hidden="true"></i>
+              الأمان والجلسة
+            </h2>
+            <Link
+              href={`/s/${encodeURIComponent(slug)}/account/change-password`}
+              className="account-link-row"
+            >
+              <span className="account-link-icon" aria-hidden="true">
+                <i className="fas fa-key"></i>
+              </span>
+              <span className="account-link-body">
+                <span className="account-link-name">تغيير كلمة المرور</span>
+                <span className="account-link-meta">تتطلب كلمة المرور الحالية؛ جلستك تبقى سارية</span>
+              </span>
+              <i className="fas fa-chevron-left" aria-hidden="true"></i>
+            </Link>
+            <button type="button" className="btn btn-outline account-logout" onClick={onLogout}>
+              <i className="fas fa-sign-out-alt" aria-hidden="true"></i>
+              تسجيل الخروج
+            </button>
+          </section>
         </div>
-        <TextField label="المدينة (اختياري)" id="ba-city" value={city} onChange={(e) => setCity(e.target.value)} />
-        <TextField label="العنوان" id="ba-line" value={line} onChange={(e) => setLine(e.target.value)} />
-        <button type="submit" className="btn btn-outline" disabled={busy}>
-          {busy ? "جاري الإضافة..." : "إضافة العنوان"}
-        </button>
-      </form>
+      </div>
     </div>
   );
 }
