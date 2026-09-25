@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { ShopPage } from "@/components/shop/ShopPage";
+import { CheckoutSummary, type RateState, type SummaryRate } from "@/components/shop/CheckoutSummary";
 import { EmptyState } from "@/components/common/EmptyState";
 import { useBuyer } from "@/hooks/useBuyer";
 import { useCart } from "@/hooks/useCart";
-import { storefrontApi, type CheckoutResult, type ServerCartItem } from "@/lib/api";
+import { shippingRatesApi, storefrontApi, type CheckoutResult, type ServerCartItem } from "@/lib/api";
+import type { ShippingRate } from "@/types/api";
 import { getErrorCode, getFieldErrors, NETWORK_ERROR_MESSAGE } from "@/lib/auth-errors";
 import { GOVERNORATES } from "@/lib/governorates";
 import { TextField } from "@/components/auth/TextField";
@@ -165,6 +167,41 @@ function CheckoutBody(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature]);
 
+  // Public delivery rates for quoting shipping in the order summary.
+  // Reads are public by design (backend: scopedRead); mutations stay
+  // merchant-private. Rates are cached; governorate switches recompute
+  // locally without refetching.
+  const [rates, setRates] = useState<ShippingRate[] | null>(null);
+  const [ratesError, setRatesError] = useState(false);
+  const [ratesKey, setRatesKey] = useState(0);
+
+  useEffect(() => {
+    let live = true;
+    setRates(null);
+    setRatesError(false);
+    shippingRatesApi.list(storeId).then(
+      (res) => {
+        if (!live) return;
+        if (res.ok) setRates(res.data.rates);
+        else setRatesError(true);
+      },
+      () => {
+        if (live) setRatesError(true);
+      }
+    );
+    return () => {
+      live = false;
+    };
+  }, [storeId, ratesKey]);
+
+  const activeRate =
+    rates?.find((r) => r.governorate === s.governorate && r.is_active === 1) ?? null;
+  const rateState: RateState =
+    rates === null ? (ratesError ? "error" : "loading") : activeRate ? "ready" : "unavailable";
+  const summaryRate: SummaryRate | null = activeRate
+    ? { method: activeRate.shipping_method, cost: activeRate.cost }
+    : null;
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (s.submitting || lines.length === 0 || !cartId) return;
@@ -247,6 +284,10 @@ function CheckoutBody(props: {
           s.setFormError("أحد الأصناف لم يعد متاحاً. حدّث السلة وحاول مجدداً.");
           return;
         }
+        if (code === "shipping_unavailable") {
+          s.setFormError("الشحن غير متوفر لهذه المحافظة. اختر محافظة أخرى.");
+          return;
+        }
         const fields = getFieldErrors(res);
         if (Object.keys(fields).length > 0) s.setFieldErrors(fields);
         else if (res.error.message) s.setFormError(res.error.message);
@@ -276,25 +317,20 @@ function CheckoutBody(props: {
             {s.done.replayed && " (طلب مكرر — لم يُنشأ طلب جديد)"}
           </p>
         </div>
-        <div className="shell-card">
-          <h2 className="shell-card-title">ملخص الطلب (من الخادم)</h2>
-          <div className="info-row">
-            <span className="key">المجموع الفرعي</span>
-            <span className="value">{order.subtotal.toLocaleString("ar-SY")} قرش</span>
-          </div>
-          <div className="info-row">
-            <span className="key">الشحن</span>
-            <span className="value">{order.shipping_cost.toLocaleString("ar-SY")} قرش</span>
-          </div>
-          <div className="info-row">
-            <span className="key">الإجمالي</span>
-            <span className="value">{order.total.toLocaleString("ar-SY")} قرش</span>
-          </div>
-          <div className="mt-16">
-            <Link href={`/s/${encodeURIComponent(slug)}`} className="btn btn-primary">
-              العودة إلى {storeName}
-            </Link>
-          </div>
+        <div className="checkout-done">
+          <CheckoutSummary
+            lines={s.done.items}
+            governorate={order.shipping_governorate}
+            rateState="ready"
+            rate={{ method: order.shipping_method, cost: order.shipping_cost }}
+            onRetryRates={() => {}}
+            serverNote="القيم النهائية المعتمدة من الخادم."
+            footer={
+              <Link href={`/s/${encodeURIComponent(slug)}`} className="btn btn-primary btn-lg checkout-confirm">
+                العودة إلى {storeName}
+              </Link>
+            }
+          />
         </div>
       </>
     );
@@ -328,79 +364,106 @@ function CheckoutBody(props: {
           <span>{props.notice}</span>
         </div>
       )}
-      <div className="shell-card">
-        <h2 className="shell-card-title">السلة</h2>
-        {lines.map((l) => (
-          <div key={l.id} className="shop-cart-line">
-            <span className="grow">{l.product_name}</span>
-            <span className="shop-cart-price" dir="ltr">{l.unit_price.toLocaleString("ar-SY")}</span>
-            <span className="shop-qty">
-              <button
-                type="button"
-                aria-label="إنقاص"
-                onClick={() => props.setQuantity(slug, l.id, l.quantity - 1)}
-              >
-                −
-              </button>
-              <span aria-live="polite">{l.quantity.toLocaleString("ar-SY")}</span>
-              <button
-                type="button"
-                aria-label="زيادة"
-                onClick={() => props.setQuantity(slug, l.id, l.quantity + 1)}
-              >
-                +
-              </button>
-            </span>
-            <button
-              type="button"
-              className="btn btn-ghost btn-shell-dark btn-sm"
-              onClick={() => props.setQuantity(slug, l.id, 0)}
-            >
-              إزالة
-            </button>
+      <form className="checkout-layout" onSubmit={onSubmit} noValidate>
+        <div className="checkout-main">
+          <div className="shell-card">
+            <h2 className="shell-card-title">السلة</h2>
+            {lines.map((l) => (
+              <div key={l.id} className="shop-cart-line">
+                <span className="grow">{l.product_name}</span>
+                <span className="shop-cart-price" dir="ltr">{l.unit_price.toLocaleString("ar-SY")}</span>
+                <span className="shop-qty">
+                  <button
+                    type="button"
+                    aria-label="إنقاص"
+                    onClick={() => props.setQuantity(slug, l.id, l.quantity - 1)}
+                  >
+                    −
+                  </button>
+                  <span aria-live="polite">{l.quantity.toLocaleString("ar-SY")}</span>
+                  <button
+                    type="button"
+                    aria-label="زيادة"
+                    onClick={() => props.setQuantity(slug, l.id, l.quantity + 1)}
+                  >
+                    +
+                  </button>
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => props.setQuantity(slug, l.id, 0)}
+                >
+                  إزالة
+                </button>
+              </div>
+            ))}
+            <p className="shell-note mt-12">
+              الأسعار والإجمالي النهائي تُحسب على الخادم عند تأكيد الطلب.
+            </p>
           </div>
-        ))}
-        <p className="shell-note mt-12">
-          الأسعار والإجمالي النهائي تُحسب على الخادم عند تأكيد الطلب.
-        </p>
-      </div>
 
-      <div className="shell-card">
-        <h2 className="shell-card-title">بياناتك والتوصيل</h2>
-        <form className="auth-form" onSubmit={onSubmit} noValidate>
-          <FormError message={s.formError} />
-          <TextField label="الاسم" id="co-name" value={s.name} onChange={(e) => s.setName(e.target.value)} error={s.fieldErrors.name} />
-          <TextField label="رقم الهاتف" id="co-phone" dir="ltr" inputMode="tel" value={s.phone} onChange={(e) => s.setPhone(e.target.value)} error={s.fieldErrors.phone} />
-          <TextField label="البريد (اختياري)" id="co-email" dir="ltr" value={s.email} onChange={(e) => s.setEmail(e.target.value)} error={s.fieldErrors.email} />
-          <TextField label="اسم المستلم" id="co-recipient" value={s.recipient} onChange={(e) => s.setRecipient(e.target.value)} error={s.fieldErrors.recipient} />
-          <TextField label="هاتف التوصيل" id="co-ship-phone" dir="ltr" inputMode="tel" value={s.shipPhone} onChange={(e) => s.setShipPhone(e.target.value)} error={s.fieldErrors.shipPhone} />
-          <div className="auth-field">
-            <label className="auth-label" htmlFor="co-gov">المحافظة</label>
-            <select id="co-gov" className="auth-input" value={s.governorate} onChange={(e) => s.setGovernorate(e.target.value)}>
-              {GOVERNORATES.map((g) => (
-                <option key={g} value={g}>{g}</option>
-              ))}
-            </select>
+          <div className="shell-card">
+            <h2 className="shell-card-title">بياناتك والتوصيل</h2>
+            <div className="auth-form">
+              <TextField label="الاسم" id="co-name" value={s.name} onChange={(e) => s.setName(e.target.value)} error={s.fieldErrors.name} />
+              <TextField label="رقم الهاتف" id="co-phone" dir="ltr" inputMode="tel" value={s.phone} onChange={(e) => s.setPhone(e.target.value)} error={s.fieldErrors.phone} />
+              <TextField label="البريد (اختياري)" id="co-email" dir="ltr" value={s.email} onChange={(e) => s.setEmail(e.target.value)} error={s.fieldErrors.email} />
+              <TextField label="اسم المستلم" id="co-recipient" value={s.recipient} onChange={(e) => s.setRecipient(e.target.value)} error={s.fieldErrors.recipient} />
+              <TextField label="هاتف التوصيل" id="co-ship-phone" dir="ltr" inputMode="tel" value={s.shipPhone} onChange={(e) => s.setShipPhone(e.target.value)} error={s.fieldErrors.shipPhone} />
+              <div className="auth-field">
+                <label className="auth-label" htmlFor="co-gov">المحافظة</label>
+                <select id="co-gov" className="auth-input" value={s.governorate} onChange={(e) => s.setGovernorate(e.target.value)}>
+                  {GOVERNORATES.map((g) => (
+                    <option key={g} value={g}>{g}</option>
+                  ))}
+                </select>
+              </div>
+              <TextField label="المدينة (اختياري)" id="co-city" value={s.city} onChange={(e) => s.setCity(e.target.value)} />
+              <TextField label="العنوان" id="co-address" value={s.addressLine} onChange={(e) => s.setAddressLine(e.target.value)} error={s.fieldErrors.address} />
+              <div className="auth-field">
+                <label className="auth-label" htmlFor="co-pay">طريقة الدفع</label>
+                <select id="co-pay" className="auth-input" value={s.method} onChange={(e) => s.setMethod(e.target.value)}>
+                  <option value="cod">الدفع عند الاستلام</option>
+                  <option value="bank_transfer">تحويل بنكي</option>
+                  <option value="wallet">محفظة إلكترونية</option>
+                </select>
+              </div>
+              {s.method !== "cod" && (
+                <TextField label="مرجع الدفع" id="co-ref" dir="ltr" value={s.reference} onChange={(e) => s.setReference(e.target.value)} error={s.fieldErrors.reference} />
+              )}
+              <TurnstileWidget key={s.captchaKey} onToken={s.setCaptchaToken} />
+            </div>
           </div>
-          <TextField label="المدينة (اختياري)" id="co-city" value={s.city} onChange={(e) => s.setCity(e.target.value)} />
-          <TextField label="العنوان" id="co-address" value={s.addressLine} onChange={(e) => s.setAddressLine(e.target.value)} error={s.fieldErrors.address} />
-          <div className="auth-field">
-            <label className="auth-label" htmlFor="co-pay">طريقة الدفع</label>
-            <select id="co-pay" className="auth-input" value={s.method} onChange={(e) => s.setMethod(e.target.value)}>
-              <option value="cod">الدفع عند الاستلام</option>
-              <option value="bank_transfer">تحويل بنكي</option>
-              <option value="wallet">محفظة إلكترونية</option>
-            </select>
-          </div>
-          {s.method !== "cod" && (
-            <TextField label="مرجع الدفع" id="co-ref" dir="ltr" value={s.reference} onChange={(e) => s.setReference(e.target.value)} error={s.fieldErrors.reference} />
-          )}
-          <TurnstileWidget key={s.captchaKey} onToken={s.setCaptchaToken} />
-          <button type="submit" className="btn btn-primary btn-lg auth-submit" disabled={s.submitting}>
-            {s.submitting ? "جاري إرسال الطلب..." : "تأكيد الطلب"}
-          </button>
-        </form>
-      </div>
+        </div>
+
+        <aside className="checkout-side">
+          <CheckoutSummary
+            lines={lines}
+            governorate={s.governorate}
+            rateState={rateState}
+            rate={summaryRate}
+            onRetryRates={() => setRatesKey((k) => k + 1)}
+            footer={
+              <>
+                <FormError message={s.formError} />
+                <button
+                  type="submit"
+                  className="btn btn-primary btn-lg checkout-confirm"
+                  disabled={s.submitting || rateState !== "ready"}
+                >
+                  {s.submitting ? "جاري تأكيد الطلب..." : "تأكيد الطلب"}
+                </button>
+                {(rateState === "unavailable" || rateState === "error") && !s.submitting && (
+                  <p className="checkout-confirm-hint">
+                    اختر محافظة يتوفر لها الشحن لإتمام الطلب.
+                  </p>
+                )}
+              </>
+            }
+          />
+        </aside>
+      </form>
     </>
   );
 }
