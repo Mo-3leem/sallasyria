@@ -413,12 +413,28 @@ export default function ProductsPage({
                   <option value="deleted">محذوفة</option>
                 </select>
               </label>
+              <Link href={`${base}/products/new`} className="btn btn-primary">
+                <i className="fas fa-plus" aria-hidden="true"></i>
+                إضافة منتج
+              </Link>
             </div>
             {matched.length === 0 ? (
               <EmptyState
                 icon="fas fa-search"
-                title="لا توجد منتجات مطابقة للبحث أو الفلتر."
-                description="جرّب كلمة بحث مختلفة أو غيّر فلتر الحالة."
+                title="لا توجد منتجات مطابقة للفلاتر الحالية."
+                description="المتجر يحتوي على منتجات، لكن لا شيء منها يطابق البحث أو فلتر الحالة الحالي."
+                action={
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => {
+                      setQuery("");
+                      setStatusFilter("all");
+                    }}
+                  >
+                    مسح الفلاتر
+                  </button>
+                }
               />
             ) : (
               <>
@@ -473,12 +489,6 @@ export default function ProductsPage({
                 </div>
               </>
             )}
-            <div style={{ marginTop: 16 }}>
-              <Link href={`${base}/products/new`} className="btn btn-outline">
-                <i className="fas fa-plus" aria-hidden="true"></i>
-                إنشاء منتج
-              </Link>
-            </div>
               </>
             )}
           </>
