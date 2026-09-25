@@ -310,6 +310,154 @@ ul {
   background: var(--dark);
 }
 
+/* Platform account control (merchant/admin session in the main navbar) */
+.platform-account-wrap {
+  position: relative;
+}
+.platform-account-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding-inline: 10px 14px;
+  padding-block: 6px;
+  border-radius: 100px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--white);
+  font-family: var(--font);
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--transition);
+  max-width: 220px;
+}
+.platform-account-trigger:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+.navbar.scrolled .platform-account-trigger {
+  border-color: var(--gray-5);
+  background: var(--green-50);
+  color: var(--dark);
+}
+.navbar.scrolled .platform-account-trigger:hover {
+  border-color: var(--primary);
+  color: var(--primary-dark);
+}
+.platform-account-trigger:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.platform-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--primary-xlight);
+  color: var(--primary-dark);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.platform-avatar-img {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.platform-account-caret {
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+.platform-account-skeleton {
+  width: 120px;
+  height: 40px;
+  border-radius: 100px;
+  background: rgba(255, 255, 255, 0.25);
+  animation: platform-pulse 1.2s ease-in-out infinite;
+}
+.navbar.scrolled .platform-account-skeleton {
+  background: var(--gray-5);
+}
+@keyframes platform-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.platform-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  inset-inline-end: 0;
+  min-width: 230px;
+  background: var(--white);
+  border: 1px solid var(--gray-5);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  padding: 8px;
+  z-index: 1100;
+}
+.platform-menu-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+}
+.platform-menu-header-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.platform-menu-header-text strong {
+  font-size: 0.9rem;
+  color: var(--dark);
+  overflow-wrap: anywhere;
+}
+.platform-menu-header-text small {
+  font-size: 0.75rem;
+  color: var(--gray-2);
+}
+.platform-menu-separator {
+  border-top: 1px solid var(--gray-5);
+  margin: 6px 4px;
+}
+.platform-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  min-height: 44px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--font);
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--gray-1);
+  text-align: start;
+  cursor: pointer;
+}
+.platform-menu-item i {
+  width: 18px;
+  text-align: center;
+  color: var(--primary);
+}
+.platform-menu-item:hover {
+  background: var(--green-50);
+  color: var(--primary-dark);
+}
+.platform-menu-item:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* ===================================================================
    HERO
    =================================================================== */
