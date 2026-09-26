@@ -4,6 +4,7 @@ import type {
   Category,
   Customer,
   CustomerAddress,
+  MerchantAccount,
   Order,
   OrderItem,
   Plan,
@@ -723,6 +724,53 @@ export const adminApi = {
       `/admin/users/${encodeURIComponent(id)}/password`,
       { new_password }
     ),
+  /** Merchant account management (audited; merchants only, never admins). */
+  merchants: {
+    list: (q?: string) =>
+      api.get<{ merchants: MerchantAccount[] }>(
+        `/admin/merchants${q !== undefined && q !== "" ? `?q=${encodeURIComponent(q)}` : ""}`
+      ),
+    get: (id: string) =>
+      api.get<{ merchant: MerchantAccount; stores: Store[] }>(
+        `/admin/merchants/${encodeURIComponent(id)}`
+      ),
+    update: (
+      id: string,
+      data: { name?: string; email?: string | null; phone?: string; is_active?: 0 | 1 }
+    ) =>
+      api.patch<{ merchant: MerchantAccount }>(
+        `/admin/merchants/${encodeURIComponent(id)}`,
+        data
+      ),
+    remove: (id: string) =>
+      api.delete<{ deleted: string }>(
+        `/admin/merchants/${encodeURIComponent(id)}`
+      ),
+  },
+  /** Customer account management scoped to one store (audited). */
+  storeCustomers: {
+    list: (storeId: string, q?: string) =>
+      api.get<{ customers: Customer[] }>(
+        `/admin/stores/${encodeURIComponent(storeId)}/customers${q !== undefined && q !== "" ? `?q=${encodeURIComponent(q)}` : ""}`
+      ),
+    get: (storeId: string, id: string) =>
+      api.get<{ customer: Customer }>(
+        `/admin/stores/${encodeURIComponent(storeId)}/customers/${encodeURIComponent(id)}`
+      ),
+    update: (
+      storeId: string,
+      id: string,
+      data: { name?: string; phone?: string; email?: string | null }
+    ) =>
+      api.patch<{ customer: Customer }>(
+        `/admin/stores/${encodeURIComponent(storeId)}/customers/${encodeURIComponent(id)}`,
+        data
+      ),
+    remove: (storeId: string, id: string) =>
+      api.delete<{ deleted: string }>(
+        `/admin/stores/${encodeURIComponent(storeId)}/customers/${encodeURIComponent(id)}`
+      ),
+  },
 };
 
 export interface BuyerAccount {
