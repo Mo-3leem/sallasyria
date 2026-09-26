@@ -8,8 +8,18 @@ export interface User {
   avatar_url: string | null;
 }
 
-export interface LoginResponse {
-  user: User;
+export interface MerchantAccount {
+  id: string;
+  phone: string;
+  email: string | null;
+  name: string;
+  role: string;
+  email_verified: number;
+  avatar_url: string | null;
+  is_active?: number;
+}
+
+export interface LoginResponse {  user: User;
   must_rotate: boolean;
 }
 

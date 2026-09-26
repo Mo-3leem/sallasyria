@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
+import type { Context } from "hono";
 import type { D1Database } from "@cloudflare/workers-types";
 import type { AppEnv, Env } from "../env.js";
 import { getDb } from "../db.js";
@@ -7,7 +8,7 @@ import { AppError } from "../http/errors.js";
 import { ok } from "../http/respond.js";
 import { assertNoImmutableFields, z, validationHook } from "../http/validate.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
-import { idParam } from "../openapi/params.js";
+import { idParam, storeIdParam } from "../openapi/params.js";
 import { auditLog } from "../lib/audit.js";
 import { hashPassword, PASSWORD_RULES } from "../lib/password.js";
 import { touch } from "../lib/time.js";
@@ -28,7 +29,21 @@ import {
   listPlans,
   updatePlan,
 } from "../services/plans.js";
-import { getUserPublic, resetUserPassword } from "../services/users.js";
+import {
+  deleteMerchant,
+  getMerchantPublic,
+  getUserPublic,
+  resetUserPassword,
+  searchMerchants,
+  updateMerchantByAdmin,
+} from "../services/users.js";
+import { getStoreById, listStoresForOwner } from "../services/stores.js";
+import {
+  deleteCustomer,
+  getCustomer,
+  searchCustomers,
+  updateCustomer,
+} from "../services/customers.js";
 
 export const admin = new OpenAPIHono<AppEnv>();
 
@@ -480,4 +495,333 @@ admin.openapi(resetPasswordRoute, async (c) => {
   await resetUserPassword(getDb(c), targetId, hashPassword(c.req.valid("json").new_password), now);
   auditLog("admin.user.password_reset", { actor: currentUser(c).id, result: targetId });
   return ok(c, { reset: true });
+}, validationHook);
+
+// --- merchant account management (platform admins only, audited) ---
+//
+// Merchants are role='merchant' user rows. Reads/writes below never touch
+// admin rows (404, same as unknown ids) and never accept role, password
+// hash, sessions, or tokens. Password changes reuse the existing assisted
+// reset route; merchant deletion is blocked while stores exist (see
+// deleteMerchant) so business history is never destroyed silently.
+
+const merchantDocSchema = z
+  .object({
+    id: z.string(),
+    phone: z.string(),
+    email: z.string().nullable(),
+    name: z.string(),
+    role: z.string(),
+    email_verified: z.number(),
+    avatar_url: z.string().nullable(),
+    is_active: z.number().optional(),
+  })
+  .openapi("AdminMerchant");
+
+const merchantOkSchema = okOf(z.object({ merchant: merchantDocSchema }));
+
+const storeRefSchema = z
+  .object({
+    id: z.string(),
+    slug: z.string(),
+    name: z.string(),
+    currency: z.string(),
+    status: z.string(),
+    is_published: z.number(),
+  })
+  .openapi("AdminMerchantStore");
+
+const merchantPatchSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  email: z.string().trim().email().max(254).nullable().optional(),
+  phone: z.string().min(1).max(32).optional(),
+  is_active: z.union([z.literal(0), z.literal(1)]).optional(),
+});
+
+const MERCHANT_FORBIDDEN = ["id", "role", "password_hash", "avatar_url", "store_id"] as const;
+
+const listMerchantsRoute = createRoute({
+  method: "get",
+  path: "/merchants",
+  summary: "List/search merchants",
+  description:
+    "Platform admin only. Merchants only (admin accounts never list). " +
+    "Optional ?q= matches email (case-insensitive) or phone (any common formatting); capped result set.",
+  middleware: [...authedAdmin],
+  request: {
+    query: z.object({ q: z.string().max(254).optional() }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: okOf(z.object({ merchants: z.array(merchantDocSchema) })) },
+      },
+      description: "Matching merchants, newest first",
+    },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
+  },
+});
+
+admin.openapi(listMerchantsRoute, async (c) => {
+  const q = c.req.valid("query").q ?? null;
+  return ok(c, { merchants: await searchMerchants(getDb(c), q) });
+}, validationHook);
+
+const getMerchantRoute = createRoute({
+  method: "get",
+  path: "/merchants/:id",
+  summary: "Get a merchant with their stores",
+  description: "Platform admin only. 404 for unknown ids and admin accounts.",
+  middleware: [...authedAdmin],
+  request: { params: idParams },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: okOf(z.object({ merchant: merchantDocSchema, stores: z.array(storeRefSchema) })),
+        },
+      },
+      description: "Merchant plus owned stores",
+    },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown merchant" },
+  },
+});
+
+admin.openapi(getMerchantRoute, async (c) => {
+  const targetId = resourceId(c);
+  const merchant = await getMerchantPublic(getDb(c), targetId);
+  if (!merchant) throw new AppError("user_not_found", 404, "User not found.");
+  return ok(c, {
+    merchant,
+    stores: await listStoresForOwner(getDb(c), targetId),
+  });
+}, validationHook);
+
+const updateMerchantRoute = createRoute({
+  method: "patch",
+  path: "/merchants/:id",
+  summary: "Update a merchant",
+  description:
+    "Platform admin only, audited. Editable: name, email, phone, is_active. " +
+    "Phone/email are normalized and uniqueness-checked like self-service. " +
+    "id, role, password hash, and avatar in the body are 400.",
+  middleware: [...authedAdmin],
+  request: {
+    params: idParams,
+    body: { content: { "application/json": { schema: merchantPatchSchema } } },
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: merchantOkSchema } },
+      description: "Updated merchant",
+    },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid body or immutable field" },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown merchant" },
+    409: { content: { "application/json": { schema: failEnvelope } }, description: "Phone or email already registered" },
+  },
+});
+
+admin.openapi(updateMerchantRoute, async (c) => {
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  assertNoImmutableFields(raw, MERCHANT_FORBIDDEN);
+  const targetId = resourceId(c);
+  const merchant = await updateMerchantByAdmin(getDb(c), targetId, c.req.valid("json"));
+  if (!merchant) throw new AppError("user_not_found", 404, "User not found.");
+  auditLog("admin.merchant.update", { actor: currentUser(c).id, result: targetId });
+  return ok(c, { merchant });
+}, validationHook);
+
+const deleteMerchantRoute = createRoute({
+  method: "delete",
+  path: "/merchants/:id",
+  summary: "Delete a merchant permanently",
+  description:
+    "Platform admin only, audited. 409 while the merchant owns any store, " +
+    "so business history is never destroyed. Never targets admins or self.",
+  middleware: [...authedAdmin],
+  request: { params: idParams },
+  responses: {
+    200: {
+      content: { "application/json": { schema: okOf(z.object({ deleted: z.string() })) } },
+      description: "Deleted merchant id",
+    },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only, or self-delete" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown merchant" },
+    409: { content: { "application/json": { schema: failEnvelope } }, description: "Merchant owns stores" },
+  },
+});
+
+admin.openapi(deleteMerchantRoute, async (c) => {
+  const targetId = resourceId(c);
+  const me = currentUser(c);
+  if (targetId === me.id) {
+    throw new AppError("forbidden", 403, "Cannot delete your own admin account.");
+  }
+  const target = await getMerchantPublic(getDb(c), targetId);
+  if (!target) throw new AppError("user_not_found", 404, "User not found.");
+  const result = await deleteMerchant(getDb(c), targetId);
+  auditLog("admin.merchant.delete", { actor: me.id, result: targetId });
+  return ok(c, result);
+}, validationHook);
+
+// --- admin customer management (scoped through the merchant's stores) ---
+//
+// The frontend only ever calls these with stores from the selected
+// merchant's store list. Customers stay store-scoped: every operation
+// reuses the existing customer services, so validation, phone
+// normalization, and the order-history 409 behave identically.
+
+const customerDocSchema = z
+  .object({
+    id: z.string(),
+    store_id: z.string(),
+    name: z.string(),
+    phone: z.string(),
+    email: z.string().nullable(),
+  })
+  .openapi("AdminCustomer");
+
+const customerOkSchema = okOf(z.object({ customer: customerDocSchema }));
+
+const adminCustomerPatchSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  phone: z.string().min(1).max(64).optional(),
+  email: z.string().email().max(254).nullable().optional(),
+});
+
+const ADMIN_CUSTOMER_FORBIDDEN = ["store_id", "id"] as const;
+
+// Admin store scope: the path store must exist (404 otherwise). No
+// merchant linkage is asserted here — the UI only ever passes stores from
+// the selected merchant's list, and admin routes are cross-store by design
+// (see the file header). Every customer operation below stays store-scoped
+// through the shared customer services.
+async function storeScopeAdmin(c: Context<AppEnv>): Promise<{ storeId: string }> {
+  const storeId = resourceId(c, "storeId");
+  const store = await getStoreById(getDb(c), storeId);
+  if (!store) throw new AppError("store_not_found", 404, "Store not found.");
+  return { storeId };
+}
+
+const listStoreCustomersRoute = createRoute({
+  method: "get",
+  path: "/stores/:storeId/customers",
+  summary: "List/search a store's customers",
+  description:
+    "Platform admin only. Store-scoped; optional ?q= matches email or phone. Capped result set.",
+  middleware: [...authedAdmin],
+  request: {
+    params: z.object({ storeId: storeIdParam }),
+    query: z.object({ q: z.string().max(254).optional() }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: okOf(z.object({ customers: z.array(customerDocSchema) })) },
+      },
+      description: "Matching customers",
+    },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store" },
+  },
+});
+
+admin.openapi(listStoreCustomersRoute, async (c) => {
+  const { storeId } = await storeScopeAdmin(c);
+  const q = c.req.valid("query").q ?? null;
+  return ok(c, { customers: await searchCustomers(getDb(c), storeId, q) });
+}, validationHook);
+
+const getStoreCustomerRoute = createRoute({
+  method: "get",
+  path: "/stores/:storeId/customers/:id",
+  summary: "Get a store customer",
+  description: "Platform admin only. 404 for an unknown store or customer.",
+  middleware: [...authedAdmin],
+  request: { params: z.object({ storeId: storeIdParam, id: idParam }) },
+  responses: {
+    200: {
+      content: { "application/json": { schema: customerOkSchema } },
+      description: "The customer",
+    },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store or customer" },
+  },
+});
+
+admin.openapi(getStoreCustomerRoute, async (c) => {
+  const { storeId } = await storeScopeAdmin(c);
+  const row = await getCustomer(getDb(c), storeId, resourceId(c));
+  if (!row) throw new AppError("customer_not_found", 404, "Customer not found.");
+  return ok(c, { customer: row });
+}, validationHook);
+
+const updateStoreCustomerRoute = createRoute({
+  method: "patch",
+  path: "/stores/:storeId/customers/:id",
+  summary: "Update a store customer",
+  description:
+    "Platform admin only, audited. Same validation as the merchant flow: " +
+    "name/phone/email, phone re-normalized, 409 when taken.",
+  middleware: [...authedAdmin],
+  request: {
+    params: z.object({ storeId: storeIdParam, id: idParam }),
+    body: { content: { "application/json": { schema: adminCustomerPatchSchema } } },
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: customerOkSchema } },
+      description: "Updated customer",
+    },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid body or immutable field" },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store or customer" },
+    409: { content: { "application/json": { schema: failEnvelope } }, description: "Phone taken by another customer" },
+  },
+});
+
+admin.openapi(updateStoreCustomerRoute, async (c) => {
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  assertNoImmutableFields(raw, ADMIN_CUSTOMER_FORBIDDEN);
+  const { storeId } = await storeScopeAdmin(c);
+  const row = await updateCustomer(getDb(c), storeId, resourceId(c), c.req.valid("json"));
+  if (!row) throw new AppError("customer_not_found", 404, "Customer not found.");
+  auditLog("admin.customer.update", { actor: currentUser(c).id, store: storeId, result: row.id });
+  return ok(c, { customer: row });
+}, validationHook);
+
+const deleteStoreCustomerRoute = createRoute({
+  method: "delete",
+  path: "/stores/:storeId/customers/:id",
+  summary: "Delete a store customer",
+  description:
+    "Platform admin only, audited. 409 when the customer has orders, so order history stays intact.",
+  middleware: [...authedAdmin],
+  request: { params: z.object({ storeId: storeIdParam, id: idParam }) },
+  responses: {
+    200: {
+      content: { "application/json": { schema: okOf(z.object({ deleted: z.string() })) } },
+      description: "Deleted customer id",
+    },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store or customer" },
+    409: { content: { "application/json": { schema: failEnvelope } }, description: "Customer has orders" },
+  },
+});
+
+admin.openapi(deleteStoreCustomerRoute, async (c) => {
+  const { storeId } = await storeScopeAdmin(c);
+  const result = await deleteCustomer(getDb(c), storeId, resourceId(c));
+  auditLog("admin.customer.delete", { actor: currentUser(c).id, store: storeId, result: result.deleted });
+  return ok(c, result);
 }, validationHook);

@@ -13,6 +13,8 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
       <nav className="admin-subnav" aria-label="تنقل الإدارة">
         <Link href="/app/admin">نظرة عامة</Link>
         <span aria-hidden="true">·</span>
+        <Link href="/app/admin/merchants">التجار</Link>
+        <span aria-hidden="true">·</span>
         <Link href="/app/admin/subscriptions">الاشتراكات</Link>
         <span aria-hidden="true">·</span>
         <Link href="/app/admin/plans">الخطط</Link>

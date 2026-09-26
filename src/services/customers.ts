@@ -100,6 +100,42 @@ export async function getCustomer(
     .first<CustomerRow>();
 }
 
+/**
+ * Server-side customer search for admin tooling, strictly store-scoped.
+ * Matches email (lowercased exact) or phone (canonical first, then the
+ * exact typed value for legacy rows — same resolution as login). Capped
+ * LIMIT: admin tooling, not a public API.
+ */
+export async function searchCustomers(
+  db: D1Database,
+  storeId: string,
+  q: string | null
+): Promise<CustomerRow[]> {
+  const needle = (q ?? "").trim();
+  if (needle === "") {
+    const res = await db
+      .prepare("SELECT * FROM customers WHERE store_id = ? ORDER BY created_at LIMIT 100")
+      .bind(storeId)
+      .all<CustomerRow>();
+    return res.results ?? [];
+  }
+  const emailForm = needle.toLowerCase();
+  let phoneForm: string | null = null;
+  try {
+    phoneForm = normalizePhone(needle);
+  } catch {
+    phoneForm = null;
+  }
+  const res = await db
+    .prepare(
+      `SELECT * FROM customers WHERE store_id = ? AND (email = ? OR phone = ? OR phone = ?)
+       ORDER BY created_at LIMIT 100`
+    )
+    .bind(storeId, emailForm, phoneForm ?? needle, needle)
+    .all<CustomerRow>();
+  return res.results ?? [];
+}
+
 export interface CustomerPatch {
   name?: string;
   phone?: string;
