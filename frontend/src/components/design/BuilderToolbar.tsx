@@ -50,6 +50,8 @@ export function BuilderToolbar({
           تصميم المتجر
           <small>{storeName}</small>
         </span>
+      </div>
+      <div className="builder-toolbar-center">
         <span
           className={`builder-save-state is-${saveState}`}
           role="status"

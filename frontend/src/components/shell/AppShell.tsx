@@ -60,6 +60,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     setMenuOpen(false);
   }, [pathname]);
 
+  // Design Mode: the visual store builder gets maximum width, so the
+  // sidebar collapses to the existing drawer mechanism on its route. The
+  // hamburger reopens the same drawer; leaving the route restores normal
+  // behavior (no persisted state).
+  const designMode = /\/app\/stores\/[^/]+\/design\/?$/.test(pathname ?? "");
+  useEffect(() => {
+    if (!designMode) setDrawerOpen(false);
+  }, [designMode]);
+
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
 
@@ -177,7 +186,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="shell">
+    <div className={`shell${designMode ? " shell-design" : ""}`}>
       <aside className="shell-sidebar" aria-label="الشريط الجانبي">
         {sidebar}
       </aside>
