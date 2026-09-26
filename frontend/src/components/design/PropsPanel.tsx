@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ColorRow, SegmentRow, TextRow, ToggleRow } from "@/components/design/DesignControls";
+import { ColorRow, Group, SegmentRow, TextRow, ToggleRow } from "@/components/design/DesignControls";
 import type { Selection } from "@/components/design/selection";
 import {
   defaultSectionTitle,
@@ -51,25 +51,29 @@ export function PropsPanel({
     return (
       <div className="builder-panel">
         <h2 className="builder-panel-title">المظهر العام</h2>
-        {names.map((n) => (
-          <ColorRow
-            key={n.key}
-            id={`props-${n.key}`}
-            label={n.label}
-            value={draft.palette[n.key]}
-            onChange={(v) => patch((d) => ({ ...d, palette: { ...d.palette, [n.key]: v } }))}
+        <Group title="الألوان">
+          {names.map((n) => (
+            <ColorRow
+              key={n.key}
+              id={`props-${n.key}`}
+              label={n.label}
+              value={draft.palette[n.key]}
+              onChange={(v) => patch((d) => ({ ...d, palette: { ...d.palette, [n.key]: v } }))}
+            />
+          ))}
+        </Group>
+        <Group title="الخط">
+          <SegmentRow
+            id="props-font"
+            label="عائلة الخط"
+            options={[
+              { value: "cairo", label: "القاهرة" },
+              { value: "system", label: "النظام" },
+            ]}
+            value={draft.font}
+            onChange={(v) => patch((d) => ({ ...d, font: v }))}
           />
-        ))}
-        <SegmentRow
-          id="props-font"
-          label="الخط"
-          options={[
-            { value: "cairo", label: "القاهرة" },
-            { value: "system", label: "النظام" },
-          ]}
-          value={draft.font}
-          onChange={(v) => patch((d) => ({ ...d, font: v }))}
-        />
+        </Group>
       </div>
     );
   }
@@ -160,44 +164,46 @@ export function PropsPanel({
       <h2 className="builder-panel-title">
         {section.title && section.title !== "" ? section.title : defaultSectionTitle(section.type)}
       </h2>
-      <TextRow
-        id="props-sec-title"
-        label="عنوان القسم (فارغ = الافتراضي)"
-        value={section.title ?? ""}
-        maxLength={200}
-        onChange={(v) =>
-          updateSectionAt(index, (s) => ({ ...s, title: v.trim() === "" ? undefined : v }))
-        }
-      />
-      <ToggleRow
-        id="props-sec-visible"
-        label="إظهار القسم"
-        checked={section.is_visible === 1}
-        onChange={(v) => updateSectionAt(index, (s) => ({ ...s, is_visible: v ? 1 : 0 }))}
-      />
-      <div className="builder-field">
-        <span className="builder-label">ترتيب القسم</span>
-        <div className="builder-prop-movers" role="group" aria-label="تحريك القسم">
-          <button
-            type="button"
-            className="btn btn-ghost btn-shell-dark btn-sm"
-            disabled={index === 0}
-            onClick={() => move(-1)}
-          >
-            <i className="fas fa-arrow-up" aria-hidden="true"></i>
-            للأعلى
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost btn-shell-dark btn-sm"
-            disabled={index === ordered.length - 1}
-            onClick={() => move(1)}
-          >
-            <i className="fas fa-arrow-down" aria-hidden="true"></i>
-            للأسفل
-          </button>
+      <Group title="العرض">
+        <TextRow
+          id="props-sec-title"
+          label="عنوان القسم (فارغ = الافتراضي)"
+          value={section.title ?? ""}
+          maxLength={200}
+          onChange={(v) =>
+            updateSectionAt(index, (s) => ({ ...s, title: v.trim() === "" ? undefined : v }))
+          }
+        />
+        <ToggleRow
+          id="props-sec-visible"
+          label="إظهار القسم"
+          checked={section.is_visible === 1}
+          onChange={(v) => updateSectionAt(index, (s) => ({ ...s, is_visible: v ? 1 : 0 }))}
+        />
+        <div className="builder-field">
+          <span className="builder-label">ترتيب القسم</span>
+          <div className="builder-prop-movers" role="group" aria-label="تحريك القسم">
+            <button
+              type="button"
+              className="btn btn-ghost btn-shell-dark btn-sm"
+              disabled={index === 0}
+              onClick={() => move(-1)}
+            >
+              <i className="fas fa-arrow-up" aria-hidden="true"></i>
+              للأعلى
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-shell-dark btn-sm"
+              disabled={index === ordered.length - 1}
+              onClick={() => move(1)}
+            >
+              <i className="fas fa-arrow-down" aria-hidden="true"></i>
+              للأسفل
+            </button>
+          </div>
         </div>
-      </div>
+      </Group>
 
       {section.type === "hero" && <HeroFields draft={draft} patch={patch} />}
       {section.type === "products" && (
@@ -221,7 +227,7 @@ export function PropsPanel({
   );
 }
 
-function HeroFields({
+  function HeroFields({
   draft,
   patch,
 }: {
@@ -231,60 +237,64 @@ function HeroFields({
   const h = draft.hero;
   return (
     <>
-      <TextRow
-        id="props-hero-title"
-        label="العنوان (فارغ = ترحيب تلقائي)"
-        value={h.title}
-        maxLength={200}
-        onChange={(v) => patch((d) => ({ ...d, hero: { ...d.hero, title: v } }))}
-      />
-      <TextRow
-        id="props-hero-desc"
-        label="الوصف"
-        value={h.description}
-        maxLength={500}
-        onChange={(v) => patch((d) => ({ ...d, hero: { ...d.hero, description: v } }))}
-      />
-      <TextRow
-        id="props-hero-cta"
-        label="نص الزر"
-        value={h.cta_text}
-        maxLength={100}
-        onChange={(v) => patch((d) => ({ ...d, hero: { ...d.hero, cta_text: v } }))}
-      />
-      <ToggleRow
-        id="props-hero-cta-v"
-        label="إظهار الزر"
-        checked={h.cta_visible === 1}
-        onChange={(v) => patch((d) => ({ ...d, hero: { ...d.hero, cta_visible: v ? 1 : 0 } }))}
-      />
-      <SegmentRow
-        id="props-hero-align"
-        label="المحاذاة"
-        options={[
-          { value: "right", label: "يمين" },
-          { value: "center", label: "وسط" },
-          { value: "left", label: "يسار" },
-        ]}
-        value={h.align}
-        onChange={(v) => patch((d) => ({ ...d, hero: { ...d.hero, align: v } }))}
-      />
-      <TextRow
-        id="props-hero-image"
-        label="رابط الصورة (https)"
-        value={h.image ?? ""}
-        dir="ltr"
-        placeholder="https://..."
-        onChange={(v) => patch((d) => ({ ...d, hero: { ...d.hero, image: v.trim() === "" ? null : v.trim() } }))}
-      />
-      <ColorRow
-        id="props-hero-bg"
-        label="خلفية القسم"
-        value={h.background ?? "#ffffff"}
-        allowClear
-        onClear={() => patch((d) => ({ ...d, hero: { ...d.hero, background: null } }))}
-        onChange={(v) => patch((d) => ({ ...d, hero: { ...d.hero, background: v } }))}
-      />
+      <Group title="المحتوى">
+        <TextRow
+          id="props-hero-title"
+          label="العنوان (فارغ = ترحيب تلقائي)"
+          value={h.title}
+          maxLength={200}
+          onChange={(v) => patch((d) => ({ ...d, hero: { ...d.hero, title: v } }))}
+        />
+        <TextRow
+          id="props-hero-desc"
+          label="الوصف"
+          value={h.description}
+          maxLength={500}
+          onChange={(v) => patch((d) => ({ ...d, hero: { ...d.hero, description: v } }))}
+        />
+        <TextRow
+          id="props-hero-cta"
+          label="نص الزر"
+          value={h.cta_text}
+          maxLength={100}
+          onChange={(v) => patch((d) => ({ ...d, hero: { ...d.hero, cta_text: v } }))}
+        />
+        <ToggleRow
+          id="props-hero-cta-v"
+          label="إظهار الزر"
+          checked={h.cta_visible === 1}
+          onChange={(v) => patch((d) => ({ ...d, hero: { ...d.hero, cta_visible: v ? 1 : 0 } }))}
+        />
+        <TextRow
+          id="props-hero-image"
+          label="رابط الصورة (https)"
+          value={h.image ?? ""}
+          dir="ltr"
+          placeholder="https://..."
+          onChange={(v) => patch((d) => ({ ...d, hero: { ...d.hero, image: v.trim() === "" ? null : v.trim() } }))}
+        />
+      </Group>
+      <Group title="التخطيط">
+        <SegmentRow
+          id="props-hero-align"
+          label="المحاذاة"
+          options={[
+            { value: "right", label: "يمين" },
+            { value: "center", label: "وسط" },
+            { value: "left", label: "يسار" },
+          ]}
+          value={h.align}
+          onChange={(v) => patch((d) => ({ ...d, hero: { ...d.hero, align: v } }))}
+        />
+        <ColorRow
+          id="props-hero-bg"
+          label="خلفية القسم"
+          value={h.background ?? "#ffffff"}
+          allowClear
+          onClear={() => patch((d) => ({ ...d, hero: { ...d.hero, background: null } }))}
+          onChange={(v) => patch((d) => ({ ...d, hero: { ...d.hero, background: v } }))}
+        />
+      </Group>
     </>
   );
 }

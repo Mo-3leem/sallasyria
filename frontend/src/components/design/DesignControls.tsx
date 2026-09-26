@@ -1,10 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
 /** Small controlled inputs shared by the builder panels. */
+export function Group({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="builder-group">
+      <h3 className="builder-group-title">{title}</h3>
+      {children}
+    </div>
+  );
+}
 export function ColorRow({
   id,
   label,
