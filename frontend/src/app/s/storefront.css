@@ -1449,6 +1449,13 @@ a.shop-card:hover {
   color: #b91c1c;
 }
 
+/* Buyer auth footers: comfortable tap targets on the stacked links.
+   Scoped to the storefront so merchant auth pages stay pixel-identical. */
+.shop .auth-footer a {
+  display: inline-block;
+  padding: 10px 8px;
+}
+
 @media (max-width: 900px) {
   .checkout-layout {
     grid-template-columns: minmax(0, 1fr);
