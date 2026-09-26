@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { adminApi } from "@/lib/api";
 import type { Customer, MerchantAccount, Store } from "@/types/api";
 import {
@@ -12,6 +12,7 @@ import {
   NETWORK_ERROR_MESSAGE,
 } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
+import { BackButton } from "@/components/common/BackButton";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { TextField } from "@/components/auth/TextField";
@@ -31,8 +32,28 @@ export default function AdminMerchantPage({
 }: {
   params: { id: string };
 }) {
-  const { id } = params;
+  return (
+    <Suspense
+      fallback={
+        <div className="shell-loading">
+          <span className="shell-spinner" aria-hidden="true"></span>
+          جاري التحميل...
+        </div>
+      }
+    >
+      <AdminMerchantDetail id={params.id} />
+    </Suspense>
+  );
+}
+
+function AdminMerchantDetail({ id }: { id: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const backQuery = searchParams.get("q") ?? "";
+  const backHref =
+    backQuery.trim() === ""
+      ? "/app/admin/merchants"
+      : `/app/admin/merchants?q=${encodeURIComponent(backQuery.trim())}`;
   const { refresh: refreshAuth } = useAuth();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
 
@@ -57,6 +78,7 @@ export default function AdminMerchantPage({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [blockedStores, setBlockedStores] = useState<Store[] | null>(null);
 
   // Customers
   const [storeId, setStoreId] = useState("");
@@ -154,6 +176,8 @@ export default function AdminMerchantPage({
 
   const { merchant, stores } = state;
   const confirmIdentity = merchant.email ?? merchant.phone;
+  const customerHref = (c: Customer) =>
+    `/app/admin/merchants/${encodeURIComponent(id)}/customers/${encodeURIComponent(c.id)}?store=${encodeURIComponent(storeId)}${backQuery.trim() === "" ? "" : `&q=${encodeURIComponent(backQuery.trim())}`}`;
 
   async function onSave(e: FormEvent) {
     e.preventDefault();
@@ -242,6 +266,7 @@ export default function AdminMerchantPage({
     if (deleting) return;
     setDeleting(true);
     setActionError(null);
+    setBlockedStores(null);
     try {
       const res = await adminApi.merchants.remove(id);
       if (!res.ok) {
@@ -251,9 +276,7 @@ export default function AdminMerchantPage({
           return;
         }
         if (code === "merchant_has_stores") {
-          setActionError(
-            "لا يمكن حذف هذا التاجر لأنه يملك متاجر. احذف المتاجر أو انقل ملكيتها أولاً — لا تُحذف بيانات الأعمال تلقائياً."
-          );
+          setBlockedStores(stores);
         } else {
           setActionError(authErrorMessage(res, 400));
         }
@@ -271,6 +294,7 @@ export default function AdminMerchantPage({
 
   return (
     <>
+      <BackButton href={backHref} label="العودة إلى التجار" />
       <div className="shell-page-head">
         <h1>{merchant.name}</h1>
         <p>
@@ -284,6 +308,39 @@ export default function AdminMerchantPage({
         <div className="shell-error" role="alert">
           <i className="fas fa-exclamation-circle" aria-hidden="true"></i>
           <span>{actionError}</span>
+        </div>
+      )}
+
+      {blockedStores !== null && blockedStores.length > 0 && (
+        <div className="shell-card" role="alert" aria-label="تعذّر حذف التاجر">
+          <h2 className="shell-card-title">تعذّر حذف التاجر</h2>
+          <p className="shell-note" style={{ marginBottom: 12 }}>
+            لا يمكن حذف «{merchant.name}» لأنه ما زال يملك {blockedStores.length.toLocaleString("ar-SY")} من المتاجر.
+            افتح كل متجر لمراجعته وإدارته، ثم أعد محاولة الحذف بعد زوال المتاجر — لا تُحذف بيانات الأعمال تلقائياً.
+          </p>
+          <div className="shell-stack">
+            {blockedStores.map((s) => (
+              <Link
+                key={s.id}
+                href={`/app/stores/${encodeURIComponent(s.id)}`}
+                className="store-row"
+              >
+                <span className="store-row-icon" aria-hidden="true">
+                  <i className="fas fa-store"></i>
+                </span>
+                <span className="store-row-body">
+                  <span className="store-row-name">{s.name}</span>
+                  <span className="store-row-meta">
+                    <span dir="ltr">{s.slug}</span>
+                  </span>
+                </span>
+                <span className="btn btn-ghost btn-shell-dark btn-sm">
+                  إدارة المتجر
+                  <i className="fas fa-chevron-left" aria-hidden="true"></i>
+                </span>
+              </Link>
+            ))}
+          </div>
         </div>
       )}
 
@@ -412,7 +469,7 @@ export default function AdminMerchantPage({
                 {(customers ?? []).map((c) => (
                   <Link
                     key={c.id}
-                    href={`/app/admin/merchants/${encodeURIComponent(id)}/customers/${encodeURIComponent(c.id)}?store=${encodeURIComponent(storeId)}`}
+                    href={customerHref(c)}
                     className="store-row"
                   >
                     <span className="store-row-icon" aria-hidden="true">

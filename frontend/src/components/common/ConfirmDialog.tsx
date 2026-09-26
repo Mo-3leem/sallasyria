@@ -34,9 +34,11 @@ export function ConfirmDialog({
   onClose: () => void;
 }) {
   const [typed, setTyped] = useState("");
+  const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!open) return;
     setTyped("");
+    setCopied(false);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
@@ -50,6 +52,37 @@ export function ConfirmDialog({
 
   if (!open || typeof document === "undefined") return null;
   const blocked = confirming || (requireConfirmText !== undefined && typed !== requireConfirmText);
+
+  async function copyConfirmText() {
+    if (requireConfirmText === undefined || copied) return;
+    let done = false;
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(requireConfirmText);
+        done = true;
+      }
+    } catch {
+      done = false;
+    }
+    if (!done) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = requireConfirmText;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "absolute";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        done = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch {
+        return;
+      }
+    }
+    if (!done) return;
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
+  }
 
   return createPortal(
     <div
@@ -69,8 +102,26 @@ export function ConfirmDialog({
         {requireConfirmText !== undefined && (
           <div className="auth-field" style={{ marginTop: 12 }}>
             <label className="auth-label" htmlFor="confirm-retype">
-              اكتب <strong dir="ltr">{requireConfirmText}</strong> للتأكيد
+              اكتب{" "}
+              <button
+                type="button"
+                className="confirm-copy"
+                dir="ltr"
+                title="نسخ إلى الحافظة"
+                aria-label={`نسخ ${requireConfirmText} إلى الحافظة`}
+                onClick={() => void copyConfirmText()}
+              >
+                {requireConfirmText}
+                <i
+                  className={copied ? "fas fa-check" : "fas fa-copy"}
+                  aria-hidden="true"
+                ></i>
+              </button>{" "}
+              للتأكيد
             </label>
+            <span className="confirm-copy-hint" role="status">
+              {copied ? "تم النسخ — الصقه في الحقل أدناه" : "اضغط على القيمة لنسخها، ثم الصقها أدناه"}
+            </span>
             <input
               id="confirm-retype"
               className="auth-input"

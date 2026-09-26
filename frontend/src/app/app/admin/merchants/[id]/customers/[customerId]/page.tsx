@@ -12,6 +12,7 @@ import {
   NETWORK_ERROR_MESSAGE,
 } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
+import { BackButton } from "@/components/common/BackButton";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { TextField } from "@/components/auth/TextField";
@@ -51,6 +52,11 @@ function AdminCustomerBody({
   const [actionError, setActionError] = useState<string | null>(null);
 
   const base = `/app/admin/merchants/${encodeURIComponent(merchantId)}`;
+  const backQuery = searchParams.get("q") ?? "";
+  const backHref =
+    backQuery.trim() === ""
+      ? base
+      : `${base}?q=${encodeURIComponent(backQuery.trim())}`;
 
   async function load() {
     if (storeId === "") {
@@ -95,15 +101,15 @@ function AdminCustomerBody({
   if (state.kind === "missing") {
     return (
       <div className="shell-card">
-        <EmptyState
-          icon="fas fa-user-slash"
-          title="العميل غير موجود"
-          action={
-            <Link href={base} className="btn btn-primary">
-              العودة إلى التاجر
-            </Link>
-          }
-        />
+          <EmptyState
+            icon="fas fa-user-slash"
+            title="العميل غير موجود"
+            action={
+              <Link href={backHref} className="btn btn-primary">
+                العودة إلى التاجر
+              </Link>
+            }
+          />
       </div>
     );
   }
@@ -190,10 +196,11 @@ function AdminCustomerBody({
 
   return (
     <>
+      <BackButton href={backHref} label="العودة إلى التاجر" />
       <div className="shell-page-head">
         <h1>{customer.name}</h1>
         <p>
-          <Link href={base}>التاجر</Link>
+          <Link href={backHref}>التاجر</Link>
           {" / "}
           تفاصيل العميل
         </p>

@@ -823,6 +823,53 @@
   flex-shrink: 0;
 }
 
+.store-row-name .sub-badge {
+  margin-inline-start: 8px;
+  vertical-align: middle;
+}
+
+/* ---------- Admin search input (icon + clear) ---------- */.admin-search-wrap {
+  position: relative;
+}
+.admin-search-wrap > i {
+  position: absolute;
+  inset-inline-start: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--gray-3);
+  pointer-events: none;
+  font-size: 0.9rem;
+}
+.admin-search-wrap .auth-input {
+  padding-inline-start: 40px;
+  padding-inline-end: 40px;
+}
+.admin-search-clear {
+  position: absolute;
+  inset-inline-end: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--gray-3);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.admin-search-clear:hover {
+  background: var(--light);
+  color: var(--dark);
+}
+.admin-search-clear:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 /* ---------- Confirm dialog ---------- */
 .confirm-overlay {
   position: fixed;
@@ -853,6 +900,40 @@
   color: var(--gray-2);
   line-height: 1.9;
   margin-bottom: 20px;
+}
+/* Click-to-copy confirmation value (delete dialogs). */
+.confirm-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--primary-dark);
+  background: var(--primary-xlight);
+  border: 1px dashed var(--primary);
+  border-radius: 8px;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: var(--transition);
+  overflow-wrap: anywhere;
+}
+.confirm-copy:hover {
+  background: #d3f4e2;
+}
+.confirm-copy:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.confirm-copy i {
+  font-size: 0.78rem;
+}
+.confirm-copy-hint {
+  display: block;
+  font-size: 0.76rem;
+  font-weight: 400;
+  color: var(--gray-3);
+  margin-bottom: 6px;
 }
 .confirm-actions {
   display: flex;
