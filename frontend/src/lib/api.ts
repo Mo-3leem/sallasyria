@@ -747,6 +747,13 @@ export const adminApi = {
         `/admin/merchants/${encodeURIComponent(id)}`
       ),
   },
+  /** Store deletion inside merchant management (audited; merchant-scoped). */
+  merchantStores: {
+    remove: (merchantId: string, storeId: string) =>
+      api.delete<{ deleted: string }>(
+        `/admin/merchants/${encodeURIComponent(merchantId)}/stores/${encodeURIComponent(storeId)}`
+      ),
+  },
   /** Customer account management scoped to one store (audited). */
   storeCustomers: {
     list: (storeId: string, q?: string) =>

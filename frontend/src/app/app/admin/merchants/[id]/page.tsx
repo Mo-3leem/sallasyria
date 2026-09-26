@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState, type FormEvent } from "react";
+import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 import { adminApi } from "@/lib/api";
 import type { Customer, MerchantAccount, Store } from "@/types/api";
 import {
@@ -78,7 +78,14 @@ function AdminMerchantDetail({ id }: { id: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [blockedStores, setBlockedStores] = useState<Store[] | null>(null);
+  const blockedRef = useRef<HTMLDivElement | null>(null);
+
+  // Store deletion inside the blocking flow
+  const [storeConfirm, setStoreConfirm] = useState<Store | null>(null);
+  const [storeDeleting, setStoreDeleting] = useState(false);
+  const [storeMsg, setStoreMsg] = useState<{ kind: "success" | "error"; storeName: string; text: string } | null>(null);
 
   // Customers
   const [storeId, setStoreId] = useState("");
@@ -86,7 +93,7 @@ function AdminMerchantDetail({ id }: { id: string }) {
   const [customers, setCustomers] = useState<Customer[] | null>(null);
   const [customersLoading, setCustomersLoading] = useState(false);
 
-  async function load() {
+  async function load(): Promise<{ merchant: MerchantAccount; stores: Store[] } | null> {
     setState({ kind: "loading" });
     setActionError(null);
     try {
@@ -95,10 +102,10 @@ function AdminMerchantDetail({ id }: { id: string }) {
         const code = getErrorCode(res);
         if (code === "unauthorized") {
           await refreshAuth();
-          return;
+          return null;
         }
         setState({ kind: "missing" });
-        return;
+        return null;
       }
       const { merchant, stores } = res.data;
       setName(merchant.name);
@@ -107,8 +114,10 @@ function AdminMerchantDetail({ id }: { id: string }) {
       setIsActive(merchant.is_active !== 0);
       setState({ kind: "ready", merchant, stores });
       if (stores.length > 0) setStoreId((prev) => prev === "" ? stores[0]!.id : prev);
+      return { merchant, stores };
     } catch {
       setState({ kind: "missing" });
+      return null;
     }
   }
 
@@ -262,11 +271,16 @@ function AdminMerchantDetail({ id }: { id: string }) {
     }
   }
 
+  useEffect(() => {
+    if (blockedStores !== null) {
+      blockedRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [blockedStores]);
+
   async function onDelete() {
     if (deleting) return;
     setDeleting(true);
-    setActionError(null);
-    setBlockedStores(null);
+    setDeleteError(null);
     try {
       const res = await adminApi.merchants.remove(id);
       if (!res.ok) {
@@ -276,19 +290,62 @@ function AdminMerchantDetail({ id }: { id: string }) {
           return;
         }
         if (code === "merchant_has_stores") {
-          setBlockedStores(stores);
+          const fresh = await load();
+          setBlockedStores(fresh ? fresh.stores : stores);
         } else {
-          setActionError(authErrorMessage(res, 400));
+          setDeleteError(authErrorMessage(res, 400));
         }
         setConfirmDelete(false);
         return;
       }
       router.replace("/app/admin/merchants");
     } catch {
-      setActionError(NETWORK_ERROR_MESSAGE);
+      setDeleteError(NETWORK_ERROR_MESSAGE);
       setConfirmDelete(false);
     } finally {
       setDeleting(false);
+    }
+  }
+
+  function storeDeleteMessage(code: string | null, res: unknown): string {
+    if (code === "store_has_orders")
+      return "لا يمكن حذف هذا المتجر حالياً لأنه يحتوي على سجل طلبات. سجل الطلبات محفوظ ولا يُحذف — راجع طلبات المتجر أولاً.";
+    if (code === "store_has_subscriptions")
+      return "لا يمكن حذف هذا المتجر حالياً لأنه مرتبط باشتراكات. عالج الاشتراكات أولاً ثم أعد المحاولة.";
+    if (code === "store_has_dependents")
+      return "لا يمكن حذف هذا المتجر حالياً لأنه يحتوي على بيانات مرتبطة به. يجب معالجة هذه البيانات أولًا.";
+    if (code === "store_not_found")
+      return "المتجر غير موجود — ربما حُذف مسبقاً. حدّث الصفحة.";
+    return authErrorMessage(res, 400);
+  }
+
+  async function onConfirmStoreDelete() {
+    if (!storeConfirm || storeDeleting) return;
+    const target = storeConfirm;
+    setStoreDeleting(true);
+    setStoreMsg(null);
+    try {
+      const res = await adminApi.merchantStores.remove(id, target.id);
+      if (!res.ok) {
+        const code = getErrorCode(res);
+        if (code === "unauthorized") {
+          await refreshAuth();
+          return;
+        }
+        setStoreMsg({ kind: "error", storeName: target.name, text: storeDeleteMessage(code, res) });
+        setStoreConfirm(null);
+        return;
+      }
+      setStoreConfirm(null);
+      const fresh = await load();
+      const remaining = fresh ? fresh.stores : (blockedStores ?? []).filter((s) => s.id !== target.id);
+      setBlockedStores(remaining);
+      setStoreMsg({ kind: "success", storeName: target.name, text: `تم حذف متجر «${target.name}» نهائياً.` });
+    } catch {
+      setStoreMsg({ kind: "error", storeName: target.name, text: NETWORK_ERROR_MESSAGE });
+      setStoreConfirm(null);
+    } finally {
+      setStoreDeleting(false);
     }
   }
 
@@ -308,39 +365,6 @@ function AdminMerchantDetail({ id }: { id: string }) {
         <div className="shell-error" role="alert">
           <i className="fas fa-exclamation-circle" aria-hidden="true"></i>
           <span>{actionError}</span>
-        </div>
-      )}
-
-      {blockedStores !== null && blockedStores.length > 0 && (
-        <div className="shell-card" role="alert" aria-label="تعذّر حذف التاجر">
-          <h2 className="shell-card-title">تعذّر حذف التاجر</h2>
-          <p className="shell-note" style={{ marginBottom: 12 }}>
-            لا يمكن حذف «{merchant.name}» لأنه ما زال يملك {blockedStores.length.toLocaleString("ar-SY")} من المتاجر.
-            افتح كل متجر لمراجعته وإدارته، ثم أعد محاولة الحذف بعد زوال المتاجر — لا تُحذف بيانات الأعمال تلقائياً.
-          </p>
-          <div className="shell-stack">
-            {blockedStores.map((s) => (
-              <Link
-                key={s.id}
-                href={`/app/stores/${encodeURIComponent(s.id)}`}
-                className="store-row"
-              >
-                <span className="store-row-icon" aria-hidden="true">
-                  <i className="fas fa-store"></i>
-                </span>
-                <span className="store-row-body">
-                  <span className="store-row-name">{s.name}</span>
-                  <span className="store-row-meta">
-                    <span dir="ltr">{s.slug}</span>
-                  </span>
-                </span>
-                <span className="btn btn-ghost btn-shell-dark btn-sm">
-                  إدارة المتجر
-                  <i className="fas fa-chevron-left" aria-hidden="true"></i>
-                </span>
-              </Link>
-            ))}
-          </div>
         </div>
       )}
 
@@ -418,7 +442,92 @@ function AdminMerchantDetail({ id }: { id: string }) {
           <i className="fas fa-trash" aria-hidden="true"></i>
           حذف التاجر نهائياً
         </button>
+        {deleteError && (
+          <div className="shell-error" role="alert" style={{ marginTop: 12 }}>
+            <i className="fas fa-exclamation-circle" aria-hidden="true"></i>
+            <span>{deleteError}</span>
+          </div>
+        )}
       </div>
+
+      {blockedStores !== null && (
+        <div className="shell-card" ref={blockedRef} role="alert" aria-label="تعذّر حذف التاجر" tabIndex={-1}>
+          <h2 className="shell-card-title">لا يمكن حذف التاجر حاليًا</h2>
+          <p className="shell-note" style={{ marginBottom: 12 }}>
+            لا يمكن حذف هذا التاجر لأنه يمتلك متاجر مرتبطة بحسابه. احذف المتاجر المرتبطة أولًا،
+            ثم يمكنك العودة إلى هنا ومحاولة حذف التاجر مرة أخرى.
+          </p>
+          {storeMsg && storeMsg.kind === "success" && (
+            <div className="shell-success" role="status" style={{ marginBottom: 12 }}>
+              <i className="fas fa-check-circle" aria-hidden="true"></i>
+              <span>{storeMsg.text}</span>
+            </div>
+          )}
+          {storeMsg && storeMsg.kind === "error" && (
+            <div className="shell-error" role="alert" style={{ marginBottom: 12 }}>
+              <i className="fas fa-exclamation-circle" aria-hidden="true"></i>
+              <span>
+                <strong>«{storeMsg.storeName}»: </strong>
+                {storeMsg.text}
+              </span>
+            </div>
+          )}
+          {blockedStores.length === 0 ? (
+            <>
+              <p className="shell-note" style={{ marginBottom: 12 }}>
+                لا توجد متاجر مرتبطة بهذا التاجر.
+              </p>
+              <button type="button" className="btn btn-primary" onClick={() => setConfirmDelete(true)}>
+                <i className="fas fa-trash" aria-hidden="true"></i>
+                محاولة حذف التاجر مرة أخرى
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="shell-note" style={{ marginBottom: 12 }}>
+                المتاجر المرتبطة بهذا التاجر:
+              </p>
+              <div className="shell-stack">
+                {blockedStores.map((s) => (
+                  <div key={s.id} className="store-row">
+                    <span className="store-row-icon" aria-hidden="true">
+                      <i className="fas fa-store"></i>
+                    </span>
+                    <span className="store-row-body">
+                      <span className="store-row-name">
+                        {s.name}
+                        <span className={`sub-badge ${s.is_published === 1 ? "sub-badge-active" : "sub-badge-unknown"}`}>
+                          {s.is_published === 1 ? "منشور" : "مسودة"}
+                        </span>
+                      </span>
+                      <span className="store-row-meta">
+                        <span dir="ltr">{s.slug}</span>
+                      </span>
+                    </span>
+                    <span className="store-card-links">
+                      <Link
+                        href={`/app/stores/${encodeURIComponent(s.id)}`}
+                        className="btn btn-ghost btn-shell-dark btn-sm"
+                      >
+                        إدارة المتجر
+                      </Link>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-shell-dark btn-sm"
+                        disabled={storeDeleting}
+                        onClick={() => setStoreConfirm(s)}
+                      >
+                        <i className="fas fa-trash" aria-hidden="true"></i>
+                        حذف المتجر
+                      </button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="shell-card">
         <h2 className="shell-card-title">عملاء التاجر</h2>
@@ -506,6 +615,22 @@ function AdminMerchantDetail({ id }: { id: string }) {
         requireConfirmPlaceholder={confirmIdentity}
         onClose={() => setConfirmDelete(false)}
         onConfirm={onDelete}
+      />
+
+      <ConfirmDialog
+        open={storeConfirm !== null}
+        title="حذف المتجر؟"
+        description={
+          storeConfirm
+            ? `هل أنت متأكد من حذف متجر «${storeConfirm.name}»؟ لا يمكن التراجع عن هذا الإجراء. إذا كان المتجر يحتوي على طلبات أو اشتراكات، سيُرفض الحذف.`
+            : undefined
+        }
+        confirmLabel="حذف المتجر"
+        confirming={storeDeleting}
+        requireConfirmText={storeConfirm?.slug}
+        requireConfirmPlaceholder={storeConfirm?.slug}
+        onClose={() => setStoreConfirm(null)}
+        onConfirm={onConfirmStoreDelete}
       />
     </>
   );
