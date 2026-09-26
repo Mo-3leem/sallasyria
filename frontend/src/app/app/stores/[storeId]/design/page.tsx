@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { themeApi } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { categoriesApi, productsApi, themeApi } from "@/lib/api";
 import {
   authErrorMessage,
   getErrorCode,
@@ -10,12 +10,23 @@ import {
   NETWORK_ERROR_MESSAGE,
 } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
+import { useStores } from "@/hooks/useStores";
 import { BackButton } from "@/components/common/BackButton";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
-import { TextField } from "@/components/auth/TextField";
-import { FormError } from "@/components/auth/FormError";
-import type { ThemeData } from "@/lib/api";
+import { BuilderToolbar, type Viewport } from "@/components/design/BuilderToolbar";
+import { ToolsPanel } from "@/components/design/ToolsPanel";
+import { PropsPanel } from "@/components/design/PropsPanel";
+import type { Selection } from "@/components/design/selection";
+import { StoreHomeView } from "@/components/shop/StoreHomeView";
+import type { HomeSectionCategory, HomeSectionProduct } from "@/components/shop/StoreHomeSections";
+import {
+  coerceTheme,
+  DEFAULT_THEME,
+  themeToPayload,
+  type StoreTheme,
+  type ThemeSection,
+} from "@/lib/theme-design";
 
 type LoadState =
   | { kind: "loading" }
@@ -23,121 +34,10 @@ type LoadState =
   | { kind: "missing" }
   | { kind: "ready" };
 
-interface Palette {
-  primary: string;
-  background: string;
-  accent: string;
-  text: string;
-}
-
-interface DraftBanner {
-  image: string;
-  title: string;
-}
-
-interface DraftSection {
-  type: "hero" | "categories" | "products" | "banner" | "text";
-  order: number;
-  is_visible: 0 | 1;
-}
-
-interface Draft {
-  palette: Palette;
-  logo: string;
-  banners: DraftBanner[];
-  sections: DraftSection[];
-}
-
-const SECTION_TYPES = [
-  { type: "hero", label: "الواجهة" },
-  { type: "categories", label: "التصنيفات" },
-  { type: "products", label: "المنتجات" },
-  { type: "banner", label: "اللافتات" },
-  { type: "text", label: "نص ترحيبي" },
-] as const;
-
-const DEFAULT_DRAFT: Draft = {
-  palette: { primary: "#16a34a", background: "#ffffff", accent: "#22c55e", text: "#0f172a" },
-  logo: "",
-  banners: [],
-  sections: [
-    { type: "hero", order: 0, is_visible: 1 },
-    { type: "categories", order: 1, is_visible: 1 },
-    { type: "products", order: 2, is_visible: 1 },
-    { type: "banner", order: 3, is_visible: 1 },
-    { type: "text", order: 4, is_visible: 0 },
-  ],
-};
-
-const HEX_RE = /^#[0-9a-fA-F]{6}$/;
-
-function coerceDraft(raw: Record<string, unknown>): Draft {
-  const d = raw as Partial<Record<string, unknown>>;
-  const palette = (d.palette ?? {}) as Partial<Palette>;
-  const color = (v: unknown, fallback: string) =>
-    typeof v === "string" && HEX_RE.test(v) ? v : fallback;
-  const banners = Array.isArray(d.banners)
-    ? d.banners
-        .filter(
-          (b): b is Record<string, unknown> =>
-            typeof b === "object" && b !== null
-        )
-        .slice(0, 5)
-        .map((b) => ({
-          image: typeof b.image === "string" ? b.image : "",
-          title: typeof b.title === "string" ? b.title : "",
-        }))
-    : [];
-  const sections = Array.isArray(d.sections)
-    ? d.sections
-        .filter(
-          (s): s is Record<string, unknown> =>
-            typeof s === "object" && s !== null
-        )
-        .slice(0, 20)
-        .map((s, i): DraftSection => ({
-          type: (["hero", "categories", "products", "banner", "text"] as const).includes(
-            s.type as (typeof SECTION_TYPES)[number]["type"]
-          )
-            ? (s.type as DraftSection["type"])
-            : "text",
-          order: typeof s.order === "number" ? s.order : i,
-          is_visible: s.is_visible === 0 ? 0 : 1,
-        }))
-    : DEFAULT_DRAFT.sections;
-  return {
-    palette: {
-      primary: color(palette.primary, DEFAULT_DRAFT.palette.primary),
-      background: color(palette.background, DEFAULT_DRAFT.palette.background),
-      accent: color(palette.accent, DEFAULT_DRAFT.palette.accent),
-      text: color(palette.text, DEFAULT_DRAFT.palette.text),
-    },
-    logo: typeof d.logo === "string" ? d.logo : "",
-    banners,
-    sections,
-  };
-}
-
-function toPayload(draft: Draft): Record<string, unknown> {
-  return {
-    palette: { ...draft.palette },
-    logo: draft.logo === "" ? null : draft.logo,
-    banners: draft.banners.map((b) => ({
-      image: b.image,
-      ...(b.title !== "" ? { title: b.title } : {}),
-    })),
-    sections: draft.sections.map((s) => ({
-      type: s.type,
-      order: s.order,
-      is_visible: s.is_visible,
-    })),
-  };
-}
-
 /**
- * Theme designer: draft editing with debounced autosave, audited publish,
- * and signed preview tokens. Autosave sends the full draft (the backend
- * shallow-merges); the form never fabricates server state.
+ * Visual store builder: tools panel, live draft preview (shared storefront
+ * render), properties panel. Draft autosaves debounced; publish is manual
+ * and audited; guest preview opens a signed token URL in a new tab.
  */
 export default function DesignPage({
   params,
@@ -146,8 +46,9 @@ export default function DesignPage({
 }) {
   const { storeId } = params;
   const { refresh: refreshAuth } = useAuth();
+  const { stores } = useStores();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
-  const [draft, setDraft] = useState<Draft>(DEFAULT_DRAFT);
+  const [draft, setDraft] = useState<StoreTheme>(DEFAULT_THEME);
   const [savedJson, setSavedJson] = useState("");
   const [saveState, setSaveState] = useState<"saved" | "dirty" | "saving" | "error">("saved");
   const [publishedAt, setPublishedAt] = useState<string | null>(null);
@@ -156,9 +57,20 @@ export default function DesignPage({
   const [confirmPublish, setConfirmPublish] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [issuingPreview, setIssuingPreview] = useState(false);
+  const [selection, setSelection] = useState<Selection>(null);
+  const [viewport, setViewport] = useState<Viewport>("desktop");
+  const [mobilePanel, setMobilePanel] = useState<null | "tools" | "props">(null);
+  const [catalog, setCatalog] = useState<{
+    categories: HomeSectionCategory[];
+    products: HomeSectionProduct[];
+    error: boolean;
+  }>({ categories: [], products: [], error: false });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const base = `/app/stores/${encodeURIComponent(storeId)}`;
+  const store = stores.find((s) => s.id === storeId);
+  const storeName = store?.name ?? "متجرك";
+  const currency = store?.currency ?? "SYP";
 
   useEffect(() => {
     let cancelled = false;
@@ -178,9 +90,9 @@ export default function DesignPage({
           setState({ kind: "error", message: res.error.message || "تعذّر تحميل التصميم." });
           return;
         }
-        const loaded = coerceDraft(res.data.theme.draft);
+        const loaded = coerceTheme(res.data.theme.draft);
         setDraft(loaded);
-        setSavedJson(JSON.stringify(toPayload(loaded)));
+        setSavedJson(JSON.stringify(themeToPayload(loaded)));
         setPublishedAt(res.data.theme.published_at);
         setState({ kind: "ready" });
       } catch {
@@ -192,8 +104,42 @@ export default function DesignPage({
     };
   }, [storeId, refreshAuth]);
 
-  async function saveNow(current: Draft, baseline: string): Promise<boolean> {
-    const payload = toPayload(current);
+  const loadCatalog = useCallback(async () => {
+    try {
+      const [cats, prods] = await Promise.all([
+        categoriesApi.list(storeId),
+        productsApi.list(storeId),
+      ]);
+      if (!cats.ok || !prods.ok) {
+        setCatalog((c) => ({ ...c, error: true }));
+        return;
+      }
+      setCatalog({
+        categories: cats.data.categories
+          .filter((c) => c.is_active === 1)
+          .map((c) => ({ id: c.id, name: c.name, slug: c.slug })),
+        products: prods.data.products
+          .filter((p) => p.is_active === 1 && p.deleted_at === null && p.removed_at === null)
+          .map((p) => ({
+            id: p.id,
+            name: p.name,
+            slug: p.slug,
+            price: p.price,
+            stock_quantity: p.stock_quantity,
+          })),
+        error: false,
+      });
+    } catch {
+      setCatalog((c) => ({ ...c, error: true }));
+    }
+  }, [storeId]);
+
+  useEffect(() => {
+    void loadCatalog();
+  }, [loadCatalog]);
+
+  async function saveNow(current: StoreTheme, baseline: string): Promise<boolean> {
+    const payload = themeToPayload(current);
     if (JSON.stringify(payload) === baseline) return true;
     setSaveState("saving");
     setFormError(null);
@@ -207,19 +153,15 @@ export default function DesignPage({
           return false;
         }
         if (code === "subscription_inactive") {
-          setFormError(
-            "تعديل التصميم يتطلب اشتراكاً نشطاً. التفعيل يدوياً عبر إدارة المنصة."
-          );
+          setFormError("تعديل التصميم يتطلب اشتراكاً نشطاً. التفعيل يدوياً عبر إدارة المنصة.");
         } else {
           const fields = getFieldErrors(res);
-          setFormError(
-            Object.values(fields)[0] ?? authErrorMessage(res, 400)
-          );
+          setFormError(Object.values(fields)[0] ?? authErrorMessage(res, 400));
         }
         setSaveState("error");
         return false;
       }
-      setSavedJson(JSON.stringify(toPayload(coerceDraft(res.data.theme.draft))));
+      setSavedJson(JSON.stringify(themeToPayload(coerceTheme(res.data.theme.draft))));
       setSaveState("saved");
       return true;
     } catch {
@@ -229,7 +171,7 @@ export default function DesignPage({
     }
   }
 
-  function scheduleSave(next: Draft) {
+  function scheduleSave(next: StoreTheme) {
     setDraft(next);
     setSaveState("dirty");
     setNotice(null);
@@ -239,12 +181,34 @@ export default function DesignPage({
     }, 1500);
   }
 
-  useEffect(
-    () => () => {
-      if (timer.current) clearTimeout(timer.current);
-    },
-    []
-  );
+  /** All panel mutations flow through here (single autosave pipeline). */
+  function patch(mut: (d: StoreTheme) => StoreTheme) {
+    scheduleSave(mut(draft));
+  }
+
+  function moveSection(from: number, to: number) {
+    if (to < 0) return;
+    patch((d) => {
+      const sections = [...d.sections].sort((a, b) => a.order - b.order);
+      if (to >= sections.length) return d;
+      const [moved] = sections.splice(from, 1);
+      if (!moved) return d;
+      sections.splice(to, 0, moved);
+      return { ...d, sections: sections.map((s, i) => ({ ...s, order: i })) };
+    });
+  }
+
+  function updateSectionAt(index: number, mut: (s: ThemeSection) => ThemeSection) {
+    patch((d) => {
+      const current = [...d.sections].sort((a, b) => a.order - b.order);
+      const target = current[index];
+      if (!target) return d;
+      return {
+        ...d,
+        sections: d.sections.map((s) => (s === target ? mut({ ...s }) : s)),
+      };
+    });
+  }
 
   async function doPublish() {
     if (publishing) return;
@@ -262,9 +226,7 @@ export default function DesignPage({
           return;
         }
         if (code === "subscription_inactive") {
-          setFormError(
-            "النشر يتطلب اشتراكاً نشطاً. التفعيل يدوياً عبر إدارة المنصة."
-          );
+          setFormError("النشر يتطلب اشتراكاً نشطاً. التفعيل يدوياً عبر إدارة المنصة.");
           return;
         }
         setFormError(authErrorMessage(published, 400));
@@ -272,7 +234,7 @@ export default function DesignPage({
       }
       setPublishedAt(published.data.theme.published_at);
       setConfirmPublish(false);
-      setNotice("تم النشر بنجاح — متجرك يعرض التصميم الجديد الآن.");
+      setNotice("تم نشر تصميم المتجر بنجاح.");
     } catch {
       setFormError(NETWORK_ERROR_MESSAGE);
     } finally {
@@ -305,6 +267,23 @@ export default function DesignPage({
     }
   }
 
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    []
+  );
+
+  // Warn on accidental navigation with unsaved work.
+  useEffect(() => {
+    if (saveState !== "dirty" && saveState !== "saving") return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [saveState]);
+
   if (state.kind === "loading") {
     return (
       <div className="shell-loading">
@@ -316,70 +295,56 @@ export default function DesignPage({
 
   if (state.kind === "missing") {
     return (
-      <div className="shell-card">
-        <EmptyState
-          icon="fas fa-store-slash"
-          title="المتجر غير موجود أو لا تملك صلاحية الوصول إليه."
-          action={
-            <Link href="/app/stores" className="btn btn-primary">
-              العودة إلى المتاجر
-            </Link>
-          }
-        />
-      </div>
+      <>
+        <BackButton href={base} />
+        <div className="shell-card">
+          <EmptyState
+            icon="fas fa-store-slash"
+            title="المتجر غير موجود أو لا تملك صلاحية الوصول إليه."
+            action={
+              <Link href="/app/stores" className="btn btn-primary">
+                العودة إلى المتاجر
+              </Link>
+            }
+          />
+        </div>
+      </>
     );
   }
 
   if (state.kind === "error") {
     return (
-      <div className="shell-card">
-        <EmptyState
-          icon="fas fa-exclamation-triangle"
-          title="تعذّر تحميل التصميم"
-          description={state.message}
-        />
-      </div>
+      <>
+        <BackButton href={base} />
+        <div className="shell-card">
+          <EmptyState
+            icon="fas fa-exclamation-triangle"
+            title="تعذّر تحميل التصميم"
+            description={state.message}
+          />
+        </div>
+      </>
     );
   }
 
-  const saveLabel =
-    saveState === "saving"
-      ? "حفظ تلقائي..."
-      : saveState === "dirty"
-        ? "تغييرات غير محفوظة"
-        : saveState === "error"
-          ? "تعذّر الحفظ — سيُعاد تلقائياً"
-          : "محفوظ";
-
-  const setPalette = (key: keyof Palette, value: string) =>
-    scheduleSave({ ...draft, palette: { ...draft.palette, [key]: value } });
-
-  const moveSection = (index: number, delta: -1 | 1) => {
-    const target = index + delta;
-    if (target < 0 || target >= draft.sections.length) return;
-    const sections = draft.sections.map((s, i) => ({ ...s }));
-    const [moved] = sections.splice(index, 1);
-    sections.splice(target, 0, moved!);
-    sections.forEach((s, i) => {
-      s.order = i;
-    });
-    scheduleSave({ ...draft, sections });
-  };
-
-  const toggleSection = (index: number) => {
-    const sections = draft.sections.map((s, i) =>
-      i === index ? { ...s, is_visible: (s.is_visible === 1 ? 0 : 1) as 0 | 1 } : { ...s }
-    );
-    scheduleSave({ ...draft, sections });
-  };
+  const viewportWidth =
+    viewport === "mobile" ? 390 : viewport === "tablet" ? 768 : undefined;
 
   return (
-    <>
-      <BackButton href={base} />
-      <div className="shell-page-head">
-        <h1>تصميم المتجر</h1>
-        <p>خصّص الألوان واللافتات والأقسام — الحفظ تلقائي، والنشر يدوي.</p>
-      </div>
+    <div className="builder">
+      <BuilderToolbar
+        backHref={base}
+        storeName={storeName}
+        saveState={saveState}
+        viewport={viewport}
+        onViewport={setViewport}
+        onGuest={doPreview}
+        onSave={() => void saveNow(draft, savedJson)}
+        onPublish={() => setConfirmPublish(true)}
+        issuingPreview={issuingPreview}
+        publishing={publishing}
+        saving={saveState === "saving"}
+      />
 
       {formError && (
         <div className="shell-error" role="alert">
@@ -394,255 +359,106 @@ export default function DesignPage({
         </div>
       )}
 
-      <div className="shell-card">
-        <h2 className="shell-card-title">الألوان والشعار</h2>
-        <div className="shell-grid-2">
-          {(Object.keys(draft.palette) as (keyof Palette)[]).map((key) => (
-            <div className="auth-field" key={key}>
-              <label className="auth-label" htmlFor={`palette-${key}`}>
-                {key === "primary" ? "الأساسي" : key === "background" ? "الخلفية" : key === "accent" ? "المميز" : "النص"}
-              </label>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input
-                  id={`palette-${key}`}
-                  type="color"
-                  value={HEX_RE.test(draft.palette[key]) ? draft.palette[key] : "#16a34a"}
-                  onChange={(e) => setPalette(key, e.target.value)}
-                  style={{ width: 44, height: 40, border: "none", background: "none", cursor: "pointer" }}
-                  aria-label={key}
-                />
-                <input
-                  className="auth-input"
-                  dir="ltr"
-                  value={draft.palette[key]}
-                  maxLength={7}
-                  onChange={(e) => setPalette(key, e.target.value)}
-                  aria-label={`${key} hex`}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-        <div style={{ marginTop: 16 }}>
-          <TextFieldLike
-            label="رابط الشعار (اختياري)"
-            id="field-logo"
-            dir="ltr"
-            value={draft.logo}
-            onChange={(v) => scheduleSave({ ...draft, logo: v })}
+      <div className="builder-layout">
+        <aside className={`builder-tools${mobilePanel === "tools" ? " is-open" : ""}`} aria-label="أدوات التصميم">
+          <ToolsPanel
+            draft={draft}
+            selection={selection}
+            onSelect={(s) => {
+              setSelection(s);
+              setMobilePanel(null);
+            }}
+            patch={patch}
+            moveSection={moveSection}
           />
-        </div>
-      </div>
+        </aside>
 
-      <div className="shell-card">
-        <h2 className="shell-card-title">اللافتات (حتى 5)</h2>
-        {draft.banners.length === 0 && (
-          <p className="shell-note">لا توجد لافتات بعد.</p>
-        )}
-        <div className="shell-stack">
-          {draft.banners.map((b, i) => (
-            <div key={i} className="store-row">
-              <span className="store-row-icon" aria-hidden="true">
-                <i className="fas fa-image"></i>
-              </span>
-              <span className="store-row-body">
-                <span className="store-row-name" dir="ltr">{b.image || "—"}</span>
-                <span className="store-row-meta">{b.title || "بدون عنوان"}</span>
-              </span>
-              <span className="store-card-links">
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-shell-dark btn-sm"
-                  onClick={() =>
-                    scheduleSave({
-                      ...draft,
-                      banners: draft.banners.filter((_, j) => j !== i),
-                    })
-                  }
-                >
-                  حذف
-                </button>
-              </span>
+        <div className="builder-preview-wrap">
+          {catalog.error ? (
+            <div className="shell-card">
+              <EmptyState
+                icon="fas fa-exclamation-triangle"
+                title="تعذّر تحميل بيانات المعاينة"
+                description="يمكنك تعديل التصميم، لكن المعاينة تحتاج بيانات المتجر."
+                action={
+                  <button type="button" className="btn btn-outline" onClick={() => void loadCatalog()}>
+                    إعادة المحاولة
+                  </button>
+                }
+              />
             </div>
-          ))}
-        </div>
-        {draft.banners.length < 5 && (
-          <BannerAdder
-            onAdd={(banner) =>
-              scheduleSave({ ...draft, banners: [...draft.banners, banner] })
-            }
-          />
-        )}
-      </div>
-
-      <div className="shell-card">
-        <h2 className="shell-card-title">الأقسام</h2>
-        <div className="shell-stack">
-          {draft.sections.map((s, i) => (
-            <div key={`${s.type}-${i}`} className="store-row">
-              <span className="store-row-body">
-                <span className="store-row-name">
-                  {SECTION_TYPES.find((t) => t.type === s.type)?.label ?? s.type}
-                </span>
-                <span className="store-row-meta">
-                  {s.is_visible === 1 ? "ظاهر" : "مخفي"}
-                </span>
-              </span>
-              <span className="store-card-links">
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-shell-dark btn-sm"
-                  disabled={i === 0}
-                  onClick={() => moveSection(i, -1)}
-                  aria-label="تحريك للأعلى"
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-shell-dark btn-sm"
-                  disabled={i === draft.sections.length - 1}
-                  onClick={() => moveSection(i, 1)}
-                  aria-label="تحريك للأسفل"
-                >
-                  ↓
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-shell-dark btn-sm"
-                  onClick={() => toggleSection(i)}
-                >
-                  {s.is_visible === 1 ? "إخفاء" : "إظهار"}
-                </button>
-              </span>
+          ) : (
+            <div
+              className={`builder-preview is-${viewport}`}
+              style={viewportWidth ? { maxWidth: viewportWidth } : undefined}
+            >
+              <StoreHomeView
+                storeName={storeName}
+                currency={currency}
+                categories={catalog.categories}
+                products={catalog.products}
+                theme={draft}
+                selectable
+                selection={selection}
+                onSelect={(k) => setSelection(k as Selection)}
+              />
             </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="shell-card">
-        <h2 className="shell-card-title">النشر والمعاينة</h2>
-        <p className="shell-note" style={{ marginBottom: 12 }}>
-          الحالة: {saveLabel}
-          {publishedAt && (
-            <>
-              {" · "}آخر نشر: {new Date(publishedAt).toLocaleDateString("ar-SY")}
-            </>
           )}
-        </p>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={publishing}
-            onClick={() => setConfirmPublish(true)}
-          >
-            {publishing ? "جاري النشر..." : "نشر التصميم"}
-          </button>
-          <button
-            type="button"
-            className="btn btn-outline"
-            disabled={issuingPreview}
-            onClick={doPreview}
-          >
-            {issuingPreview ? "جاري..." : "معاينة المسودة"}
-          </button>
+          <p className="builder-preview-hint">
+            {publishedAt ? `آخر نشر: ${publishedAt}` : "لم يُنشر أي تصميم بعد — الزوار يرون الواجهة الافتراضية."}
+          </p>
         </div>
+
+        <aside className={`builder-props${mobilePanel === "props" ? " is-open" : ""}`} aria-label="خصائص العنصر">
+          <PropsPanel
+            draft={draft}
+            selection={selection}
+            onSelect={setSelection}
+            patch={patch}
+            moveSection={moveSection}
+            updateSectionAt={updateSectionAt}
+          />
+        </aside>
       </div>
+
+      <div className="builder-mobile-bar">
+        <button
+          type="button"
+          className="btn btn-outline btn-sm"
+          aria-expanded={mobilePanel === "tools"}
+          onClick={() => setMobilePanel((p) => (p === "tools" ? null : "tools"))}
+        >
+          <i className="fas fa-sliders-h" aria-hidden="true"></i>
+          الأدوات
+        </button>
+        <button
+          type="button"
+          className="btn btn-outline btn-sm"
+          aria-expanded={mobilePanel === "props"}
+          onClick={() => setMobilePanel((p) => (p === "props" ? null : "props"))}
+        >
+          <i className="fas fa-cog" aria-hidden="true"></i>
+          الخصائص
+        </button>
+      </div>
+
+      {mobilePanel !== null && (
+        <div
+          className="builder-scrim"
+          aria-hidden="true"
+          onClick={() => setMobilePanel(null)}
+        />
+      )}
 
       <ConfirmDialog
         open={confirmPublish}
         title="نشر التصميم؟"
         description="سيظهر التصميم الحالي لجميع الزوار فوراً، وتُلغى روابط المعاينة السابقة."
-        confirmLabel="نشر"
+        confirmLabel="نشر التصميم"
         confirming={publishing}
         onClose={() => setConfirmPublish(false)}
         onConfirm={doPublish}
       />
-    </>
-  );
-}
-
-function TextFieldLike(props: {
-  label: string;
-  id: string;
-  dir?: string;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <div className="auth-field">
-      <label className="auth-label" htmlFor={props.id}>
-        {props.label}
-      </label>
-      <input
-        id={props.id}
-        dir={props.dir}
-        className="auth-input"
-        value={props.value}
-        maxLength={2048}
-        onChange={(e) => props.onChange(e.target.value)}
-      />
     </div>
-  );
-}
-
-function BannerAdder(props: { onAdd: (b: { image: string; title: string }) => void }) {
-  const [image, setImage] = useState("");
-  const [title, setTitle] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <div style={{ marginTop: 12 }}>
-      <div className="auth-field">
-        <label className="auth-label" htmlFor="banner-image">رابط صورة اللافتة (https)</label>
-        <input
-          id="banner-image"
-          dir="ltr"
-          className="auth-input"
-          value={image}
-          maxLength={2048}
-          onChange={(e) => {
-            setImage(e.target.value);
-            setError(null);
-          }}
-        />
-      </div>
-      <div className="auth-field" style={{ marginTop: 8 }}>
-        <label className="auth-label" htmlFor="banner-title">عنوان اللافتة (اختياري)</label>
-        <input
-          id="banner-title"
-          className="auth-input"
-          value={title}
-          maxLength={200}
-          onChange={(e) => setTitle(e.target.value)}
-        />
-      </div>
-      {error && <FieldErrorLike message={error} />}
-      <button
-        type="button"
-        className="btn btn-outline btn-sm"
-        style={{ marginTop: 8 }}
-        onClick={() => {
-          if (!image.trim().startsWith("https://")) {
-            setError("الرابط يجب أن يبدأ بـ https://");
-            return;
-          }
-          props.onAdd({ image: image.trim(), title: title.trim() });
-          setImage("");
-          setTitle("");
-          setError(null);
-        }}
-      >
-        إضافة اللافتة
-      </button>
-    </div>
-  );
-}
-
-function FieldErrorLike(props: { message: string }) {
-  return (
-    <p className="auth-field-error" role="alert">
-      {props.message}
-    </p>
   );
 }

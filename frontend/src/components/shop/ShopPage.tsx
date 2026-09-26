@@ -5,8 +5,11 @@ import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useBuyer } from "@/hooks/useBuyer";
+import { useAuth } from "@/hooks/useAuth";
 import { useCart } from "@/hooks/useCart";
 import { useStorefront } from "@/hooks/useStorefront";
+import { coerceTheme } from "@/lib/theme-design";
+import { themeCssVars, themeFont } from "@/components/shop/StoreHomeSections";
 import { EmptyState } from "@/components/common/EmptyState";
 import type { PublicCategory, PublicProduct, PublicStore } from "@/lib/api";
 
@@ -14,6 +17,7 @@ export interface ShopReady {
   store: PublicStore;
   categories: PublicCategory[];
   products: PublicProduct[];
+  theme: Record<string, unknown> | null;
 }
 
 /**
@@ -124,29 +128,47 @@ export function ShopPage({
 
   const count = countFor(slug);
   const buyer = buyerFor(slug);
+  // Published theme drives header/footer presentation only; buyer menu,
+  // cart, and auth behavior below are untouched.
+  const theme = coerceTheme(state.kind === "ready" ? state.theme : null);
+  const themeVars = { ...themeCssVars(theme), ...themeFont(theme) };
 
   return (
     <>
-      <header className="shop-header">
+      <header
+        className="shop-header"
+        style={{
+          ...themeVars,
+          ...(theme.header.background ? { background: theme.header.background } : {}),
+        }}
+      >
         <div className="shop-header-inner">
           <Link href={`/s/${encodeURIComponent(slug)}`} className="shop-brand">
-            <span className="logo-icon" aria-hidden="true">
-              <i className="fas fa-shopping-bag"></i>
-            </span>
-            {state.store.name}
+            {theme.logo ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={theme.logo} alt={state.store.name} className="logo-icon" aria-hidden="true" />
+            ) : (
+              <span className="logo-icon" aria-hidden="true">
+                <i className="fas fa-shopping-bag"></i>
+              </span>
+            )}
+            {theme.header.show_name === 1 && state.store.name}
           </Link>
-          <nav className="shop-nav" aria-label="أقسام المتجر">
-            {state.categories.slice(0, 5).map((c) => (
-              <Link
-                key={c.id}
-                href={`/s/${encodeURIComponent(slug)}/c/${encodeURIComponent(c.slug)}`}
-              >
-                {c.name}
-              </Link>
-            ))}
-          </nav>
-          {buyer ? (
-            <div className="shop-user-wrap" ref={menuRef}>
+          {theme.header.show_nav === 1 && (
+            <nav className="shop-nav" aria-label="أقسام المتجر">
+              {state.categories.slice(0, 5).map((c) => (
+                <Link
+                  key={c.id}
+                  href={`/s/${encodeURIComponent(slug)}/c/${encodeURIComponent(c.slug)}`}
+                >
+                  {c.name}
+                </Link>
+              ))}
+            </nav>
+          )}
+          {theme.header.show_account === 1 &&
+            (buyer ? (
+              <div className="shop-user-wrap" ref={menuRef}>
               <button
                 type="button"
                 className="shop-account-link shop-account-trigger"
@@ -200,21 +222,23 @@ export function ShopPage({
               <i className="fas fa-user" aria-hidden="true"></i>
               دخول
             </Link>
+          ))}
+          {theme.header.show_cart === 1 && (
+            <Link
+              href={`/s/${encodeURIComponent(slug)}/checkout`}
+              className="shop-cart-link"
+              aria-label={`السلة (${count})`}
+            >
+              <i className="fas fa-shopping-cart" aria-hidden="true"></i>
+              السلة
+              {count > 0 && (
+                <span className="shop-cart-count">{count.toLocaleString("ar-SY")}</span>
+              )}
+            </Link>
           )}
-          <Link
-            href={`/s/${encodeURIComponent(slug)}/checkout`}
-            className="shop-cart-link"
-            aria-label={`السلة (${count})`}
-          >
-            <i className="fas fa-shopping-cart" aria-hidden="true"></i>
-            السلة
-            {count > 0 && (
-              <span className="shop-cart-count">{count.toLocaleString("ar-SY")}</span>
-            )}
-          </Link>
         </div>
       </header>
-      <main className="shop-main">
+      <main className="shop-main" style={themeVars}>
         {title && (
           <div className="shop-hero">
             <h1>{title}</h1>
@@ -224,11 +248,22 @@ export function ShopPage({
           store: state.store,
           categories: state.categories,
           products: state.products,
+          theme: state.theme,
         })}
       </main>
-      <footer className="shop-footer">
-        {state.store.name} · {state.store.currency} · تسوق آمن
-      </footer>
+      {theme.footer.visible === 1 && (
+        <footer
+          className="shop-footer"
+          style={{
+            ...themeVars,
+            ...(theme.footer.background ? { background: theme.footer.background } : {}),
+          }}
+        >
+          {theme.footer.text !== ""
+            ? theme.footer.text
+            : `${state.store.name} · ${state.store.currency} · تسوق آمن`}
+        </footer>
+      )}
     </>
   );
 }

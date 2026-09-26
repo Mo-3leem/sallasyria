@@ -17,6 +17,7 @@ import {
   listPublishedCategories,
   listPublishedProducts,
 } from "../services/storefront.js";
+import { getTheme } from "../services/theme.js";
 
 export const storefront = new OpenAPIHono<AppEnv>();
 
@@ -96,13 +97,23 @@ const storeProfileRoute = createRoute({
   method: "get",
   path: "/:storeId/catalog/store",
   summary: "Published store profile",
-  description: "Name/slug/currency of a published store. Drafts 404.",
+  description:
+    "Name/slug/currency of a published store plus its published theme " +
+    "snapshot (null when never published). Drafts 404; draft data never " +
+    "serializes here.",
   middleware: [resolvePublishedStore, limitPublicMutations],
   request: { params: z.object({ storeId: storeIdParam }) },
   responses: {
     200: {
       content: {
-        "application/json": { schema: okOf(z.object({ store: publicStoreSchema })) },
+        "application/json": {
+          schema: okOf(
+            z.object({
+              store: publicStoreSchema,
+              theme: z.record(z.string(), z.unknown()).nullable(),
+            })
+          ),
+        },
       },
       description: "Published store profile",
     },
@@ -115,7 +126,8 @@ storefront.openapi(storeProfileRoute, async (c) => {
   const { storeId } = storeScope(c);
   const store = await getPublicStore(getDb(c), storeId);
   if (!store) throw new AppError("store_not_found", 404, "Store not found.");
-  return ok(c, { store });
+  const themed = await getTheme(getDb(c), storeId);
+  return ok(c, { store, theme: themed?.published_snapshot ?? null });
 }, validationHook);
 
 const categoriesRoute = createRoute({
