@@ -158,6 +158,12 @@ function AdminMerchantDetail({ id }: { id: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeId, customerQuery]);
 
+  useEffect(() => {
+    if (blockedStores !== null) {
+      blockedRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [blockedStores]);
+
   if (state.kind === "loading") {
     return (
       <div className="shell-loading">
@@ -270,12 +276,6 @@ function AdminMerchantDetail({ id }: { id: string }) {
       setPwWorking(false);
     }
   }
-
-  useEffect(() => {
-    if (blockedStores !== null) {
-      blockedRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
-  }, [blockedStores]);
 
   async function onDelete() {
     if (deleting) return;
