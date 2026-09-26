@@ -95,6 +95,27 @@ export async function createCategory(
   if (!(await categoryInStore(db, storeId, parentId))) {
     throw new AppError("parent_not_found", 404, "Parent category not found.");
   }
+  // Append position: when the caller omits sort_order, the category goes to
+  // the end of its own sibling list (roots or this parent's children).
+  // Explicit values are still honored (drag-and-drop persistence, imports).
+  let sortOrder = input.sort_order;
+  if (sortOrder === undefined) {
+    const maxRow =
+      parentId === null
+        ? await db
+            .prepare(
+              "SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM categories WHERE store_id = ? AND parent_id IS NULL"
+            )
+            .bind(storeId)
+            .first<{ max_order: number }>()
+        : await db
+            .prepare(
+              "SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM categories WHERE store_id = ? AND parent_id = ?"
+            )
+            .bind(storeId, parentId)
+            .first<{ max_order: number }>();
+    sortOrder = (maxRow?.max_order ?? -1) + 1;
+  }
   const id = uuidv7();
   try {
     await db
@@ -102,7 +123,7 @@ export async function createCategory(
         `INSERT INTO categories (id, store_id, parent_id, name, slug, sort_order, is_active, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .bind(id, storeId, parentId, input.name, input.slug, input.sort_order ?? 0, input.is_active ?? 1, nowIso, nowIso)
+      .bind(id, storeId, parentId, input.name, input.slug, sortOrder, input.is_active ?? 1, nowIso, nowIso)
       .run();
   } catch (err) {
     mapCatalogError(err, "slug_taken");

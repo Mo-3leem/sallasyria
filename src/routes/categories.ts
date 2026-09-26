@@ -37,7 +37,9 @@ const categorySchema = z.object({
   name: z.string().min(1).max(200),
   slug: slugSchema,
   parent_id: z.string().min(1).nullable().default(null),
-  sort_order: z.number().int().default(0),
+  // Omitted sort_order appends to the sibling list (service computes
+  // MAX+1); explicit values are still honored for reordering/imports.
+  sort_order: z.number().int().optional(),
   is_active: z.union([z.literal(0), z.literal(1)]).default(1),
 });
 
@@ -133,6 +135,7 @@ const createCategoryRoute = createRoute({
   summary: "Create a category",
   description:
     "Slug must be unique per store and lowercase dashed; an optional parent must belong to the same store. " +
+    "Omitted sort_order appends the category to the end of its sibling list. " +
     "409 when the slug is taken.",
   middleware: [...mutating],
   request: {

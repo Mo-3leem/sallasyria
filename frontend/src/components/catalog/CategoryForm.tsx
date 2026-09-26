@@ -10,7 +10,6 @@ export interface CategoryFormValues {
   name: string;
   slug: string;
   parent_id: string | null;
-  sort_order: number;
   is_active: 0 | 1;
 }
 
@@ -18,6 +17,8 @@ export interface CategoryFormValues {
  * Shared category create/edit form. Parent options come from props (same
  * store, provided by the page). The edited category itself is excluded by
  * the caller to prevent self-parenting in the UI (backend re-checks).
+ * Ordering is visual (drag and drop on the list page): new categories are
+ * appended automatically, so there is no numeric ordering field.
  */
 export function CategoryForm({
   initial,
@@ -41,7 +42,6 @@ export function CategoryForm({
   const [name, setName] = useState(initial.name);
   const [slug, setSlug] = useState(initial.slug);
   const [parentId, setParentId] = useState<string>(initial.parent_id ?? "");
-  const [sortOrder, setSortOrder] = useState(String(initial.sort_order));
   const [isActive, setIsActive] = useState<boolean>(initial.is_active === 1);
   const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
 
@@ -61,15 +61,12 @@ export function CategoryForm({
     if (name.trim().length > 200) local.name = "الاسم طويل جداً (200 حرف كحد أقصى).";
     if (!isValidSlug(slug.trim()))
       local.slug = "الرابط غير صالح: حروف صغيرة وأرقام وشرطات فقط.";
-    const sort = Number(sortOrder);
-    if (!Number.isInteger(sort)) local.sort_order = "الترتيب يجب أن يكون رقماً صحيحاً.";
     setLocalErrors(local);
     if (Object.keys(local).length > 0) return;
     onSubmit({
       name: name.trim(),
       slug: slug.trim(),
       parent_id: parentId === "" ? null : parentId,
-      sort_order: sort,
       is_active: isActive ? 1 : 0,
     });
   }
@@ -123,19 +120,6 @@ export function CategoryForm({
           ))}
         </select>
       </div>
-      <TextField
-        label="الترتيب"
-        id="field-sort"
-        dir="ltr"
-        inputMode="numeric"
-        value={sortOrder}
-        onChange={(e) => {
-          setSortOrder(e.target.value);
-          clearLocal("sort_order");
-        }}
-        error={err("sort_order")}
-        hint="رقم صحيح لترتيب العرض."
-      />
       <label className="auth-check">
         <input
           type="checkbox"
