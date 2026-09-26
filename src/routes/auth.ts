@@ -177,7 +177,7 @@ auth.openapi(registerRoute, async (c) => {
     const issued = await issueEmailToken(getDb(c), user.id, "verify", VERIFY_TOKEN_TTL_MS);
     const msg = buildVerificationEmail(
       user.name,
-      `${appUrl(c.env)}/verify-email?token=${issued.token}`,
+      `${appUrl(c.env)}/auth/verify-email?token=${issued.token}`,
       issued.token
     );
     dispatchMail(
@@ -331,7 +331,7 @@ auth.openapi(resendVerificationRoute, async (c) => {
     const issued = await issueEmailToken(getDb(c), user.id, "verify", VERIFY_TOKEN_TTL_MS);
     const msg = buildVerificationEmail(
       user.name,
-      `${appUrl(c.env)}/verify-email?token=${issued.token}`,
+      `${appUrl(c.env)}/auth/verify-email?token=${issued.token}`,
       issued.token
     );
     dispatchMail(
@@ -390,7 +390,7 @@ auth.openapi(forgotPasswordRoute, async (c) => {
       const issued = await issueEmailToken(getDb(c), found.id, "reset", RESET_TOKEN_TTL_MS);
       const msg = buildResetEmail(
         found.name,
-        `${appUrl(c.env)}/reset-password?token=${issued.token}`,
+        `${appUrl(c.env)}/auth/reset-password?token=${issued.token}`,
         issued.token
       );
       dispatchMail(
