@@ -597,6 +597,80 @@
   flex-direction: column;
   gap: 12px;
 }
+
+/* ---------- Sortable categories (list page only, .cat-* scope) ---------- */
+.cat-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cat-child {
+  margin-inline-start: 32px;
+}
+.cat-row {
+  flex-wrap: wrap;
+}
+.cat-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  color: var(--gray-3);
+  cursor: grab;
+  touch-action: none;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+}
+.cat-handle:active {
+  cursor: grabbing;
+}
+.cat-handle[draggable="false"] {
+  opacity: 0.35;
+  cursor: default;
+}
+.cat-row-dragging {
+  opacity: 0.45;
+}
+.cat-row-drop {
+  outline: 2px dashed var(--primary);
+  outline-offset: -2px;
+  border-color: var(--primary);
+}
+.cat-movers {
+  display: none;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.cat-end-drop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+  border: 2px dashed var(--gray-5);
+  border-radius: var(--radius-lg);
+  color: var(--gray-3);
+  font-size: 0.82rem;
+}
+.cat-end-drop.is-over {
+  border-color: var(--primary);
+  background: var(--primary-xlight);
+  color: var(--primary-dark);
+}
+/* Touch: native drag-and-drop is pointer-only, so movers take over. */
+@media (pointer: coarse) {
+  .cat-handle {
+    display: none;
+  }
+  .cat-movers {
+    display: inline-flex;
+  }
+}
+@media (max-width: 560px) {
+  .cat-child {
+    margin-inline-start: 20px;
+  }
+}
 .plan-price {
   font-size: 0.85rem;
   color: var(--gray-1);

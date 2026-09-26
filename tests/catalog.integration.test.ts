@@ -187,8 +187,7 @@ describe("B4 categories", () => {
     expect(selfParent.status).toBe(400);
   });
 
-  it("parent/child cycle is rejected", async () => {
-    const p = (await api(`${A}/categories`, {
+  it("parent/child cycle is rejected", async () => {    const p = (await api(`${A}/categories`, {
       method: "POST",
       body: JSON.stringify({ name: "Cycle P", slug: "cycle-p" }),
     }, jarA).then((r) => (r.body as { data: { category: { id: string } } }).data.category));
@@ -205,6 +204,59 @@ describe("B4 categories", () => {
       ok: false,
       error: { code: "invalid_parent", message: expect.any(String) },
     });
+  });
+
+  it("create without sort_order appends to the sibling list", async () => {
+    async function createCat(body: unknown) {
+      const res = await api(`${A}/categories`, { method: "POST", body: JSON.stringify(body) }, jarA);
+      expect(res.status).toBe(201);
+      return (res.body as { data: { category: { id: string; sort_order: number; parent_id: string | null } } }).data.category;
+    }
+    const r1 = await createCat({ name: "Append One", slug: "append-one" });
+    const r2 = await createCat({ name: "Append Two", slug: "append-two" });
+    expect(r2.sort_order).toBeGreaterThan(r1.sort_order);
+    const ch1 = await createCat({ name: "Append Child 1", slug: "append-child-1", parent_id: r1.id });
+    const ch2 = await createCat({ name: "Append Child 2", slug: "append-child-2", parent_id: r1.id });
+    expect(ch2.sort_order).toBeGreaterThan(ch1.sort_order);
+    // Explicit values are still honored.
+    const ex = await createCat({ name: "Append Explicit", slug: "append-explicit", sort_order: -5 });
+    expect(ex.sort_order).toBe(-5);
+  });
+
+  it("reorder via sort_order PATCH persists list order; parents untouched", async () => {
+    async function createCat(slug: string) {
+      const res = await api(`${A}/categories`, { method: "POST", body: JSON.stringify({ name: slug, slug }) }, jarA);
+      expect(res.status).toBe(201);
+      return (res.body as { data: { category: { id: string } } }).data.category;
+    }
+    const a = await createCat("ord-a");
+    const b = await createCat("ord-b");
+    const c = await createCat("ord-c");
+    for (const [id, sort] of [[c.id, 0], [b.id, 1], [a.id, 2]] as const) {
+      const patched = await api(`${A}/categories/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ sort_order: sort }),
+      }, jarA);
+      expect(patched.status).toBe(200);
+      expect((patched.body as { data: { category: { parent_id: string | null } } }).data.category.parent_id).toBeNull();
+    }
+    const listed = await api(`${A}/categories`, {}, jarA);
+    const slugs = ((listed.body as { data: { categories: { slug: string }[] } }).data.categories)
+      .map((cat) => cat.slug)
+      .filter((slug) => slug.startsWith("ord-"));
+    expect(slugs).toEqual(["ord-c", "ord-b", "ord-a"]);
+  });
+
+  it("cross-store reorder is 404 and changes nothing", async () => {
+    const before = await api(`${B}/categories/cat_verify_b4c_b`, {}, jarB);
+    const beforeOrder = (before.body as { data: { category: { sort_order: number } } }).data.category.sort_order;
+    const patch = await api(`${A}/categories/cat_verify_b4c_b`, {
+      method: "PATCH",
+      body: JSON.stringify({ sort_order: 999 }),
+    }, jarA);
+    expect(patch.status).toBe(404);
+    const after = await api(`${B}/categories/cat_verify_b4c_b`, {}, jarB);
+    expect((after.body as { data: { category: { sort_order: number } } }).data.category.sort_order).toBe(beforeOrder);
   });
 
   it("cross-store category access is 404 and side-effect free", async () => {

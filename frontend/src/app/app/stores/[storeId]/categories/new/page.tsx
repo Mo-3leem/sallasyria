@@ -124,7 +124,7 @@ export default function NewCategoryPage({
           </div>
         )}
         <CategoryForm
-          initial={{ name: "", slug: "", parent_id: null, sort_order: 0, is_active: 1 }}
+          initial={{ name: "", slug: "", parent_id: null, is_active: 1 }}
           parents={parents}
           submitLabel="إنشاء التصنيف"
           submitting={submitting}

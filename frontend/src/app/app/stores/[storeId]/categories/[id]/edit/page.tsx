@@ -92,13 +92,11 @@ export default function EditCategoryPage({
       name?: string;
       slug?: string;
       parent_id?: string | null;
-      sort_order?: number;
       is_active?: 0 | 1;
     } = {};
     if (values.name !== state.category.name) diff.name = values.name;
     if (values.slug !== state.category.slug) diff.slug = values.slug;
     if (values.parent_id !== state.category.parent_id) diff.parent_id = values.parent_id;
-    if (values.sort_order !== state.category.sort_order) diff.sort_order = values.sort_order;
     if (values.is_active !== state.category.is_active) diff.is_active = values.is_active;
     if (Object.keys(diff).length === 0) {
       setNoChanges(true);
@@ -218,12 +216,11 @@ export default function EditCategoryPage({
           </div>
         )}
         <CategoryForm
-          key={`${state.category.id}:${state.category.name}:${state.category.slug}:${state.category.parent_id}:${state.category.sort_order}:${state.category.is_active}`}
+          key={`${state.category.id}:${state.category.name}:${state.category.slug}:${state.category.parent_id}:${state.category.is_active}`}
           initial={{
             name: state.category.name,
             slug: state.category.slug,
             parent_id: state.category.parent_id,
-            sort_order: state.category.sort_order,
             is_active: state.category.is_active === 1 ? 1 : 0,
           }}
           parents={state.parents}
