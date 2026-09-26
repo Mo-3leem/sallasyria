@@ -25,7 +25,6 @@ export function StoreHomeView({
   selectable = false,
   selection = null,
   onSelect,
-  notice,
 }: {
   storeName: string;
   currency: string;
@@ -35,7 +34,6 @@ export function StoreHomeView({
   selectable?: boolean;
   selection?: string | null;
   onSelect?: (key: string) => void;
-  notice?: string;
 }) {
   const h = theme.header;
   const cssVars: CSSProperties = { ...themeCssVars(theme), ...themeFont(theme) };
@@ -47,12 +45,6 @@ export function StoreHomeView({
 
   return (
     <div className="shop" style={cssVars}>
-      {notice && (
-        <div className="shell-notice" role="status" style={{ borderRadius: 0 }}>
-          <i className="fas fa-eye" aria-hidden="true"></i>
-          <span>{notice}</span>
-        </div>
-      )}
       <header
         className={`shop-header${selected("header") ? " builder-pick is-selected" : ""}`}
         style={h.background ? { background: h.background } : undefined}

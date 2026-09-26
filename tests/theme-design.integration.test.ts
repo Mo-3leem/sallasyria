@@ -236,13 +236,63 @@ describe("theme publish + public exposure", () => {
   });
 
   it("preview token renders the current draft; unknown tokens 404", async () => {
+    const marker = `draft-${Date.now().toString(36)}`;
+    const patched = await api(`/stores/${A}/theme`, {
+      method: "PATCH",
+      body: JSON.stringify({ footer: { visible: 1, text: marker } }),
+    }, jarA);
+    expect(patched.status).toBe(200);
     const issued = await api(`/stores/${A}/theme/preview`, { method: "POST" }, jarA);
     expect(issued.status).toBe(200);
     const token = (issued.body as { data: { token: string } }).data.token;
     const rendered = await api(`/s/preview/${token}`, {});
     expect(rendered.status).toBe(200);
-    expect((rendered.body as { data: { store: { id: string } } }).data.store.id).toBe(A);
+    const payload = rendered.body as {
+      data: { store: { id: string }; theme: { draft: { footer: { text: string } } } };
+    };
+    expect(payload.data.store.id).toBe(A);
+    // Guest preview serves the CURRENT draft, not the published snapshot.
+    expect(payload.data.theme.draft.footer.text).toBe(marker);
     const ghost = await api(`/s/preview/${"0".repeat(43)}`, {});
     expect(ghost.status).toBe(404);
+  });
+
+  it("published background color survives the full pipeline; later drafts do not leak", async () => {
+    const publishedBg = "#123456";
+    const draftBg = "#654321";
+    // 1-3. Builder control -> draft -> save.
+    const saved = await api(`/stores/${A}/theme`, {
+      method: "PATCH",
+      body: JSON.stringify({ palette: { background: publishedBg } }),
+    }, jarA);
+    expect(saved.status).toBe(200);
+    expect(
+      ((saved.body as ThemeBody).data.theme.draft as { palette: { background: string } }).palette.background
+    ).toBe(publishedBg);
+    // 4. Publish copies it into the snapshot.
+    const published = await api(`/stores/${A}/theme/publish`, { method: "POST" }, jarA);
+    expect(published.status).toBe(200);
+    // 5-6. Public storefront API returns it; the storefront theme mapping
+    // receives the identical value (same field, palette.background).
+    const pub = await api(`/stores/${A}/catalog/store`, {});
+    expect(pub.status).toBe(200);
+    const pubTheme = (pub.body as { data: { theme: { palette: { background: string } } } }).data.theme;
+    expect(pubTheme.palette.background).toBe(publishedBg);
+    // 7. A newer unsaved-for-visitors draft does not move the published value.
+    await api(`/stores/${A}/theme`, {
+      method: "PATCH",
+      body: JSON.stringify({ palette: { background: draftBg } }),
+    }, jarA);
+    const pub2 = await api(`/stores/${A}/catalog/store`, {});
+    expect(
+      (pub2.body as { data: { theme: { palette: { background: string } } } }).data.theme.palette.background
+    ).toBe(publishedBg);
+    // And the guest preview follows the new draft, not the published value.
+    const issued = await api(`/stores/${A}/theme/preview`, { method: "POST" }, jarA);
+    const token = (issued.body as { data: { token: string } }).data.token;
+    const rendered = await api(`/s/preview/${token}`, {});
+    expect(
+      (rendered.body as { data: { theme: { draft: { palette: { background: string } } } } }).data.theme.draft.palette.background
+    ).toBe(draftBg);
   });
 });

@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { previewApi, type PreviewPayload } from "@/lib/api";
 import { NETWORK_ERROR_MESSAGE } from "@/lib/auth-errors";
 import { EmptyState } from "@/components/common/EmptyState";
-import { StoreHomeView } from "@/components/shop/StoreHomeView";
+import { ShopShell } from "@/components/shop/ShopPage";
+import { StoreHomeSections } from "@/components/shop/StoreHomeSections";
 import { coerceTheme } from "@/lib/theme-design";
 
 type LoadState =
@@ -14,11 +15,11 @@ type LoadState =
   | { kind: "ready"; payload: PreviewPayload };
 
 /**
- * Draft preview: token-gated public render of the CURRENT draft through the
- * shared storefront view (pixel-consistent with the live storefront by
- * construction). Unknown/expired tokens share one 404. noindex + no-store
- * safe: this page carries no crawler links and previews are never linked
- * publicly. No buyer state, no merchant identity, no editing controls.
+ * Draft guest preview: the exact storefront shell (header, buyer menu,
+ * cart, footer, responsive behavior) fed with token payload data and the
+ * CURRENT draft theme. Same components as the real storefront — only the
+ * theme source differs. No builder controls, no merchant identity, and no
+ * preview banner of any kind. Unknown/expired tokens share one 404.
  */
 export default function PreviewPage({
   params,
@@ -96,13 +97,25 @@ export default function PreviewPage({
 
   const { store, theme, categories, products } = state.payload;
   return (
-    <StoreHomeView
-      storeName={store.name}
-      currency={store.currency}
-      categories={categories}
-      products={products}
-      theme={coerceTheme(theme.draft)}
-      notice="معاينة مسودة — هكذا سيراها الزوار بعد النشر (صالحة ١٥ دقيقة)."
-    />
+    <ShopShell
+      slug={store.slug}
+      ready={{
+        store: { id: store.id, slug: store.slug, name: store.name, currency: store.currency },
+        categories,
+        products,
+        theme: theme.draft,
+      }}
+    >
+      {() => (
+        <StoreHomeSections
+          slug={store.slug}
+          storeName={store.name}
+          categories={categories}
+          products={products}
+          theme={coerceTheme(theme.draft)}
+          live
+        />
+      )}
+    </ShopShell>
   );
 }

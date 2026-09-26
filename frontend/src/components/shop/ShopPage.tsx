@@ -35,6 +35,80 @@ export function ShopPage({
   children: (ready: ShopReady) => ReactNode;
 }) {
   const { state, reload } = useStorefront(slug);
+
+  if (state.kind === "loading") {
+    return (
+      <main className="shop-main">
+        <div className="shell-loading" role="status">
+          <span className="shell-spinner" aria-hidden="true"></span>
+          جاري تحميل المتجر...
+        </div>
+      </main>
+    );
+  }
+  if (state.kind === "missing") {
+    return (
+      <main className="shop-main">
+        <div className="shell-card">
+          <EmptyState
+            icon="fas fa-store-slash"
+            title="المتجر غير موجود"
+            description="ربما أُغلق هذا المتجر أو تغيّر رابطه."
+          />
+        </div>
+      </main>
+    );
+  }
+  if (state.kind === "error") {
+    return (
+      <main className="shop-main">
+        <div className="shell-card">
+          <EmptyState
+            icon="fas fa-exclamation-triangle"
+            title="تعذّر تحميل المتجر"
+            description={state.message}
+            action={
+              <button type="button" className="btn btn-outline" onClick={reload}>
+                إعادة المحاولة
+              </button>
+            }
+          />
+        </div>
+      </main>
+    );
+  }
+  return (
+    <ShopShell
+      slug={slug}
+      title={title}
+      ready={{
+        store: state.store,
+        categories: state.categories,
+        products: state.products,
+        theme: state.theme,
+      }}
+    >
+      {children}
+    </ShopShell>
+  );
+}
+
+/**
+ * Storefront chrome over already-resolved data. The guest preview reuses
+ * this exact component with token payload data, so preview and storefront
+ * can never drift apart.
+ */
+export function ShopShell({
+  slug,
+  title,
+  ready,
+  children,
+}: {
+  slug: string;
+  title?: string;
+  ready: ShopReady;
+  children: (ready: ShopReady) => ReactNode;
+}) {
   const { countFor, ensure } = useCart();
   const { buyerFor, refresh, logout } = useBuyer();
   const router = useRouter();
@@ -84,54 +158,15 @@ export function ShopPage({
     }
   }
 
-  if (state.kind === "loading") {
-    return (
-      <main className="shop-main">
-        <div className="shell-loading" role="status">
-          <span className="shell-spinner" aria-hidden="true"></span>
-          جاري تحميل المتجر...
-        </div>
-      </main>
-    );
-  }
-  if (state.kind === "missing") {
-    return (
-      <main className="shop-main">
-        <div className="shell-card">
-          <EmptyState
-            icon="fas fa-store-slash"
-            title="المتجر غير موجود"
-            description="ربما أُغلق هذا المتجر أو تغيّر رابطه."
-          />
-        </div>
-      </main>
-    );
-  }
-  if (state.kind === "error") {
-    return (
-      <main className="shop-main">
-        <div className="shell-card">
-          <EmptyState
-            icon="fas fa-exclamation-triangle"
-            title="تعذّر تحميل المتجر"
-            description={state.message}
-            action={
-              <button type="button" className="btn btn-outline" onClick={reload}>
-                إعادة المحاولة
-              </button>
-            }
-          />
-        </div>
-      </main>
-    );
-  }
-
   const count = countFor(slug);
   const buyer = buyerFor(slug);
   // Published theme drives header/footer presentation only; buyer menu,
   // cart, and auth behavior below are untouched.
-  const theme = coerceTheme(state.kind === "ready" ? state.theme : null);
+  const theme = coerceTheme(ready.theme);
   const themeVars = { ...themeCssVars(theme), ...themeFont(theme) };
+  // Background/text apply only when a design was actually published, so
+  // unthemed stores render exactly as before.
+  const hasTheme = ready.theme !== null;
 
   return (
     <>
@@ -146,17 +181,17 @@ export function ShopPage({
           <Link href={`/s/${encodeURIComponent(slug)}`} className="shop-brand">
             {theme.logo ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={theme.logo} alt={state.store.name} className="logo-icon" aria-hidden="true" />
+              <img src={theme.logo} alt={ready.store.name} className="logo-icon" aria-hidden="true" />
             ) : (
               <span className="logo-icon" aria-hidden="true">
                 <i className="fas fa-shopping-bag"></i>
               </span>
             )}
-            {theme.header.show_name === 1 && state.store.name}
+            {theme.header.show_name === 1 && ready.store.name}
           </Link>
           {theme.header.show_nav === 1 && (
             <nav className="shop-nav" aria-label="أقسام المتجر">
-              {state.categories.slice(0, 5).map((c) => (
+              {ready.categories.slice(0, 5).map((c) => (
                 <Link
                   key={c.id}
                   href={`/s/${encodeURIComponent(slug)}/c/${encodeURIComponent(c.slug)}`}
@@ -238,17 +273,28 @@ export function ShopPage({
           )}
         </div>
       </header>
-      <main className="shop-main" style={themeVars}>
+      <main
+        className="shop-main"
+        style={
+          hasTheme
+            ? {
+                ...themeVars,
+                background: theme.palette.background,
+                color: theme.palette.text,
+              }
+            : themeVars
+        }
+      >
         {title && (
           <div className="shop-hero">
             <h1>{title}</h1>
           </div>
         )}
         {children({
-          store: state.store,
-          categories: state.categories,
-          products: state.products,
-          theme: state.theme,
+          store: ready.store,
+          categories: ready.categories,
+          products: ready.products,
+          theme: ready.theme,
         })}
       </main>
       {theme.footer.visible === 1 && (
@@ -261,7 +307,7 @@ export function ShopPage({
         >
           {theme.footer.text !== ""
             ? theme.footer.text
-            : `${state.store.name} · ${state.store.currency} · تسوق آمن`}
+            : `${ready.store.name} · ${ready.store.currency} · تسوق آمن`}
         </footer>
       )}
     </>
