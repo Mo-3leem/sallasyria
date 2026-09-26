@@ -18,6 +18,7 @@ export type AuditAction =
   | "admin.user.password_reset"
   | "admin.merchant.update"
   | "admin.merchant.delete"
+  | "admin.store.delete"
   | "admin.customer.update"
   | "admin.customer.delete"
   | "user.password_change"

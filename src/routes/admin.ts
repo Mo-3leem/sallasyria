@@ -37,7 +37,7 @@ import {
   searchMerchants,
   updateMerchantByAdmin,
 } from "../services/users.js";
-import { getStoreById, listStoresForOwner } from "../services/stores.js";
+import { deleteStoreByAdmin, getStoreById, listStoresForOwner } from "../services/stores.js";
 import {
   deleteCustomer,
   getCustomer,
@@ -667,6 +667,40 @@ admin.openapi(deleteMerchantRoute, async (c) => {
   if (!target) throw new AppError("user_not_found", 404, "User not found.");
   const result = await deleteMerchant(getDb(c), targetId);
   auditLog("admin.merchant.delete", { actor: me.id, result: targetId });
+  return ok(c, result);
+}, validationHook);
+
+const deleteMerchantStoreRoute = createRoute({
+  method: "delete",
+  path: "/merchants/:id/stores/:storeId",
+  summary: "Delete a merchant's store permanently",
+  description:
+    "Platform admin only, audited. The store must belong to the selected " +
+    "merchant account — anything else answers 404, so one merchant's stores " +
+    "can never be touched through another merchant. 409 while the store " +
+    "has orders or subscriptions. Schema-defined cascades (catalog, " +
+    "customers, carts, billing, themes) apply; nothing else is removed.",
+  middleware: [...authedAdmin],
+  request: { params: z.object({ id: idParam, storeId: storeIdParam }) },
+  responses: {
+    200: {
+      content: { "application/json": { schema: okOf(z.object({ deleted: z.string() })) } },
+      description: "Deleted store id",
+    },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
+    404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown merchant or store" },
+    409: { content: { "application/json": { schema: failEnvelope } }, description: "Store has orders, subscriptions, or dependents" },
+  },
+});
+
+admin.openapi(deleteMerchantStoreRoute, async (c) => {
+  const targetId = resourceId(c);
+  const storeId = resourceId(c, "storeId");
+  const merchant = await getMerchantPublic(getDb(c), targetId);
+  if (!merchant) throw new AppError("user_not_found", 404, "User not found.");
+  const result = await deleteStoreByAdmin(getDb(c), targetId, storeId);
+  auditLog("admin.store.delete", { actor: currentUser(c).id, store: storeId, result: targetId });
   return ok(c, result);
 }, validationHook);
 

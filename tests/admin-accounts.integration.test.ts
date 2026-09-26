@@ -100,6 +100,14 @@ beforeAll(async () => {
     `INSERT INTO customers (id, store_id, name, phone, email) VALUES ('cust_verify_b9_a1', 'store_verify_b9_sa', 'Cust A1', '+963900000841', 'b9a1@example.com');`,
     `INSERT INTO customers (id, store_id, name, phone, email) VALUES ('cust_verify_b9_a2', 'store_verify_b9_sa', 'Cust A2', '+963900000842', 'b9a2@example.com');`,
     `INSERT INTO orders (id, store_id, customer_id, order_number, customer_name, customer_phone, shipping_method, shipping_governorate, shipping_address) VALUES ('ord_verify_b9_1', 'store_verify_b9_sa', 'cust_verify_b9_a2', 1, 'Cust A2', '+963900000842', 'Standard', 'Damascus', 'Street 1');`,
+    `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_b9_me', '+963900000837', 'b9me@example.com', 'B9 Merchant E', '${h}', 'merchant');`,
+    `INSERT INTO stores (id, owner_id, slug, name) VALUES ('store_verify_b9_se1', 'user_verify_b9_me', 'b9-store-e1', 'B9 Store E1');`,
+    `INSERT INTO stores (id, owner_id, slug, name) VALUES ('store_verify_b9_se2', 'user_verify_b9_me', 'b9-store-e2', 'B9 Store E2');`,
+    `INSERT INTO stores (id, owner_id, slug, name) VALUES ('store_verify_b9_se3', 'user_verify_b9_me', 'b9-store-e3', 'B9 Store E3');`,
+    `INSERT INTO customers (id, store_id, name, phone, email) VALUES ('cust_verify_b9_e1', 'store_verify_b9_se2', 'Cust E1', '+963900000843', 'b9e1@example.com');`,
+    `INSERT INTO orders (id, store_id, customer_id, order_number, customer_name, customer_phone, shipping_method, shipping_governorate, shipping_address) VALUES ('ord_verify_b9_e1', 'store_verify_b9_se2', 'cust_verify_b9_e1', 1, 'Cust E1', '+963900000843', 'Standard', 'Damascus', 'Street 1');`,
+    `INSERT INTO plans (id, code, name) VALUES ('plan_verify_b9_e', 'b9e-plan', 'B9E Plan');`,
+    `INSERT INTO subscriptions (id, store_id, plan_id, status, billing_period, starts_at, ends_at) VALUES ('sub_verify_b9_e3', 'store_verify_b9_se3', 'plan_verify_b9_e', 'active', 'monthly', '2026-01-01T00:00:00Z', '2099-01-01T00:00:00Z');`,
   ];
   for (const sql of seed) {
     const r = d1(sql);
@@ -141,6 +149,10 @@ const M_D = `${MERCHANTS}/user_verify_b9_md`;
 const CUST = "/admin/stores/store_verify_b9_sa/customers";
 const C_A1 = `${CUST}/cust_verify_b9_a1`;
 const C_A2 = `${CUST}/cust_verify_b9_a2`;
+const M_E = `${MERCHANTS}/user_verify_b9_me`;
+const SE1 = `${M_E}/stores/store_verify_b9_se1`;
+const SE2 = `${M_E}/stores/store_verify_b9_se2`;
+const SE3 = `${M_E}/stores/store_verify_b9_se3`;
 
 describe("admin accounts authorization matrix", () => {
   const probes: [string, RequestInit][] = [
@@ -152,6 +164,7 @@ describe("admin accounts authorization matrix", () => {
     [C_A1, {}],
     [C_A1, { method: "PATCH", body: JSON.stringify({ name: "X" }) }],
     [C_A1, { method: "DELETE" }],
+    [SE1, { method: "DELETE" }],
   ];
   it("anonymous gets 401 on every management route", async () => {
     for (const [path, init] of probes) {
@@ -297,6 +310,55 @@ describe("admin customers", () => {
     const del = await api(C_A1, { method: "DELETE" }, jarAdmin);
     expect(del.status).toBe(200);
     expect((await api(C_A1, {}, jarAdmin)).status).toBe(404);
+  });
+});
+
+describe("admin merchant store deletion", () => {
+  it("rejects cross-merchant and unknown stores with 404", async () => {
+    // SA belongs to merchant A, not B: answering anything but 404 would leak.
+    expect(
+      (await api(`${MERCHANTS}/user_verify_b9_mb/stores/store_verify_b9_sa`, { method: "DELETE" }, jarAdmin)).status
+    ).toBe(404);
+    expect(
+      (await api(`${M_E}/stores/store_verify_nope`, { method: "DELETE" }, jarAdmin)).status
+    ).toBe(404);
+    // SA must be untouched by the attempts above.
+    expect((await api(`${M_E}/stores/store_verify_b9_sa`, { method: "DELETE" }, jarAdmin)).status).toBe(404);
+  });
+
+  it("blocks stores with orders and subscriptions with 409", async () => {
+    const byOrders = await api(SE2, { method: "DELETE" }, jarAdmin);
+    expect(byOrders.status).toBe(409);
+    expect(byOrders.body).toEqual({
+      ok: false,
+      error: { code: "store_has_orders", message: expect.any(String) },
+    });
+    const bySub = await api(SE3, { method: "DELETE" }, jarAdmin);
+    expect(bySub.status).toBe(409);
+    expect(bySub.body).toEqual({
+      ok: false,
+      error: { code: "store_has_subscriptions", message: expect.any(String) },
+    });
+    // Neither store was touched.
+    const detail = await api(M_E, {}, jarAdmin);
+    expect(
+      ((detail.body as { data: { stores: { id: string }[] } }).data.stores.map((s) => s.id).sort())
+    ).toEqual(["store_verify_b9_se1", "store_verify_b9_se2", "store_verify_b9_se3"]);
+  });
+
+  it("deletes an empty store, then the merchant once storeless", async () => {
+    const del = await api(SE1, { method: "DELETE" }, jarAdmin);
+    expect(del.status).toBe(200);
+    expect(del.body).toEqual({ ok: true, data: { deleted: "store_verify_b9_se1" } });
+
+    const detail = await api(M_E, {}, jarAdmin);
+    expect(
+      ((detail.body as { data: { stores: { id: string }[] } }).data.stores.map((s) => s.id).sort())
+    ).toEqual(["store_verify_b9_se2", "store_verify_b9_se3"]);
+
+    // Merchant still owns stores: still blocked.
+    const blocked = await api(M_E, { method: "DELETE" }, jarAdmin);
+    expect(blocked.status).toBe(409);
   });
 });
 

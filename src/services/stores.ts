@@ -124,6 +124,64 @@ export async function getStoreOwner(
   return row?.owner_id ?? null;
 }
 
+// Admin store deletion for the merchant-management flow. No cascade is
+// introduced here: dependent rows governed by ON DELETE CASCADE in the
+// schema (categories, products, customers, addresses, carts, billing,
+// themes, shipping) disappear with the store exactly as the schema
+// defines, while RESTRICT-protected history is pre-checked below and
+// reported as explicit 409s. Anything else that still blocks the delete
+// surfaces as a generic dependents 409 — never a raw database error.
+export async function deleteStoreByAdmin(
+  db: D1Database,
+  merchantId: string,
+  storeId: string
+): Promise<{ deleted: string }> {
+  const owner = await getStoreOwner(db, storeId);
+  if (owner === null) {
+    throw new AppError("store_not_found", 404, "Store not found.");
+  }
+  // Cross-merchant guard: the store must belong to a merchant account and
+  // to the selected one. Anything else answers identically to missing.
+  const ownerRow = await db
+    .prepare("SELECT role FROM users WHERE id = ?")
+    .bind(owner)
+    .first<{ role: string }>();
+  if (!ownerRow || ownerRow.role !== "merchant" || owner !== merchantId) {
+    throw new AppError("store_not_found", 404, "Store not found.");
+  }
+  const order = await db
+    .prepare("SELECT 1 AS ok FROM orders WHERE store_id = ? LIMIT 1")
+    .bind(storeId)
+    .first<{ ok: number }>();
+  if (order) {
+    throw new AppError("store_has_orders", 409, "Store has orders and cannot be removed.");
+  }
+  const sub = await db
+    .prepare("SELECT 1 AS ok FROM subscriptions WHERE store_id = ? LIMIT 1")
+    .bind(storeId)
+    .first<{ ok: number }>();
+  if (sub) {
+    throw new AppError("store_has_subscriptions", 409, "Store has subscriptions and cannot be removed.");
+  }
+  try {
+    const res = await db
+      .prepare("DELETE FROM stores WHERE id = ? AND owner_id = ?")
+      .bind(storeId, merchantId)
+      .run();
+    if ((res.meta.changes ?? 0) === 0) {
+      throw new AppError("store_not_found", 404, "Store not found.");
+    }
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    const text = err instanceof Error ? err.message : String(err);
+    if (/FOREIGN KEY constraint failed/i.test(text)) {
+      throw new AppError("store_has_dependents", 409, "Store has dependent data and cannot be removed.");
+    }
+    throw err;
+  }
+  return { deleted: storeId };
+}
+
 export interface StorePatch {
   name?: string;
   slug?: string;
