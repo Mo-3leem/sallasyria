@@ -239,7 +239,7 @@ describe("registration under email auth", () => {
     expect(bad.status).toBe(401);
     expect(bad.body).toEqual({
       ok: false,
-      error: { code: "invalid_credentials", message: "Invalid email or password." },
+      error: { code: "invalid_credentials", message: "Invalid email/phone or password." },
     });
   }, 120_000);
 });

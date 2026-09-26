@@ -30,6 +30,11 @@ const ADMIN_PASS = "Admin-Strong-2";
 const INACTIVE_PHONE = "+963900000603";
 const INACTIVE_EMAIL = "b2i@example.com";
 const RATELIMIT_EMAIL = "ratelimit-b2@example.com";
+const RATELIMIT_PHONE = "+963900009997";
+const LEGACY_PHONE = "963900000604";
+const LEGACY_EMAIL = "b2legacy@example.com";
+const UNVERIFIED_PHONE = "+963900000605";
+const UNVERIFIED_EMAIL = "b2unverified@example.com";
 
 let server: ChildProcess | null = null;
 let serverOutput = "";
@@ -151,14 +156,17 @@ beforeAll(async () => {
     `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_b2_merchant', '${MERCHANT_PHONE}', 'b2m@example.com', 'B2 Merchant', '${merchantHash}', 'merchant');`,
     `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_b2_admin', '${ADMIN_PHONE}', 'b2a@example.com', 'B2 Admin', '${adminHash}', 'admin');`,
     `INSERT INTO users (id, phone, email, name, password_hash, is_active) VALUES ('user_verify_b2_inactive', '${INACTIVE_PHONE}', 'b2i@example.com', 'B2 Inactive', '${adminHash}', 0);`,
+    `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_b2_legacy', '${LEGACY_PHONE}', '${LEGACY_EMAIL}', 'B2 Legacy', '${merchantHash}', 'merchant');`,
+    `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_b2_unverified', '${UNVERIFIED_PHONE}', '${UNVERIFIED_EMAIL}', 'B2 Unverified', '${merchantHash}', 'merchant');`,
   ];
   for (const sql of stmts) {
     const r = d1(sql);
     if (!r.ok) throw new Error(`B2 seed failed: ${r.error} [${sql.slice(0, 80)}]`);
   }
-  // Verification-gated login: seeded fixture users are verified; the
-  // unverified-login path is covered by dedicated tests below.
-  d1(`UPDATE users SET email_verified = 1 WHERE id IN ('user_verify_b2_merchant', 'user_verify_b2_admin', 'user_verify_b2_inactive');`);
+  // Verification-gated login: seeded fixture users are verified, except the
+  // dedicated unverified fixture; the unverified-login path is covered by
+  // dedicated tests below.
+  d1(`UPDATE users SET email_verified = 1 WHERE id IN ('user_verify_b2_merchant', 'user_verify_b2_admin', 'user_verify_b2_inactive', 'user_verify_b2_legacy');`);
 }, 180_000);
 
 afterAll(async () => {
@@ -206,33 +214,41 @@ describe("B2 login", () => {
     expect(rows.some((r) => r["token_hash"] === raw)).toBe(false);
   }, 30_000);
 
-  it("wrong password, unknown email, and inactive user share one 401", async () => {
-    const shapes: [string, string][] = [
-      [MERCHANT_EMAIL, "Wrong-Password-9"],
-      ["unknown-b2@example.com", "Whatever-1"],
-      [INACTIVE_EMAIL, ADMIN_PASS],
+  it("wrong password, unknown identity, and inactive user share one 401", async () => {
+    const bodies: unknown[] = [
+      { email: MERCHANT_EMAIL, password: "Wrong-Password-9" },
+      { email: "unknown-b2@example.com", password: "Whatever-1" },
+      { email: INACTIVE_EMAIL, password: ADMIN_PASS },
+      { identity: MERCHANT_PHONE, password: "Wrong-Password-9" },
+      { identity: "+963900009999", password: "Whatever-1" },
+      { identity: INACTIVE_PHONE, password: ADMIN_PASS },
     ];
-    for (const [email, password] of shapes) {
-      const res = await api("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    for (const body of bodies) {
+      const res = await api("/auth/login", { method: "POST", body: JSON.stringify(body) });
       expect(res.status).toBe(401);
       expect(res.body).toEqual({
         ok: false,
-        error: { code: "invalid_credentials", message: "Invalid email or password." },
+        error: { code: "invalid_credentials", message: "Invalid email/phone or password." },
       });
     }
   }, 60_000);
 
-  it("email identity is normalized; phones never authenticate", async () => {
+  it("email identity is normalized; legacy email field still works", async () => {
     const upper = await api("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ email: "  B2M@EXAMPLE.COM  ", password: MERCHANT_PASS }),
+      body: JSON.stringify({ identity: "  B2M@EXAMPLE.COM  ", password: MERCHANT_PASS }),
     });
     expect(upper.status).toBe(200);
+    const legacy = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: MERCHANT_EMAIL, password: MERCHANT_PASS }),
+    });
+    expect(legacy.status).toBe(200);
+    // The deprecated email alias keeps its email shape: a phone is 400 there.
     const byPhone = await api("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email: MERCHANT_PHONE, password: MERCHANT_PASS }),
     });
-    // Not an email shape at all → 400, never an authentication attempt.
     expect(byPhone.status).toBe(400);
     const rawPhone = await api("/auth/login", {
       method: "POST",
@@ -240,6 +256,106 @@ describe("B2 login", () => {
     });
     expect(rawPhone.status).toBe(400);
   }, 60_000);
+
+  it("phone login resolves formatting variants to one account", async () => {
+    const variants = [
+      "+963900000601",
+      "0900000601",
+      "+963 900 000 601",
+      "+963-900-000-601",
+      "(+963) 900-000-601",
+      "٠٩٠٠٠٠٠٦٠١",
+    ];
+    for (const identity of variants) {
+      const res = await api("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ identity, password: MERCHANT_PASS }),
+      });
+      expect(res.status, `variant ${identity}`).toBe(200);
+      expect((res.body as { data: { user: { id: string } } }).data.user.id).toBe(
+        "user_verify_b2_merchant"
+      );
+    }
+  }, 60_000);
+
+  it("admin login by phone works", async () => {
+    const res = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ identity: ADMIN_PHONE, password: ADMIN_PASS }),
+    });
+    expect(res.status).toBe(200);
+    expect((res.body as { data: { user: { role: string } } }).data.user.role).toBe("admin");
+  }, 30_000);
+
+  it("legacy raw-format stored phone still authenticates", async () => {
+    // user_verify_b2_legacy stores "963900000604" (no +): the canonical
+    // lookup misses, the exact-match fallback resolves it.
+    const res = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ identity: "963900000604", password: MERCHANT_PASS }),
+    });
+    expect(res.status).toBe(200);
+    expect((res.body as { data: { user: { id: string } } }).data.user.id).toBe(
+      "user_verify_b2_legacy"
+    );
+  }, 30_000);
+
+  it("malformed phones follow the generic 401 path, never 400", async () => {
+    for (const identity of ["not-a-phone", "+15551234567", "12", "+"]) {
+      const res = await api("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ identity, password: "Whatever-1" }),
+      });
+      expect(res.status, `identity ${identity}`).toBe(401);
+      expect(res.body).toEqual({
+        ok: false,
+        error: { code: "invalid_credentials", message: "Invalid email/phone or password." },
+      });
+    }
+  }, 60_000);
+
+  it("unverified account by phone is 403, like email", async () => {
+    const res = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ identity: UNVERIFIED_PHONE, password: MERCHANT_PASS }),
+    });
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({
+      ok: false,
+      error: { code: "email_not_verified", message: "Email verification required." },
+    });
+  }, 30_000);
+
+  it("missing identity is 400", async () => {
+    const missing = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password: "x" }),
+    });
+    expect(missing.status).toBe(400);
+    const empty = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ identity: "", password: "x" }),
+    });
+    expect(empty.status).toBe(400);
+  }, 30_000);
+
+  it("registration stores the canonical phone", async () => {
+    const res = await api("/auth/register", {
+      method: "POST",
+      body: JSON.stringify({
+        email: "b2reg@example.com",
+        phone: "0900000606",
+        name: "B2 Reg",
+        password: MERCHANT_PASS,
+      }),
+    });
+    expect(res.status).toBe(201);
+    const found = d1(`SELECT phone FROM users WHERE email = 'b2reg@example.com';`);
+    expect(found.ok).toBe(true);
+    expect(qrows(found)[0]?.["phone"]).toBe("+963900000606");
+    const del = d1(`DELETE FROM users WHERE email = 'b2reg@example.com';`);
+    expect(del.ok).toBe(true);
+  }, 30_000);
 
   it("rejects invalid bodies with 400", async () => {
     const empty = await api("/auth/login", { method: "POST", body: JSON.stringify({ email: "", password: "" }) });
@@ -357,6 +473,19 @@ describe("B2 sessions", () => {
       statuses.push(res.status);
     }
     expect(statuses[0]).toBe(401); // limiter starts open: first attempts judged on merit
+    expect(statuses[statuses.length - 1]).toBe(429);
+  }, 120_000);
+
+  it("rate-limits sustained guessing on a canonical phone key", async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 11; i++) {
+      const res = await api("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ identity: RATELIMIT_PHONE, password: "Guess-Number-1" }),
+      });
+      statuses.push(res.status);
+    }
+    expect(statuses[0]).toBe(401);
     expect(statuses[statuses.length - 1]).toBe(429);
   }, 120_000);
 });

@@ -33,7 +33,7 @@ export function getFieldErrors(res: unknown): Record<string, string> {
 }
 
 const CODE_MESSAGES: Record<string, string> = {
-  invalid_credentials: "البريد الإلكتروني أو كلمة المرور غير صحيحة.",
+  invalid_credentials: "البريد الإلكتروني أو رقم الهاتف أو كلمة المرور غير صحيحة.",
   email_not_verified:
     "يجب توثيق البريد الإلكتروني أولاً. تحقق من بريدك الوارد واضغط رابط التفعيل، ثم سجّل الدخول.",
   credentials_rotation_required:
@@ -55,7 +55,7 @@ const CODE_MESSAGES: Record<string, string> = {
 
 const STATUS_MESSAGES: Record<number, string> = {
   400: "طلب غير صالح. راجع البيانات المدخلة.",
-  401: "البريد الإلكتروني أو كلمة المرور غير صحيحة.",
+  401: "البريد الإلكتروني أو رقم الهاتف أو كلمة المرور غير صحيحة.",
   403: "غير مصرّح لك بتنفيذ هذا الإجراء.",
   404: "غير موجود.",
   409: "تعارض: هذه القيمة مسجّلة مسبقاً.",

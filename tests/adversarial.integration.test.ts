@@ -272,13 +272,15 @@ describe("auth fuzz", () => {
     expectCleanEnvelope({ status: res.status, body: await res.json() });
   });
 
-  it("login SQL injection email is 401, never 500; phone never authenticates", async () => {
+  it("login SQL injection email is 401, never 500; email field still rejects phones", async () => {
     const res = await api("/auth/login", {
       method: "POST", body: JSON.stringify({ email: "' OR '1'='1", password: "x" }),
     });
     expect(res.status).toBe(400);
     expectCleanEnvelope(res);
-    // A valid phone is not an email shape: rejected at validation, never auth.
+    // The deprecated email alias keeps its email shape: a phone there is
+    // rejected at validation, never auth. Phone login goes through the
+    // `identity` field (covered in the auth suite).
     const byPhone = await api("/auth/login", {
       method: "POST", body: JSON.stringify({ email: A_PHONE, password: PASS }),
     });
