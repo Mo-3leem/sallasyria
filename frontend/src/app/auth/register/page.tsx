@@ -6,6 +6,7 @@ import {
   authErrorMessage,
   getErrorCode,
   getFieldErrors,
+  INVALID_PHONE_MESSAGE,
   NETWORK_ERROR_MESSAGE,
 } from "@/lib/auth-errors";
 import { useCooldown } from "@/hooks/useCooldown";
@@ -65,6 +66,7 @@ function RegisterForm() {
         const fields = getFieldErrors(res);
         if (code === "email_taken") fields.email = fields.email || "هذا البريد مسجّل مسبقاً.";
         if (code === "phone_taken") fields.phone = fields.phone || "هذا الرقم مسجّل مسبقاً.";
+        if (code === "invalid_phone") fields.phone = fields.phone || INVALID_PHONE_MESSAGE;
         if (Object.keys(fields).length > 0) setFieldErrors(fields);
         setFormError(authErrorMessage(res, 400));
         return;
