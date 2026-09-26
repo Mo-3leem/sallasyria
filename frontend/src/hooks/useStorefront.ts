@@ -14,6 +14,8 @@ export type ShopState =
       store: PublicStore;
       categories: PublicCategory[];
       products: PublicProduct[];
+      /** Published theme snapshot (null when never published). */
+      theme: Record<string, unknown> | null;
     };
 
 /**
@@ -39,9 +41,10 @@ export function useStorefront(slug: string): {
           return;
         }
         const store = resolved.data.store;
-        const [cats, prods] = await Promise.all([
+        const [cats, prods, prof] = await Promise.all([
           storefrontApi.categories(store.id),
           storefrontApi.products(store.id),
+          storefrontApi.store(store.id),
         ]);
         if (cancelled) return;
         if (!cats.ok || !prods.ok) {
@@ -60,6 +63,7 @@ export function useStorefront(slug: string): {
           store,
           categories: cats.data.categories,
           products: prods.data.products,
+          theme: prof.ok ? prof.data.theme : null,
         });
       } catch {
         if (!cancelled) setState({ kind: "error", message: NETWORK_ERROR_MESSAGE });

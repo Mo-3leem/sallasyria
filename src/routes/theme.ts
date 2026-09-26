@@ -43,17 +43,44 @@ const httpsUrl = z
 
 // Whitelisted draft keys only: unknown top-level keys are 400 (strict),
 // matching the immutable-field philosophy of every other PATCH route.
+// Every key below is optional: old drafts and old clients keep working, and
+// omitted keys are preserved by the shallow merge in updateThemeDraft.
+const flag = z.union([z.literal(0), z.literal(1)]);
+const alignEnum = z.enum(["right", "center", "left"]);
 const themeDraftSchema = z
   .object({
     palette: z
       .object({
         primary: hexColor.optional(),
+        secondary: hexColor.optional(),
         background: hexColor.optional(),
         accent: hexColor.optional(),
         text: hexColor.optional(),
+        button: hexColor.optional(),
       })
       .optional(),
+    font: z.enum(["cairo", "system"]).optional(),
     logo: z.string().max(2048).nullable().optional(),
+    header: z
+      .object({
+        show_name: flag.optional(),
+        show_nav: flag.optional(),
+        show_cart: flag.optional(),
+        show_account: flag.optional(),
+        background: hexColor.nullable().optional(),
+      })
+      .optional(),
+    hero: z
+      .object({
+        title: z.string().max(200).optional(),
+        description: z.string().max(500).optional(),
+        cta_text: z.string().max(100).optional(),
+        cta_visible: flag.optional(),
+        align: alignEnum.optional(),
+        background: hexColor.nullable().optional(),
+        image: httpsUrl.nullable().optional(),
+      })
+      .optional(),
     banners: z
       .array(
         z.object({
@@ -69,9 +96,23 @@ const themeDraftSchema = z
           type: z.enum(["hero", "categories", "products", "banner", "text"]),
           order: z.number().int(),
           is_visible: z.union([z.literal(0), z.literal(1)]),
+          title: z.string().max(200).optional(),
         })
       )
       .max(20)
+      .optional(),
+    products: z
+      .object({
+        show_names: flag.optional(),
+        show_prices: flag.optional(),
+      })
+      .optional(),
+    footer: z
+      .object({
+        visible: flag.optional(),
+        background: hexColor.nullable().optional(),
+        text: z.string().max(300).optional(),
+      })
       .optional(),
   })
   .strict();

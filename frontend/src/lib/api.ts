@@ -576,7 +576,7 @@ export const storefrontApi = {
       `/stores/by-slug/${encodeURIComponent(slug)}`
     ),
   store: (storeId: string) =>
-    api.get<{ store: PublicStore }>(
+    api.get<{ store: PublicStore; theme: Record<string, unknown> | null }>(
       storePath(storeId, "/catalog/store")
     ),
   categories: (storeId: string) =>

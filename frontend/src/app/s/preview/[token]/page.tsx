@@ -1,10 +1,11 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
 import { previewApi, type PreviewPayload } from "@/lib/api";
-import { getErrorCode, NETWORK_ERROR_MESSAGE } from "@/lib/auth-errors";
+import { NETWORK_ERROR_MESSAGE } from "@/lib/auth-errors";
 import { EmptyState } from "@/components/common/EmptyState";
+import { StoreHomeView } from "@/components/shop/StoreHomeView";
+import { coerceTheme } from "@/lib/theme-design";
 
 type LoadState =
   | { kind: "loading" }
@@ -13,11 +14,11 @@ type LoadState =
   | { kind: "ready"; payload: PreviewPayload };
 
 /**
- * Draft preview: token-gated public render of the CURRENT draft through
- * the same buyer markup/classes as the storefront (pixel-exact by
- * construction), with the draft palette applied as CSS overrides.
- * Unknown/expired tokens share one 404. noindex + no-store safe: this
- * page carries no crawler links and previews are never linked publicly.
+ * Draft preview: token-gated public render of the CURRENT draft through the
+ * shared storefront view (pixel-consistent with the live storefront by
+ * construction). Unknown/expired tokens share one 404. noindex + no-store
+ * safe: this page carries no crawler links and previews are never linked
+ * publicly. No buyer state, no merchant identity, no editing controls.
  */
 export default function PreviewPage({
   params,
@@ -94,133 +95,14 @@ export default function PreviewPage({
   }
 
   const { store, theme, categories, products } = state.payload;
-  const draft = (theme.draft ?? {}) as {
-    palette?: Partial<Record<"primary" | "background" | "accent" | "text", string>>;
-    logo?: string | null;
-    banners?: { image?: string; title?: string }[];
-    sections?: { type?: string; order?: number; is_visible?: number }[];
-  };
-  const palette = {
-    primary: "#16a34a",
-    background: "#ffffff",
-    accent: "#22c55e",
-    text: "#0f172a",
-    ...(draft.palette ?? {}),
-  };
-  const cssVars = {
-    "--primary": palette.primary,
-    "--primary-light": palette.accent,
-    "--primary-dark": palette.primary,
-  } as CSSProperties;
-  const sections = (draft.sections ?? [])
-    .filter((s) => s && typeof s === "object")
-    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-    .filter((s) => s.is_visible !== 0);
-  const banners = (draft.banners ?? []).filter(
-    (b) => b && typeof b.image === "string" && b.image.startsWith("https://")
-  );
-
   return (
-    <div className="shop" style={cssVars}>
-      <div className="shell-notice" role="status" style={{ borderRadius: 0 }}>
-        <i className="fas fa-eye" aria-hidden="true"></i>
-        <span>معاينة مسودة — هكذا سيراها الزوار بعد النشر (صالحة ١٥ دقيقة).</span>
-      </div>
-      <header className="shop-header">
-        <div className="shop-header-inner">
-          <span className="shop-brand">
-            {draft.logo ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={draft.logo} alt={store.name} className="logo-icon" aria-hidden="true" />
-            ) : (
-              <span className="logo-icon" aria-hidden="true">
-                <i className="fas fa-shopping-bag"></i>
-              </span>
-            )}
-            {store.name}
-          </span>
-          <nav className="shop-nav" aria-label="أقسام المتجر">
-            {categories.slice(0, 5).map((c) => (
-              <span key={c.id}>{c.name}</span>
-            ))}
-          </nav>
-          <span className="shop-cart-link" aria-hidden="true">
-            <i className="fas fa-shopping-cart"></i>
-            السلة
-          </span>
-        </div>
-      </header>
-      <main className="shop-main" style={{ background: palette.background, color: palette.text }}>
-        {sections.map((s, i) => {
-          const key = `${s.type ?? "text"}-${i}`;
-          if (s.type === "hero") {
-            return (
-              <div className="shop-hero" key={key}>
-                <h1>أهلاً بك في {store.name}</h1>
-              </div>
-            );
-          }
-          if (s.type === "categories") {
-            return (
-              <div key={key}>
-                <h2 className="shop-section-title">التصنيفات</h2>
-                <div className="shop-grid">
-                  {categories.map((c) => (
-                    <div key={c.id} className="shop-card">
-                      <span className="shop-card-name">{c.name}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          }
-          if (s.type === "products") {
-            return (
-              <div key={key}>
-                <h2 className="shop-section-title">المنتجات</h2>
-                <div className="shop-grid">
-                  {products.map((p) => (
-                    <div key={p.id} className="shop-card">
-                      <span className="shop-card-name">{p.name}</span>
-                      <span className="shop-card-price">
-                        {p.price.toLocaleString("ar-SY")} قرش
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          }
-          if (s.type === "banner") {
-            if (banners.length === 0) return null;
-            return (
-              <div key={key}>
-                <h2 className="shop-section-title">مختارات</h2>
-                <div className="shop-grid">
-                  {banners.map((b, j) => (
-                    <div key={j} className="shop-card">
-                      <span className="shop-card-name">{b.title || "لافتة"}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          }
-          return (
-            <div className="shop-card" key={key}>
-              <p className="shell-note">تسوّق منتجات {store.name} المختارة بعناية.</p>
-            </div>
-          );
-        })}
-        {sections.length === 0 && (
-          <div className="shell-card">
-            <p className="shell-note">لا توجد أقسام ظاهرة في هذه المسودة.</p>
-          </div>
-        )}
-      </main>
-      <footer className="shop-footer">
-        {store.name} · {store.currency} · معاينة
-      </footer>
-    </div>
+    <StoreHomeView
+      storeName={store.name}
+      currency={store.currency}
+      categories={categories}
+      products={products}
+      theme={coerceTheme(theme.draft)}
+      notice="معاينة مسودة — هكذا سيراها الزوار بعد النشر (صالحة ١٥ دقيقة)."
+    />
   );
 }
