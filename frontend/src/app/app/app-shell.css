@@ -1130,7 +1130,10 @@
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr) 280px;
   gap: 14px;
-  align-items: start;
+  /* Stretch (not start): the preview column must fill the track height so
+     its overflow container engages. With `start`, the wrap sizes to its
+     content, grows unbounded, and nothing becomes scrollable. */
+  align-items: stretch;
 }
 /* Desktop app mode: the builder fills the viewport (minus shell header +
    content padding) and each column scrolls independently — the page
@@ -1143,6 +1146,9 @@
   .builder-layout {
     flex: 1;
     min-height: 0;
+    /* The single row must fill the fixed-height container; an auto row
+       would size to content and defeat every scroll container below. */
+    grid-template-rows: minmax(0, 1fr);
   }
   .builder-tools,
   .builder-props {
@@ -1153,7 +1159,6 @@
     overflow-y: auto;
   }
   .builder-preview-wrap {
-    height: 100%;
     overflow-y: auto;
     min-height: 0;
   }
