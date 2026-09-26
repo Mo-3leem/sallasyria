@@ -1464,6 +1464,12 @@
   box-shadow: 0 16px 48px rgba(15, 23, 42, 0.14);
   transition: max-width 0.25s ease;
   container-type: inline-size;
+  /* The wrap is a flex column: without this the frame shrink-wraps to the
+     wrap height, overflow:hidden clips the store, and the clipped content
+     no longer counts toward the wrap's scrollHeight — leaving nothing to
+     scroll. flex-shrink:0 keeps the frame at full content height so the
+     wrap scrolls it. */
+  flex-shrink: 0;
 }
 .builder-preview .shop {
   min-height: 0;
