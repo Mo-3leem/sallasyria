@@ -981,6 +981,12 @@
    RTL-first: logical properties throughout; side panels collapse to
    drawers under 900px with floating toggles + scrim.
    =================================================================== */
+/* The builder needs the full canvas: shell-content caps every /app page
+   at 1100px, which would squeeze the three-column editor. */
+.shell-content:has(> .builder) {
+  max-width: 1560px;
+  padding: 20px 24px 32px;
+}
 .builder {
   display: flex;
   flex-direction: column;
@@ -1345,9 +1351,35 @@
   overflow: hidden;
   background: var(--white);
   transition: max-width 0.25s ease;
+  container-type: inline-size;
 }
 .builder-preview .shop {
   min-height: 0;
+}
+/* Container-responsive preview: the pane (not the browser viewport)
+   drives the storefront layout, so tablet/mobile widths genuinely
+   reflow and the pane never overflows at desktop widths. */
+@container (max-width: 700px) {
+  .builder-preview .shop-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .builder-preview .shop-detail {
+    grid-template-columns: 1fr;
+  }
+  .builder-preview .shop-nav {
+    display: none;
+  }
+}
+@container (max-width: 460px) {
+  .builder-preview .shop-grid {
+    grid-template-columns: 1fr;
+  }
+  .builder-preview .shop-main {
+    padding: 20px 16px 48px;
+  }
+  .builder-preview .shop-header-inner {
+    padding: 10px 16px;
+  }
 }
 .builder-preview-hint {
   margin: 0;
