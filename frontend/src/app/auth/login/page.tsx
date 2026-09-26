@@ -26,7 +26,7 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const { refresh } = useAuth();
   const { locked, remaining, lock } = useCooldown();
-  const [email, setEmail] = useState("");
+  const [identity, setIdentity] = useState("");
   const [password, setPassword] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -41,7 +41,7 @@ function LoginForm() {
     setUnverified(false);
 
     const local: Record<string, string> = {};
-    if (!email.trim()) local.email = "البريد الإلكتروني مطلوب.";
+    if (!identity.trim()) local.identity = "البريد الإلكتروني أو رقم الهاتف مطلوب.";
     if (!password) local.password = "كلمة المرور مطلوبة.";
     if (Object.keys(local).length > 0) {
       setFieldErrors(local);
@@ -50,7 +50,7 @@ function LoginForm() {
 
     setSubmitting(true);
     try {
-      const res = await authApi.login({ email: email.trim(), password });
+      const res = await authApi.login({ identity: identity.trim(), password });
       if (!res.ok) {
         const code = getErrorCode(res);
         if (code === "rate_limited") lock(30);
@@ -106,14 +106,14 @@ function LoginForm() {
           </div>
         )}
         <TextField
-          label="البريد الإلكتروني"
-          type="email"
+          label="البريد الإلكتروني أو رقم الهاتف"
+          type="text"
           dir="ltr"
-          placeholder="merchant@example.com"
-          autoComplete="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          error={fieldErrors.email}
+          placeholder="merchant@example.com أو 0991234567"
+          autoComplete="username"
+          value={identity}
+          onChange={(e) => setIdentity(e.target.value)}
+          error={fieldErrors.identity}
         />
         <PasswordInput
           label="كلمة المرور"

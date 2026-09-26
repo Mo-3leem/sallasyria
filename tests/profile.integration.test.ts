@@ -261,7 +261,7 @@ describe("PATCH /auth/me logout_other_sessions", () => {
     expect((res.body as MeBody).data.reauth_required).toBe(false);
     expect((await api("/auth/me", {}, jar1)).status).toBe(200);
     expect((await api("/auth/me", {}, jar2)).status).toBe(200);
-    // Phone is contact data, not identity: the same email still logs in.
+    // Phone doubles as a login identity: the same email still logs in.
     expect((await api("/auth/login", { method: "POST", body: JSON.stringify({ email: "pfma@example.com", password: PASS }) })).status).toBe(200);
   });
 
@@ -290,6 +290,25 @@ describe("PATCH /auth/me logout_other_sessions", () => {
     expect((res.body as MeBody).data.reauth_required).toBe(false);
     expect((await api("/auth/me", {}, jar1)).status).toBe(200);
     expect((await api("/auth/me", {}, jar2)).status).toBe(200);
+  });
+
+  it("phone change stores the canonical form and it authenticates", async () => {
+    const jar1 = await loginJar("pfma@example.com", PASS);
+    const res = await api("/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify({ phone: "0900001324", current_password: PASS }),
+    }, jar1);
+    expect(res.status).toBe(200);
+    expect(((res.body as MeBody).data.user.phone)).toBe("+963900001324");
+    // The new canonical phone logs in via the identity field.
+    expect((await api("/auth/login", { method: "POST", body: JSON.stringify({ identity: "+963900001324", password: PASS }) })).status).toBe(200);
+    // Restore the fixture phone for later tests.
+    const back = await api("/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify({ phone: MERCHANT_A_PHONE, current_password: PASS }),
+    }, jar1);
+    expect(back.status).toBe(200);
+    expect(((back.body as MeBody).data.user.phone)).toBe(MERCHANT_A_PHONE);
   });
 
   it("email change moves the login identity; old email dies", async () => {

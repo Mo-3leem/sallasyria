@@ -14,6 +14,7 @@ import {
 } from "../services/email-tokens.js";
 import { buildResetEmail, buildResetSuccessEmail, buildVerificationEmail, dispatchMail, sendMail } from "../services/mail.js";
 import { normalizeEmail } from "../lib/email.js";
+import { normalizePhone } from "../lib/phone.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { auditLog } from "../lib/audit.js";
 import { resourceId } from "../db/tenant.js";
@@ -52,7 +53,11 @@ import {
 export const auth = new OpenAPIHono<AppEnv>();
 
 const loginSchema = z.object({
-  email: z.string().trim().email().max(254).openapi({ example: "merchant@example.com" }),
+  // Primary identity: an email (contains "@") or a phone number. The
+  // legacy `email` field below is a deprecated alias kept so older clients
+  // keep working; when both are present, `identity` wins.
+  identity: z.string().trim().min(1).max(254).optional().openapi({ example: "merchant@example.com" }),
+  email: z.string().trim().email().max(254).optional().openapi({ example: "merchant@example.com" }),
   password: z.string().min(1).max(PASSWORD_RULES.maxChars).openapi({ example: "Correct-Horse-9x!" }),
 });
 
@@ -111,8 +116,8 @@ const registerRoute = createRoute({
   path: "/register",
   summary: "Register a merchant account",
   description:
-    "Public self-service registration. Email is the authentication identity (required, unique); " +
-    "phone is still collected as contact identity. Role is always merchant — role in the body is 400. " +
+    "Public self-service registration. Email is required and unique; " +
+    "phone is required, unique, and stored in canonical form (see lib/phone.ts) so it can also authenticate at login. Role is always merchant — role in the body is 400. " +
     "Returns the public profile (never the password hash); log in separately via /auth/login. " +
     "A verification email is sent when mail is configured (best-effort; informational only).",
   request: {
@@ -143,19 +148,24 @@ auth.openapi(registerRoute, async (c) => {
   assertNoImmutableFields(raw, REGISTER_FORBIDDEN);
   const input = c.req.valid("json");
   const email = normalizeEmail(input.email);
+  // Canonical contact identity going forward: stored phones are normalized
+  // so phone login can resolve them. Shapes normalizePhone() rejects
+  // (non-Syrian numbers) are 400 here, exactly like the checkout/customers
+  // surfaces — registration no longer stores unresolvable raw strings.
+  const phone = normalizePhone(input.phone);
   // Own bucket (register:<ip>:<email>): registration spam for an address
   // must never consume that address's login attempts.
   if (!checkRegisterRateLimit(registerRateLimitKey(c, email))) {
     throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
   }
-  if (await phoneTaken(getDb(c), input.phone)) {
+  if (await phoneTaken(getDb(c), phone)) {
     throw new AppError("phone_taken", 409, "Phone number is already registered.");
   }
   if (await emailTaken(getDb(c), email)) {
     throw new AppError("email_taken", 409, "Email address is already registered.");
   }
   const user = await createMerchant(getDb(c), {
-    phone: input.phone,
+    phone,
     email,
     name: input.name,
     passwordHash: hashPassword(input.password),
@@ -526,19 +536,23 @@ export function cookieSameSite(c: {
 }
 
 // POST /auth/login — verifies credentials, mints ONE opaque session row,
-// returns the raw token exactly once (Set-Cookie). The identity is the
-// NORMALIZED email: Test@Example.com and test@example.com are the same
-// account, and phones never authenticate. Failures are indistinguishable
-// (unknown email / inactive / wrong password all 401 with identical
-// code+message); unknown accounts still pay one scrypt verify against a
-// dummy hash so timing gives nothing away.
+// returns the raw token exactly once (Set-Cookie). The identity is either a
+// NORMALIZED email (Test@Example.com and test@example.com are the same
+// account) or a NORMALIZED phone (099..., +963... and spaced/dashed variants
+// are the same account; Syrian shapes only, see lib/phone.ts). Detection is
+// a literal "@": identities containing "@" resolve by email, everything else
+// by phone. Failures are indistinguishable (unknown identity / inactive /
+// wrong password all 401 with identical code+message); unknown accounts
+// still pay one scrypt verify against a dummy hash so timing gives nothing
+// away. A malformed phone never 400s — it follows the generic 401 path.
 const loginRoute = createRoute({
   method: "post",
   path: "/login",
-  summary: "Log in with email + password",
+  summary: "Log in with email or phone + password",
   description:
     "Verifies credentials and mints one opaque server-side session returned as an HttpOnly cookie. " +
-    "Unknown email, inactive account, and wrong password all return an identical 401. " +
+    "The identity is an email (contains @) or a phone number (Syrian shapes, any common formatting). " +
+    "Unknown identity, inactive account, and wrong password all return an identical 401. " +
     "Correct credentials on an unverified email return 403 email_not_verified — verify first, then log in.",
   request: {
     body: { content: { "application/json": { schema: loginSchema } } },
@@ -554,7 +568,7 @@ const loginRoute = createRoute({
     },
     401: {
       content: { "application/json": { schema: failEnvelope } },
-      description: "Invalid email or password",
+      description: "Invalid identity or password",
     },
     403: {
       content: { "application/json": { schema: failEnvelope } },
@@ -568,22 +582,54 @@ const loginRoute = createRoute({
 });
 
 auth.openapi(loginRoute, async (c) => {
-  const { email: rawEmail, password } = c.req.valid("json");
-  const email = normalizeEmail(rawEmail);
+  const input = c.req.valid("json");
+  const { password } = input;
+  const rawIdentity = input.identity ?? input.email ?? null;
+  if (rawIdentity === null) {
+    throw new AppError("validation_failed", 400, "Request body is invalid.");
+  }
+  const trimmed = rawIdentity.trim();
+  const isEmail = trimmed.includes("@");
+  // Canonical identity for the rate-limit bucket (pure functions only, so
+  // this runs before any database read, exactly like the old email key).
+  // Un-normalizable phones share one "invalid-phone" bucket per IP rather
+  // than 400ing, so malformed input reveals nothing about any account.
+  let canonical: string | null = null;
+  if (isEmail) {
+    canonical = normalizeEmail(trimmed);
+  } else {
+    try {
+      canonical = normalizePhone(trimmed);
+    } catch {
+      canonical = null;
+    }
+  }
 
-  if (!checkLoginRateLimit(loginRateLimitKey(c, email))) {
+  if (!checkLoginRateLimit(loginRateLimitKey(c, canonical ?? "invalid-phone"))) {
     throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
   }
 
-  const user = await getDb(c)
-    .prepare("SELECT * FROM users WHERE email = ?")
-    .bind(email)
-    .first<UserRow>();
+  const db = getDb(c);
+  let user: UserRow | null = null;
+  if (canonical !== null) {
+    user =
+      (isEmail
+        ? await db.prepare("SELECT * FROM users WHERE email = ?").bind(canonical).first<UserRow>()
+        : await db.prepare("SELECT * FROM users WHERE phone = ?").bind(canonical).first<UserRow>()) ?? null;
+  }
+  if (!user && !isEmail && trimmed !== canonical) {
+    // Legacy rows stored before phone normalization (registration accepted
+    // raw strings): exact match on the typed value. Exact-string equality
+    // can never resolve to the wrong account, and the password check below
+    // still gates everything.
+    user =
+      (await db.prepare("SELECT * FROM users WHERE phone = ?").bind(trimmed).first<UserRow>()) ?? null;
+  }
 
   const hashToCheck = user !== null && user.is_active === 1 ? user.password_hash : dummyHash();
   const passwordOk = verifyPassword(password, hashToCheck);
   if (user === null || user.is_active !== 1 || !passwordOk) {
-    throw new AppError("invalid_credentials", 401, "Invalid email or password.");
+    throw new AppError("invalid_credentials", 401, "Invalid email/phone or password.");
   }
   // Verification gate (policy): correct credentials alone do not authenticate
   // until the email is verified. Ordered AFTER the password check so wrong
@@ -780,9 +826,13 @@ auth.openapi(patchMeRoute, async (c) => {
   assertNoImmutableFields(raw, ME_FORBIDDEN);
   const user = currentUser(c);
   const input = c.req.valid("json");
+  // Canonicalize a replacement phone before anything else so uniqueness
+  // checks and storage always see the resolvable form. Rejected shapes are
+  // 400 here (authenticated context — no oracle concern).
+  const normalizedPhone = input.phone === undefined ? undefined : normalizePhone(input.phone);
   const emailChanged =
     input.email !== undefined && (input.email ?? null) !== (user.email ?? null);
-  const phoneChanged = input.phone !== undefined && input.phone !== user.phone;
+  const phoneChanged = normalizedPhone !== undefined && normalizedPhone !== user.phone;
   if (emailChanged || phoneChanged) {
     if (!input.current_password) {
       throw new AppError(
@@ -802,7 +852,7 @@ auth.openapi(patchMeRoute, async (c) => {
   const updated = await updateUserProfile(getDb(c), user.id, {
     name: input.name,
     email: input.email,
-    phone: input.phone,
+    phone: normalizedPhone,
   });
   if (!updated) throw new AppError("internal", 500, "Something went wrong.");
   if ((emailChanged || phoneChanged) && input.logout_other_sessions) {

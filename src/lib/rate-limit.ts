@@ -10,11 +10,14 @@ const MAX_ATTEMPTS = 10;
 
 const hits = new Map<string, number[]>();
 
-// Identity-based keys use the NORMALIZED email (see lib/email.ts): without
-// this, Test@Example.com / test@example.com / TEST@EXAMPLE.COM would each
-// get a fresh budget and brute force would walk straight through.
-export function loginRateLimitKey(c: Context, email: string): string {
-  return `${clientIp(c)}:${email}`;
+// Identity-based keys use the CANONICAL identity (normalized email or
+// normalized phone, see lib/email.ts and lib/phone.ts): without this,
+// Test@Example.com / test@example.com (or 099... / +963... variants) would
+// each get a fresh budget and brute force would walk straight through.
+// Email and phone spellings of one account are separate buckets by design
+// (same 10/10min budget each); the per-IP component still bounds attackers.
+export function loginRateLimitKey(c: Context, identity: string): string {
+  return `${clientIp(c)}:${identity}`;
 }
 
 // Generic sliding-window limiter factory for endpoint classes (roadmap B5).
