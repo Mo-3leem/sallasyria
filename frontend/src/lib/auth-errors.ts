@@ -32,8 +32,12 @@ export function getFieldErrors(res: unknown): Record<string, string> {
   return out;
 }
 
+/** Shared Arabic message for backend `invalid_phone` failures. */
+export const INVALID_PHONE_MESSAGE = "رقم الهاتف غير صالح.";
+
 const CODE_MESSAGES: Record<string, string> = {
   invalid_credentials: "البريد الإلكتروني أو رقم الهاتف أو كلمة المرور غير صحيحة.",
+  invalid_phone: INVALID_PHONE_MESSAGE,
   email_not_verified:
     "يجب توثيق البريد الإلكتروني أولاً. تحقق من بريدك الوارد واضغط رابط التفعيل، ثم سجّل الدخول.",
   credentials_rotation_required:

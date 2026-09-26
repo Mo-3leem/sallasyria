@@ -5,7 +5,7 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { ShopPage } from "@/components/shop/ShopPage";
 import { useBuyer } from "@/hooks/useBuyer";
-import { NETWORK_ERROR_MESSAGE } from "@/lib/auth-errors";
+import { INVALID_PHONE_MESSAGE, NETWORK_ERROR_MESSAGE } from "@/lib/auth-errors";
 import { TextField } from "@/components/auth/TextField";
 import { PasswordInput } from "@/components/auth/PasswordInput";
 import { FormError } from "@/components/auth/FormError";
@@ -69,6 +69,7 @@ export default function BuyerRegisterPage({ params }: { params: { slug: string }
       if (!res.ok) {
         if (res.code === "user_exists") setFormError("يوجد حساب بهذا الهاتف. سجّل الدخول بدلاً من ذلك.");
         else if (res.code === "email_taken") setFormError("هذا البريد مسجل مسبقاً في المتجر.");
+        else if (res.code === "invalid_phone") setFieldErrors({ phone: INVALID_PHONE_MESSAGE });
         else if (res.code === "turnstile_required") {
           logCaptchaFailure(res.code, getLastRequestId());
           setFormError("أكمل التحقق الأمني أولاً.");
