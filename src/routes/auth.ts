@@ -183,7 +183,7 @@ auth.openapi(registerRoute, async (c) => {
     dispatchMail(
       c,
       sendMail(
-        { to: email, subject: msg.subject, text: msg.text },
+        { to: email, subject: msg.subject, text: msg.text, html: msg.html },
         { apiKey: c.env.SENDGRID_API_KEY, from: c.env.MAIL_FROM }
       )
     );
@@ -337,7 +337,7 @@ auth.openapi(resendVerificationRoute, async (c) => {
     dispatchMail(
       c,
       sendMail(
-        { to: email, subject: msg.subject, text: msg.text },
+        { to: email, subject: msg.subject, text: msg.text, html: msg.html },
         { apiKey: c.env.SENDGRID_API_KEY, from: c.env.MAIL_FROM }
       )
     );

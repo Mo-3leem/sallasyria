@@ -136,6 +136,33 @@ describe("sendMail", () => {
     expect(payload.subject).toBe("Hi");
   });
 
+  it("includes the HTML alternative only when provided", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 202 }));
+    await sendMail(
+      { to: "u@x.y", subject: "Hi", text: "Body", html: "<p>Body</p>" },
+      { apiKey: "sekret", from: "n@salla.sy", fetchImpl }
+    );
+    const [, init] = call(fetchImpl);
+    const payload = JSON.parse(init.body as string) as {
+      content?: { type?: string; value?: string }[];
+    };
+    expect(payload.content).toEqual([
+      { type: "text/plain", value: "Body" },
+      { type: "text/html", value: "<p>Body</p>" },
+    ]);
+
+    const fetchImpl2 = vi.fn(async () => new Response(null, { status: 202 }));
+    await sendMail(
+      { to: "u@x.y", subject: "Hi", text: "Body" },
+      { apiKey: "sekret", from: "n@salla.sy", fetchImpl: fetchImpl2 }
+    );
+    const [, init2] = call(fetchImpl2);
+    const payload2 = JSON.parse(init2.body as string) as {
+      content?: { type?: string; value?: string }[];
+    };
+    expect(payload2.content).toEqual([{ type: "text/plain", value: "Body" }]);
+  });
+
   it("swallows 4xx/5xx and transport failures", async () => {
     for (const status of [400, 401, 403, 429, 500]) {
       const bad = vi.fn(async () => new Response("no", { status }));
@@ -202,12 +229,24 @@ describe("dispatchMail", () => {
 });
 
 describe("email builders", () => {
-  it("verification and reset mails carry link, token, and TTL", () => {
-    const v = buildVerificationEmail("Layla", "https://app/verify-email?token=tok-123", "tok-123");
-    expect(v.subject).toBe("Verify your Salla Syria email");
-    expect(v.text).toContain("https://app/verify-email?token=tok-123");
-    expect(v.text).toContain("tok-123");
-    expect(v.text).toContain("24 hours");
+  it("verification mail carries the link behind a CTA, never a raw token", () => {
+    const link = "https://app/auth/verify-email?token=tok-123";
+    const v = buildVerificationEmail("Layla Haddad", link, "tok-123");
+    expect(v.subject).toBe("تأكيد بريدك الإلكتروني في سلة سوريا");
+    // Plain text keeps the functional link (required) but no standalone token.
+    expect(v.text).toContain(link);
+    expect(v.text.replace(link, "")).not.toContain("tok-123");
+    expect(v.text).toContain("24 ساعة");
+    expect(v.text).toContain("مرحبًا Layla،");
+    expect(v.text).toContain("© 2025 سلة سوريا");
+    // HTML hides the long URL behind the CTA button and shows no raw token.
+    expect(v.html).toContain(">تأكيد البريد الإلكتروني</a>");
+    expect(v.html).toContain(`href="${link}"`);
+    expect(v.html.replace(link, "")).not.toContain("tok-123");
+    expect(v.html).toContain('dir="rtl"');
+    expect(v.html).toContain('href="https://sallasyria.com/"');
+    expect(v.html).toContain("sallasyria.com</a>");
+    expect(v.html).toContain("جميع الحقوق محفوظة");
     const r = buildResetEmail("Layla", "https://app/reset-password?token=tok-456", "tok-456");
     expect(r.subject).toBe("Reset your Salla Syria password");
     expect(r.text).toContain("tok-456");
@@ -215,6 +254,15 @@ describe("email builders", () => {
     const done = buildResetSuccessEmail("Layla");
     expect(done.text).not.toMatch(/tok|password.*reset.*token/i);
     expect(done.text).toContain("signed out");
+  });
+
+  it("greets by first name and escapes merchant-controlled HTML", () => {
+    const named = buildVerificationEmail("محمد حداد", "https://app/auth/verify-email?token=t", "t");
+    expect(named.text).toContain("مرحبًا محمد،");
+    expect(named.html).toContain("مرحبًا محمد،");
+    const evil = buildVerificationEmail('"><img src=x onerror=alert(1)>', "https://app/auth/verify-email?token=t", "t");
+    expect(evil.html).not.toContain("<img src=x");
+    expect(evil.html).toContain("&lt;img");
   });
 
   it("order confirmation lists server values with store context", () => {
