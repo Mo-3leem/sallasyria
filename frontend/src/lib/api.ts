@@ -531,6 +531,13 @@ export interface PublicCategory {
   sort_order: number;
 }
 
+export interface PublicProductImage {
+  id: string;
+  url: string;
+  alt_text: string | null;
+  sort_order: number;
+}
+
 export interface PublicProduct {
   id: string;
   category_id: string | null;
@@ -538,6 +545,7 @@ export interface PublicProduct {
   slug: string;
   price: number;
   stock_quantity: number | null;
+  images: PublicProductImage[];
 }
 
 export interface CheckoutResult {

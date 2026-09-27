@@ -20,6 +20,7 @@ function fakeDb(tables: {
   stores: Record<string, { id: string; slug: string; name: string; currency: string; is_published: number }>;
   categories: { id: string; store_id: string; name: string; slug: string; parent_id: string | null; sort_order: number; is_active: number }[];
   products: { id: string; store_id: string; category_id: string | null; name: string; slug: string; price: number; stock_quantity: number | null; is_active: number; deleted_at: string | null }[];
+  images: { id: string; store_id: string; product_id: string; url: string; alt_text: string | null; sort_order: number; deleted_at: string | null; created_at: string }[];
 }) {
   const pick = (sql: string, id: string | null, slug: string | null) => {
     if (sql.includes("FROM stores WHERE id = ?")) {
@@ -41,6 +42,11 @@ function fakeDb(tables: {
       return tables.products
         .filter((p) => p.store_id === id && p.deleted_at === null && p.is_active === 1)
         .sort((a, b) => (a.name < b.name ? -1 : 1));
+    }
+    if (sql.includes("FROM product_images")) {
+      return (tables.images ?? [])
+        .filter((img) => img.store_id === id && img.deleted_at === null)
+        .sort((a, b) => a.sort_order - b.sort_order || (a.created_at < b.created_at ? -1 : 1));
     }
     return null;
   };
@@ -73,6 +79,12 @@ const tables = {
     { id: "p2", store_id: "s-pub", category_id: null, name: "Retired", slug: "retired", price: 100, stock_quantity: null, is_active: 0, deleted_at: "2026-01-01T00:00:00Z" },
     { id: "p3", store_id: "s-pub", category_id: null, name: "Off", slug: "off", price: 100, stock_quantity: null, is_active: 0, deleted_at: null },
   ],
+  images: [
+    { id: "i1", store_id: "s-pub", product_id: "p1", url: "https://example.com/a.jpg", alt_text: null, sort_order: 1, deleted_at: null, created_at: "2026-02-01T00:00:00Z" },
+    { id: "i2", store_id: "s-pub", product_id: "p1", url: "https://example.com/b.jpg", alt_text: "Cover", sort_order: 0, deleted_at: null, created_at: "2026-02-02T00:00:00Z" },
+    { id: "i3", store_id: "s-pub", product_id: "p1", url: "https://example.com/retired.jpg", alt_text: null, sort_order: 0, deleted_at: "2026-03-01T00:00:00Z", created_at: "2026-01-01T00:00:00Z" },
+    { id: "i4", store_id: "s-pub", product_id: "p2", url: "https://example.com/hidden.jpg", alt_text: null, sort_order: 0, deleted_at: null, created_at: "2026-02-01T00:00:00Z" },
+  ],
 };
 
 describe("storefront services", () => {
@@ -88,6 +100,21 @@ describe("storefront services", () => {
     expect((await listPublishedCategories(db, "s-pub")).map((c) => c.slug)).toEqual(["live"]);
     expect((await listPublishedProducts(db, "s-pub")).map((p) => p.slug)).toEqual(["live"]);
     expect(await listPublishedProducts(db, "s-draft")).toEqual([]);
+  });
+
+  it("attaches live gallery images in sort order, never retired rows", async () => {
+    const db = fakeDb(tables) as never;
+    const products = await listPublishedProducts(db, "s-pub");
+    expect(products).toHaveLength(1);
+    const live = products[0]!;
+    expect(live.slug).toBe("live");
+    // Cover first (sort_order 0), retired image excluded, retired
+    // product's image never leaks, URLs pass through untouched.
+    expect(live.images.map((img) => img.url)).toEqual([
+      "https://example.com/b.jpg",
+      "https://example.com/a.jpg",
+    ]);
+    expect(live.images[0]).toMatchObject({ alt_text: "Cover", sort_order: 0 });
   });
 });
 

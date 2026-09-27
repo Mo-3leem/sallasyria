@@ -233,6 +233,40 @@ a.shop-card:hover {
   justify-content: center;
   color: var(--primary);
   font-size: 3rem;
+  overflow: hidden;
+}
+.shop-detail-visual img {
+  width: 100%;
+  height: 100%;
+  min-height: 280px;
+  max-height: 420px;
+  object-fit: cover;
+  display: block;
+}
+.shop-detail-thumbs {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.shop-detail-thumbs button {
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--green-50);
+}
+.shop-detail-thumbs button.is-active {
+  border-color: var(--primary);
+}
+.shop-detail-thumbs img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 .shop-detail-info h1 {
   font-size: clamp(1.5rem, 3vw, 2.1rem);

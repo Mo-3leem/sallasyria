@@ -24,6 +24,13 @@ export interface PublicCategory {
   sort_order: number;
 }
 
+export interface PublicProductImage {
+  id: string;
+  url: string;
+  alt_text: string | null;
+  sort_order: number;
+}
+
 export interface PublicProduct {
   id: string;
   category_id: string | null;
@@ -31,6 +38,7 @@ export interface PublicProduct {
   slug: string;
   price: number;
   stock_quantity: number | null;
+  images: PublicProductImage[];
 }
 
 export async function getPublicStore(
@@ -70,6 +78,33 @@ export async function listPublishedProducts(
         ORDER BY name`
     )
     .bind(storeId)
-    .all<PublicProduct>();
-  return res.results ?? [];
+    .all<Omit<PublicProduct, "images">>();
+  const products = res.results ?? [];
+  if (products.length === 0) return [];
+  // Live gallery rows only (retired images stay merchant-private), ordered
+  // with the same sort_order/created_at rule as the merchant image list.
+  // Attached strictly to the published products above, so images of
+  // retired/hidden products can never leak through this payload.
+  const liveIds = new Set(products.map((p) => p.id));
+  const imgs = await db
+    .prepare(
+      `SELECT id, product_id, url, alt_text, sort_order FROM product_images
+        WHERE store_id = ? AND deleted_at IS NULL
+        ORDER BY sort_order, created_at`
+    )
+    .bind(storeId)
+    .all<PublicProductImage & { product_id: string }>();
+  const byProduct = new Map<string, PublicProductImage[]>();
+  for (const img of imgs.results ?? []) {
+    if (!liveIds.has(img.product_id)) continue;
+    const list = byProduct.get(img.product_id) ?? [];
+    list.push({
+      id: img.id,
+      url: img.url,
+      alt_text: img.alt_text,
+      sort_order: img.sort_order,
+    });
+    byProduct.set(img.product_id, list);
+  }
+  return products.map((p) => ({ ...p, images: byProduct.get(p.id) ?? [] }));
 }
