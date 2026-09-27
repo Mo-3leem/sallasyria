@@ -17,6 +17,7 @@ export default function ShopProductPage({
   const [quantity, setQuantity] = useState(1);
   const [added, setAdded] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [photo, setPhoto] = useState(0);
 
   return (
     <ShopPage slug={slug}>
@@ -41,10 +42,46 @@ export default function ShopProductPage({
         const category = categories.find((c) => c.id === product.category_id);
         const soldOut =
           product.stock_quantity !== null && product.stock_quantity <= 0;
+        // Gallery arrives pre-ordered (sort_order); the first image is the
+        // cover, exactly like the merchant dashboard ordering.
+        const photos = product.images ?? [];
+        const current = photos[Math.min(photo, Math.max(photos.length - 1, 0))];
         return (
           <div className="shop-detail">
-            <div className="shop-detail-visual" aria-hidden="true">
-              <i className="fas fa-box"></i>
+            <div>
+              <div className="shop-detail-visual" aria-hidden={photos.length > 0}>
+                {current ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={current.url}
+                    alt={current.alt_text ?? product.name}
+                    loading="lazy"
+                  />
+                ) : (
+                  <i className="fas fa-box" aria-hidden="true"></i>
+                )}
+              </div>
+              {photos.length > 1 && (
+                <div className="shop-detail-thumbs" role="group" aria-label="صور المنتج">
+                  {photos.map((img, i) => (
+                    <button
+                      key={img.id}
+                      type="button"
+                      className={img.id === current.id ? "is-active" : undefined}
+                      aria-label={`صورة ${i + 1}`}
+                      aria-pressed={img.id === current.id}
+                      onClick={() => setPhoto(i)}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={img.url}
+                        alt=""
+                        loading="lazy"
+                      />
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="shop-detail-info">
               <h1>{product.name}</h1>

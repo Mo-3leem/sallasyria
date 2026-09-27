@@ -51,6 +51,15 @@ const publicCategorySchema = z
   })
   .openapi("PublicCategory");
 
+const publicProductImageSchema = z
+  .object({
+    id: z.string(),
+    url: z.string(),
+    alt_text: z.string().nullable(),
+    sort_order: z.number(),
+  })
+  .openapi("PublicProductImage");
+
 const publicProductSchema = z
   .object({
     id: z.string(),
@@ -59,6 +68,7 @@ const publicProductSchema = z
     slug: z.string(),
     price: z.number(),
     stock_quantity: z.number().nullable(),
+    images: z.array(publicProductImageSchema),
   })
   .openapi("PublicProduct");
 
