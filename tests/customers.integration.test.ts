@@ -292,6 +292,33 @@ describe("B5 customers: private management + isolation", () => {
     expect((await api(`${A}/customers/${id}`, {}, jarA)).status).toBe(404);
     expect((await api(`${A}/customers/cust_verify_b5c_b`, { method: "DELETE" }, jarA)).status).toBe(404);
   });
+
+  it("anonymous writes are 401; order history blocks merchant delete with 409", async () => {
+    expect((await api(`${A}/customers/cust_verify_b5c_a`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: "X" }),
+    })).status).toBe(401);
+    expect((await api(`${A}/customers/cust_verify_b5c_a`, { method: "DELETE" })).status).toBe(401);
+
+    const mk = await api(`${A}/customers`, {
+      method: "POST",
+      body: JSON.stringify({ name: "Ordered", phone: "+963911500066" }),
+    });
+    expect(mk.status).toBe(200);
+    const id = (mk.body as { data: { customer: { id: string } } }).data.customer.id;
+    const ord = d1(
+      `INSERT INTO orders (id, store_id, customer_id, order_number, customer_name, customer_phone, shipping_method, shipping_governorate, shipping_address) VALUES ('ord_verify_b5c_hist', 'store_verify_b5c_a', '${id}', 1, 'Ordered', '+963911500066', 'Standard', 'Damascus', 'Street 1');`
+    );
+    expect(ord.ok, `order seed failed: ${ord.error}`).toBe(true);
+    const blocked = await api(`${A}/customers/${id}`, { method: "DELETE" }, jarA);
+    expect(blocked.status).toBe(409);
+    expect(blocked.body).toEqual({
+      ok: false,
+      error: { code: "customer_has_orders", message: expect.any(String) },
+    });
+    // Still there: history intact.
+    expect((await api(`${A}/customers/${id}`, {}, jarA)).status).toBe(200);
+  });
 });
 
 describe("B5 addresses: public create, atomic default swap", () => {
