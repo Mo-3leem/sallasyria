@@ -5,7 +5,8 @@
 // via SQL (no API creates users except POST /auth/register, which hardcodes
 // role='merchant' — the suite proves an admin cannot be minted that way).
 
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
+import { spawnDevServer, stopDevServer, waitForHealthy } from "../scripts/dev-server.mjs";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -63,31 +64,10 @@ function d1FirstValue(sql: string): unknown {
   return r.rows?.[0]?.results?.[0] ? Object.values(r.rows[0].results[0])[0] : undefined;
 }
 
-async function waitForHealth(): Promise<void> {
-  const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(`${BASE}/health`);
-      if (r.ok) return;
-    } catch { /* retry */ }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  throw new Error(`dev server never ready\n${serverOutput.slice(-3000)}`);
-}
+
 
 function killServer(): void {
-  if (!server || server.exitCode !== null) return;
-  try {
-    if (isWindows && server.pid !== undefined) {
-      execFileSync("taskkill", ["/pid", String(server.pid), "/T", "/F"], { stdio: "ignore" });
-    } else {
-      server.kill("SIGTERM");
-    }
-  } catch {
-    try {
-      server.kill("SIGKILL");
-    } catch { /* best effort */ }
-  }
+  stopDevServer(server);
   server = null;
 }
 
@@ -126,15 +106,8 @@ let storeA = "";
 let storeB = "";
 
 beforeAll(async () => {
-  server = spawn(isWindows ? "npx.cmd" : "npx", ["wrangler", "dev", "--port", String(PORT), "--ip", "127.0.0.1"], {
-    cwd: process.cwd(),
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: isWindows,
-    windowsHide: true,
-  });
-  server.stdout?.on("data", (d) => { serverOutput += String(d); });
-  server.stderr?.on("data", (d) => { serverOutput += String(d); });
-  await waitForHealth();
+  server = spawnDevServer(PORT, (d: string) => { serverOutput += d; });
+  await waitForHealthy(BASE, () => server, () => serverOutput);
 
   assertCleanVerify("mvp reset");
   mvpCleanupDeletes();

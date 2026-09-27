@@ -4,13 +4,14 @@
 // scripts/clean-verify.mjs); created plans use unique pl-* codes per run and
 // are removed explicitly (the shared cleanup knows no plan prefix).
 
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { hashPassword } from "../src/lib/password.js";
 import { assertCleanVerify } from "../scripts/clean-verify.mjs";
+import { spawnDevServer, stopDevServer, waitForHealthy } from "../scripts/dev-server.mjs";
 
 const PORT = 18887;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -54,18 +55,6 @@ function qval(sql: string): unknown {
   return rows[0] ? Object.values(rows[0])[0] : undefined;
 }
 
-async function waitForHealth(): Promise<void> {
-  const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(`${BASE}/health`);
-      if (r.ok) return;
-    } catch { /* retry */ }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  throw new Error(`dev server never ready\n${serverOutput.slice(-3000)}`);
-}
-
 let server: ChildProcess | null = null;
 let serverOutput = "";
 
@@ -103,15 +92,8 @@ function cleanTestPlans(): void {
 }
 
 beforeAll(async () => {
-  server = spawn(isWindows ? "npx.cmd" : "npx", ["wrangler", "dev", "--port", String(PORT), "--ip", "127.0.0.1"], {
-    cwd: process.cwd(),
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: isWindows,
-    windowsHide: true,
-  });
-  server.stdout?.on("data", (d) => { serverOutput += String(d); });
-  server.stderr?.on("data", (d) => { serverOutput += String(d); });
-  await waitForHealth();
+  server = spawnDevServer(PORT, (d: string) => { serverOutput += d; });
+  await waitForHealthy(BASE, () => server, () => serverOutput);
 
   assertCleanVerify("plans reset");
   cleanTestPlans();
@@ -144,12 +126,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   cleanTestPlans();
-  if (server && server.exitCode === null) {
-    try {
-      if (isWindows && server.pid !== undefined) execFileSync("taskkill", ["/pid", String(server.pid), "/T", "/F"], { stdio: "ignore" });
-      else server.kill("SIGTERM");
-    } catch { /* best effort */ }
-  }
+  stopDevServer(server);
   server = null;
   assertCleanVerify("plans cleanup");
 }, 120_000);

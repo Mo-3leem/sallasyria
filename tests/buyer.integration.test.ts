@@ -4,13 +4,14 @@
 // Fixtures use the p4- prefix family (no SQL-underscore wildcards) and are
 // deleted child-before-parent at the end with zero-row proof.
 
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
+import { spawnDevServer, stopDevServer, waitForHealthy } from "../scripts/dev-server.mjs";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-const PORT = 18884;
+const PORT = 18893;
 const BASE = `http://127.0.0.1:${PORT}`;
 const isWindows = process.platform === "win32";
 
@@ -56,17 +57,7 @@ function qrows(res: { result?: unknown[] }): Record<string, unknown>[] {
   return first?.results ?? [];
 }
 
-async function waitForHealth(): Promise<void> {
-  const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(`${BASE}/health`);
-      if (r.ok) return;
-    } catch { /* retry */ }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  throw new Error(`dev server never ready\n${serverOutput.slice(-3000)}`);
-}
+
 
 async function api(path: string, init: RequestInit = {}, cookies = "", key: string | null = "__none__") {
   const headers: Record<string, string> = {
@@ -127,15 +118,19 @@ beforeAll(async () => {
   // Pre-clean: a previous aborted run leaves p4- rows behind that would
   // collide with fixture phones/slugs below (409 on re-register).
   expect(cleanAll().ok).toBe(true);
-  server = spawn(isWindows ? "npx.cmd" : "npx", ["wrangler", "dev", "--port", String(PORT), "--ip", "127.0.0.1"], {
-    cwd: process.cwd(),
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: isWindows,
-    windowsHide: true,
-  });
-  server.stdout?.on("data", (d) => { serverOutput += String(d); });
-  server.stderr?.on("data", (d) => { serverOutput += String(d); });
-  await waitForHealth();
+  // Trial-plan fixture: POST /stores auto-grants a trial against the
+  // TRIAL_PLAN_CODE ("basic") plan. That plan lives only in seed.mjs (never
+  // run here), so seed a deterministic one with seed.mjs's own identity and
+  // values: the seed determinism suite wipes `seed-%` rows first, and the
+  // ON CONFLICT clause keeps reruns green. Outside the cleanAll/cleanVerify
+  // prefixes, so no suite wipes it mid-run.
+  expect(
+    d1(
+      `INSERT INTO plans (id, code, name, price_monthly, price_yearly, max_products) VALUES ('seed-plan-basic', 'basic', 'Basic', 50000, 500000, 100) ON CONFLICT(code) DO NOTHING;`
+    ).ok
+  ).toBe(true);
+  server = spawnDevServer(PORT, (d: string) => { serverOutput += d; });
+  await waitForHealthy(BASE, () => server, () => serverOutput);
 
   // Merchant + store (trial grant keeps the gate green) + publish + catalog.
   const reg = await api("/auth/register", {
@@ -197,13 +192,8 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  if (server && server.exitCode === null) {
-    try {
-      if (isWindows && server.pid !== undefined) execFileSync("taskkill", ["/pid", String(server.pid), "/T", "/F"], { stdio: "ignore" });
-      else server.kill("SIGTERM");
-    } catch { /* best effort */ }
-  }
-  server = null;
+    stopDevServer(server);
+    server = null;
   // Fully prefix-based (no fixture ids needed): child-before-parent, one
   // D1 round-trip for deletes, one for users, one for the zero-proof.
   const cleaned = cleanAll();
@@ -436,7 +426,7 @@ describe("P4 buyer accounts", () => {
 
     // Cleanup the second store (no orders/customers involved).
     expect(d1(`DELETE FROM subscriptions WHERE store_id = '${otherId}';DELETE FROM stores WHERE id = '${otherId}';`).ok).toBe(true);
-  });
+  }, 60_000);
 
   it("changes password with current password and keeps the session", async () => {
     const NEW_PASS = "Buyer-New-9x";
@@ -653,9 +643,14 @@ describe("P4 buyer mail", () => {
     }, adminJar);
     const planId = ((data(plan) as { plan: { id: string } }).plan).id;
     const trialId = "sub_p4_trial_1";
+    // Dates are computed at runtime (DB format, no millis): the cron only
+    // selects ends_at inside (now, now + 7d], so hardcoded dates rot.
+    // starts_at = now, ends_at = now + 3d keeps the fixture in-window forever.
+    const fmt = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+    const nowMs = Date.now();
     expect(
       d1(
-        `INSERT INTO subscriptions (id, store_id, plan_id, status, billing_period, price_amount, starts_at, ends_at) VALUES ('${trialId}', '${storeId}', '${planId}', 'trialing', 'monthly', 0, '2026-09-23T12:00:00Z', '2026-09-26T12:00:00Z');`
+        `INSERT INTO subscriptions (id, store_id, plan_id, status, billing_period, price_amount, starts_at, ends_at) VALUES ('${trialId}', '${storeId}', '${planId}', 'trialing', 'monthly', 0, '${fmt(nowMs)}', '${fmt(nowMs + 3 * 24 * 3600 * 1000)}');`
       ).ok
     ).toBe(true);
     const trig = await fetch(`${BASE}/cdn-cgi/local/scheduled`);
