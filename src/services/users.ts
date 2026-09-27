@@ -106,12 +106,19 @@ export interface MerchantPatch {
   is_active?: number;
 }
 
+/** Escape user input for a LIKE pattern (wildcards match literally). */
+function escapeLike(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
 /**
- * Server-side merchant search for the admin list. Matches a query against
- * the normalized email (exact, lowercased) and the phone (canonical form
- * first, then the exact typed value for legacy raw rows — same resolution
- * as login). Un-normalizable phone queries fall back to email-only
- * matching. Capped LIMIT: admin tooling, not a public API.
+ * Server-side merchant search for the admin list. Partial (contains)
+ * matching on the email (lowercased; SQLite LIKE is ASCII
+ * case-insensitive) and on the phone: the raw typed fragment, the
+ * canonical +963 form when the fragment normalizes, and the national
+ * significant digits so national-format fragments also hit canonical
+ * rows. Empty query lists everything (newest first). Capped LIMIT:
+ * admin tooling, not a public API.
  */
 export async function searchMerchants(
   db: D1Database,
@@ -126,20 +133,26 @@ export async function searchMerchants(
       .all<UserPublic>();
     return res.results ?? [];
   }
-  const emailForm = needle.toLowerCase();
-  let phoneForm: string | null = null;
+  const emailLike = `%${escapeLike(needle.toLowerCase())}%`;
+  const rawLike = `%${escapeLike(needle)}%`;
+  let canonicalLike = rawLike;
+  let nationalLike = rawLike;
   try {
-    phoneForm = normalizePhone(needle);
+    const canonical = normalizePhone(needle);
+    canonicalLike = `%${escapeLike(canonical)}%`;
+    nationalLike = `%${escapeLike(canonical.replace(/^\+963/, ""))}%`;
   } catch {
-    phoneForm = null;
+    // Fragment does not normalize (e.g. too short): raw matching still applies.
   }
   const res = await db
     .prepare(
       `SELECT id, phone, email, name, role, email_verified, avatar_url FROM users
-       WHERE role = 'merchant' AND (email = ? OR phone = ? OR phone = ?)
+       WHERE role = 'merchant'
+         AND (email LIKE ? ESCAPE '\\' OR phone LIKE ? ESCAPE '\\'
+              OR phone LIKE ? ESCAPE '\\' OR phone LIKE ? ESCAPE '\\')
        ORDER BY created_at DESC LIMIT 100`
     )
-    .bind(emailForm, phoneForm ?? needle, needle)
+    .bind(emailLike, rawLike, canonicalLike, nationalLike)
     .all<UserPublic>();
   return res.results ?? [];
 }

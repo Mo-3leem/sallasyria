@@ -202,6 +202,26 @@ describe("admin merchants", () => {
     expect((none.body as { data: { merchants: unknown[] } }).data.merchants).toEqual([]);
   });
 
+  it("matches partial email and phone fragments while typing", async () => {
+    async function ids(q: string): Promise<string[]> {
+      const res = await api(`${MERCHANTS}?q=${encodeURIComponent(q)}`, {}, jarAdmin);
+      expect(res.status).toBe(200);
+      return (res.body as { data: { merchants: { id: string }[] } }).data.merchants.map((m) => m.id);
+    }
+    // Email prefix, infix, and case-insensitive forms.
+    expect(await ids("b9ma")).toContain("user_verify_b9_ma");
+    expect(await ids("ma@example")).toContain("user_verify_b9_ma");
+    expect(await ids("B9MA@EXAMPLE")).toContain("user_verify_b9_ma");
+    // Phone infix in stored canonical form and national form.
+    expect(await ids("000083")).toContain("user_verify_b9_ma");
+    expect(await ids("0900000832")).toContain("user_verify_b9_ma");
+    // Literal wildcards match literally (no wildcard injection).
+    expect(await ids("b9ma%")).toEqual([]);
+    expect(await ids("%")).toEqual([]);
+    // Unrelated fragment still matches nothing.
+    expect(await ids("zzz-no-such-merchant")).toEqual([]);
+  });
+
   it("gets a merchant with stores; admin rows and unknown ids 404", async () => {
     const res = await api(M_A, {}, jarAdmin);
     expect(res.status).toBe(200);
