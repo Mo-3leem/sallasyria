@@ -112,13 +112,12 @@ function escapeLike(value: string): string {
 }
 
 /**
- * Server-side merchant search for the admin list. Partial (contains)
+ * Server-side merchant search for the admin list. Prefix (starts-with)
  * matching on the email (lowercased; SQLite LIKE is ASCII
- * case-insensitive) and on the phone: the raw typed fragment, the
- * canonical +963 form when the fragment normalizes, and the national
- * significant digits so national-format fragments also hit canonical
- * rows. Empty query lists everything (newest first). Capped LIMIT:
- * admin tooling, not a public API.
+ * case-insensitive) and on the phone: the raw typed prefix plus the
+ * canonical +963 form when the fragment normalizes, so national-format
+ * prefixes also hit canonical rows. Empty query lists everything (newest
+ * first). Capped LIMIT: admin tooling, not a public API.
  */
 export async function searchMerchants(
   db: D1Database,
@@ -133,14 +132,11 @@ export async function searchMerchants(
       .all<UserPublic>();
     return res.results ?? [];
   }
-  const emailLike = `%${escapeLike(needle.toLowerCase())}%`;
-  const rawLike = `%${escapeLike(needle)}%`;
+  const emailLike = `${escapeLike(needle.toLowerCase())}%`;
+  const rawLike = `${escapeLike(needle)}%`;
   let canonicalLike = rawLike;
-  let nationalLike = rawLike;
   try {
-    const canonical = normalizePhone(needle);
-    canonicalLike = `%${escapeLike(canonical)}%`;
-    nationalLike = `%${escapeLike(canonical.replace(/^\+963/, ""))}%`;
+    canonicalLike = `${escapeLike(normalizePhone(needle))}%`;
   } catch {
     // Fragment does not normalize (e.g. too short): raw matching still applies.
   }
@@ -149,10 +145,10 @@ export async function searchMerchants(
       `SELECT id, phone, email, name, role, email_verified, avatar_url FROM users
        WHERE role = 'merchant'
          AND (email LIKE ? ESCAPE '\\' OR phone LIKE ? ESCAPE '\\'
-              OR phone LIKE ? ESCAPE '\\' OR phone LIKE ? ESCAPE '\\')
+              OR phone LIKE ? ESCAPE '\\')
        ORDER BY created_at DESC LIMIT 100`
     )
-    .bind(emailLike, rawLike, canonicalLike, nationalLike)
+    .bind(emailLike, rawLike, canonicalLike)
     .all<UserPublic>();
   return res.results ?? [];
 }
