@@ -10,6 +10,7 @@ import {
 } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
 import { EmptyState } from "@/components/common/EmptyState";
+import { BackButton } from "@/components/common/BackButton";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import type { Category } from "@/types/api";
 
@@ -341,6 +342,7 @@ export default function CategoriesPage({
 
   return (
     <>
+      <BackButton href={`${base}/settings`} label="العودة إلى إعدادات المتجر" />
       <div className="shell-page-head">
         <h1>التصنيفات</h1>
         <p>نظّم منتجات متجرك في تصنيفات رئيسية وفرعية.</p>

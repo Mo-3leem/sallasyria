@@ -10,6 +10,7 @@ import {
 } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
 import { EmptyState } from "@/components/common/EmptyState";
+import { BackButton } from "@/components/common/BackButton";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import type { Customer } from "@/types/api";
 
@@ -113,6 +114,7 @@ export default function CustomersPage({
 
   return (
     <>
+      <BackButton href={`${base}/settings`} label="العودة إلى إعدادات المتجر" />
       <div className="shell-page-head">
         <h1>العملاء</h1>
         <p>عملاء متجرك المسجلون عند الشراء — لا يوجد دخول للمشترين.</p>

@@ -10,6 +10,7 @@ import {
   paymentStatusLabel,
 } from "@/lib/orders";
 import { EmptyState } from "@/components/common/EmptyState";
+import { BackButton } from "@/components/common/BackButton";
 import type { Order } from "@/types/api";
 
 type LoadState =
@@ -62,6 +63,7 @@ export default function OrdersPage({
 
   return (
     <>
+      <BackButton href={`${base}/settings`} label="العودة إلى إعدادات المتجر" />
       <div className="shell-page-head">
         <h1>الطلبات</h1>
         <p>طلبات متجرك من الأحدث — التفاصيل والتحويلات من صفحة الطلب.</p>

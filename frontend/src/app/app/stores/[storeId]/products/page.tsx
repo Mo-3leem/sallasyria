@@ -10,6 +10,7 @@ import {
 } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
 import { EmptyState } from "@/components/common/EmptyState";
+import { BackButton } from "@/components/common/BackButton";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import type { Category, Product } from "@/types/api";
 
@@ -318,6 +319,7 @@ export default function ProductsPage({
 
   return (
     <>
+      <BackButton href={`${base}/settings`} label="العودة إلى إعدادات المتجر" />
       <div className="shell-page-head">
         <h1>المنتجات</h1>
         <p>جميع منتجات المتجر بما فيها المؤرشفة.</p>
