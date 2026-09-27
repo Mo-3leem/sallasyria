@@ -26,6 +26,12 @@ export function currentBuyer(c: BuyerContext): BuyerIdentity {
   return buyer;
 }
 
+export function currentBuyerSessionId(c: BuyerContext): string {
+  const sid = c.get("buyerSessionId");
+  if (!sid) throw new AppError("unauthorized", 401, "Authentication required.");
+  return sid;
+}
+
 async function authenticateBuyer(c: BuyerContext): Promise<BuyerIdentity> {
   const token = getCookieToken(c.req.header("Cookie") ?? null, BUYER_COOKIE);
   if (token === null) {

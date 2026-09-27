@@ -253,7 +253,7 @@ describe("B7 forced rotation", () => {
     expect(restore.status).toBe(200);
   }, 120_000);
 
-  it("change-password defaults to keeping every session", async () => {
+  it("change-password defaults to revoking other sessions, caller survives", async () => {
     const second = await api("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email: "b7admin@example.com", password: NEW_ADMIN_PASS }),
@@ -261,15 +261,36 @@ describe("B7 forced rotation", () => {
     const jarSecond = cookieOf(second.headers.get("set-cookie"));
     const changed = await api("/auth/change-password", {
       method: "POST",
-      body: JSON.stringify({ current_password: NEW_ADMIN_PASS, new_password: "B7-Keep-Alive-3" }),
+      body: JSON.stringify({ current_password: NEW_ADMIN_PASS, new_password: "B7-Revoke-Others-3" }),
     }, jarBootstrap);
     expect(changed.status).toBe(200);
-    expect((await api("/auth/me", {}, jarSecond)).status).toBe(200);
+    expect((await api("/auth/me", {}, jarSecond)).status).toBe(401);
     expect((await api("/auth/me", {}, jarBootstrap)).status).toBe(200);
     // restore known password for later tests
     const restore = await api("/auth/change-password", {
       method: "POST",
-      body: JSON.stringify({ current_password: "B7-Keep-Alive-3", new_password: NEW_ADMIN_PASS }),
+      body: JSON.stringify({ current_password: "B7-Revoke-Others-3", new_password: NEW_ADMIN_PASS }),
+    }, jarBootstrap);
+    expect(restore.status).toBe(200);
+  }, 120_000);
+
+  it("change-password with explicit false keeps every session", async () => {
+    const second = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: "b7admin@example.com", password: NEW_ADMIN_PASS }),
+    });
+    const jarSecond = cookieOf(second.headers.get("set-cookie"));
+    const changed = await api("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ current_password: NEW_ADMIN_PASS, new_password: "B7-Keep-Alive-4", logout_other_sessions: false }),
+    }, jarBootstrap);
+    expect(changed.status).toBe(200);
+    expect((await api("/auth/me", {}, jarSecond)).status).toBe(200);
+    expect((await api("/auth/me", {}, jarBootstrap)).status).toBe(200);
+    // restore known password for later tests (explicit false keeps the extra session; harmless)
+    const restore = await api("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ current_password: "B7-Keep-Alive-4", new_password: NEW_ADMIN_PASS, logout_other_sessions: false }),
     }, jarBootstrap);
     expect(restore.status).toBe(200);
   }, 120_000);

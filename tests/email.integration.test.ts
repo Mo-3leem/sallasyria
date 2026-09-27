@@ -371,11 +371,16 @@ describe("password reset (live CAS path)", () => {
     expect(statuses[statuses.length - 1]).toBe(429);
   }, 120_000);
 
-  it("reset with the flag revokes sessions; default keeps them", async () => {
+  it("reset revokes every session by default; token stays single-use", async () => {
     await seedToken("user_verify_em_m", "reset", "em-reset-token-1", "2099-01-01T00:00:00Z");
+    const other = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: MERCHANT_EMAIL, password: MERCHANT_PASS }),
+    });
+    const jarOther = cookieOf(other.setCookie);
     const first = await api("/auth/reset-password", {
       method: "POST",
-      body: JSON.stringify({ token: "em-reset-token-1", new_password: "Email-New-1x", logout_other_sessions: true }),
+      body: JSON.stringify({ token: "em-reset-token-1", new_password: "Email-New-1x" }),
     });
     expect(first.status).toBe(200);
     expect(first.body).toEqual({ ok: true, data: { reset: true } });
@@ -390,7 +395,9 @@ describe("password reset (live CAS path)", () => {
       method: "POST",
       body: JSON.stringify({ email: MERCHANT_EMAIL, password: MERCHANT_PASS }),
     })).status).toBe(401);
+    // Both pre-reset sessions are dead.
     expect((await api("/auth/me", {}, jarMerchant)).status).toBe(401);
+    expect((await api("/auth/me", {}, jarOther)).status).toBe(401);
     const fresh = await api("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email: MERCHANT_EMAIL, password: "Email-New-1x" }),
@@ -399,7 +406,7 @@ describe("password reset (live CAS path)", () => {
     jarMerchant = cookieOf(fresh.setCookie);
   }, 120_000);
 
-  it("reset defaults to keeping every session", async () => {
+  it("reset with explicit false keeps every session", async () => {
     const other = await api("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email: MERCHANT_EMAIL, password: "Email-New-1x" }),
@@ -408,16 +415,16 @@ describe("password reset (live CAS path)", () => {
     await seedToken("user_verify_em_m", "reset", "em-reset-token-keep", "2099-01-01T00:00:00Z");
     const res = await api("/auth/reset-password", {
       method: "POST",
-      body: JSON.stringify({ token: "em-reset-token-keep", new_password: "Email-New-3x" }),
+      body: JSON.stringify({ token: "em-reset-token-keep", new_password: "Email-New-3x", logout_other_sessions: false }),
     });
     expect(res.status).toBe(200);
     expect((await api("/auth/me", {}, jarMerchant)).status).toBe(200);
     expect((await api("/auth/me", {}, jarOther)).status).toBe(200);
-    // restore known password for later tests
+    // restore known password for later tests (explicit false keeps sessions alive)
     await seedToken("user_verify_em_m", "reset", "em-reset-token-restore", "2099-01-01T00:00:00Z");
     const restore = await api("/auth/reset-password", {
       method: "POST",
-      body: JSON.stringify({ token: "em-reset-token-restore", new_password: "Email-New-1x" }),
+      body: JSON.stringify({ token: "em-reset-token-restore", new_password: "Email-New-1x", logout_other_sessions: false }),
     });
     expect(restore.status).toBe(200);
   }, 120_000);

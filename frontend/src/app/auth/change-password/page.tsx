@@ -44,7 +44,7 @@ function ChangePasswordContent() {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [logoutOthers, setLogoutOthers] = useState(false);
+  const [logoutOthers, setLogoutOthers] = useState(true);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);

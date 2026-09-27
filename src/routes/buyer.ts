@@ -20,7 +20,7 @@ import {
 import { limitPublicMutations } from "../middleware/public.js";
 import { resolvePublishedStoreBySlug } from "../middleware/store.js";
 import { requireTurnstile } from "../middleware/turnstile.js";
-import { currentBuyer, requireBuyer } from "../middleware/buyer.js";
+import { currentBuyer, currentBuyerSessionId, requireBuyer } from "../middleware/buyer.js";
 import {
   changeBuyerPassword,
   createBuyerSession,
@@ -423,8 +423,8 @@ const changePasswordRoute = createRoute({
   description:
     "Authenticated self-service rotation (no Turnstile: the session is the " +
     "credential, mirroring merchant change-password). Verifies the current " +
-    "password (same 401 as login: no oracle), stores the new hash. The " +
-    "caller's session — and every other session — survives.",
+    "password (same 401 as login: no oracle), stores the new hash, and " +
+    "revokes every other buyer session. The calling session always survives.",
   middleware: [...authed],
   request: {
     params: slugParams,
@@ -440,7 +440,7 @@ const changePasswordRoute = createRoute({
 buyer.openapi(changePasswordRoute, async (c) => {
   const { storeId } = storeScope(c);
   const input = c.req.valid("json");
-  await changeBuyerPassword(getDb(c), storeId, currentBuyer(c).id, input.current_password, input.new_password);
+  await changeBuyerPassword(getDb(c), storeId, currentBuyer(c).id, input.current_password, input.new_password, currentBuyerSessionId(c));
   return ok(c, { changed: true });
 }, validationHook);
 

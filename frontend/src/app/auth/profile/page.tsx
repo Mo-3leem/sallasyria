@@ -37,7 +37,7 @@ function ProfileContent() {
   const [email, setEmail] = useState<string | null>(null);
   const [phone, setPhone] = useState<string | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
-  const [logoutOthers, setLogoutOthers] = useState(false);
+  const [logoutOthers, setLogoutOthers] = useState(true);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -156,7 +156,8 @@ function ProfileContent() {
         email: curEmail.trim() === "" ? null : curEmail.trim(),
         phone: curPhone.trim(),
         ...(identityChanged ? { current_password: currentPassword } : {}),
-        // Explicit opt-in, default false: the calling session always survives.
+        // Secure default (checked): other sessions are revoked on identity
+        // change; the calling session always survives.
         logout_other_sessions: logoutOthers,
       });
       if (!res.ok) {
@@ -170,7 +171,7 @@ function ProfileContent() {
       }
       await refresh();
       setCurrentPassword("");
-      setLogoutOthers(false);
+      setLogoutOthers(true);
       setSaved(true);
     } catch {
       setFormError(NETWORK_ERROR_MESSAGE);

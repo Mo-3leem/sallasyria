@@ -458,10 +458,19 @@ describe("P4 buyer accounts", () => {
     });
     expect(stillOld.status).toBe(200);
 
-    // Correct rotation → 200; the same session survives (no re-login needed).
+    // A second session opened before rotation is revoked by it.
+    const secondLogin = await api(`/s/${SLUG}/account/login`, {
+      method: "POST",
+      body: JSON.stringify({ identity: BUYER_PHONE, password: PASS }),
+    });
+    expect(secondLogin.status).toBe(200);
+    const secondJar = cookieOf(secondLogin.headers.get("set-cookie"), "ss_buyer");
+
+    // Correct rotation → 200; the calling session survives, the other dies.
     const changed = await api(path, body(PASS, NEW_PASS), buyerJar);
     expect(changed.status).toBe(200);
     expect((await api(`/s/${SLUG}/account/me`, {}, buyerJar)).status).toBe(200);
+    expect((await api(`/s/${SLUG}/account/me`, {}, secondJar)).status).toBe(401);
 
     // Old password dead (404, same as login), new password works.
     const deadOld = await api(`/s/${SLUG}/account/login`, {
@@ -479,6 +488,14 @@ describe("P4 buyer accounts", () => {
     // Restore the original password so later tests keep working.
     const back = await api(path, body(NEW_PASS, PASS), freshJar);
     expect(back.status).toBe(200);
+    // Rotation revoked every other session (secure default), so refresh the
+    // fixture jar for later tests with a fresh login.
+    const relogin = await api(`/s/${SLUG}/account/login`, {
+      method: "POST",
+      body: JSON.stringify({ identity: BUYER_PHONE, password: PASS }),
+    });
+    expect(relogin.status).toBe(200);
+    buyerJar = cookieOf(relogin.headers.get("set-cookie"), "ss_buyer");
   });
 
   it("merges a guest cart on login and checks out linked to the account", async () => {

@@ -254,6 +254,9 @@ describe("email builders", () => {
     const done = buildResetSuccessEmail("Layla");
     expect(done.text).not.toMatch(/tok|password.*reset.*token/i);
     expect(done.text).toContain("signed out");
+    const kept = buildResetSuccessEmail("Layla", false);
+    expect(kept.text).not.toContain("signed out");
+    expect(kept.text).toContain("kept as requested");
   });
 
   it("greets by first name and escapes merchant-controlled HTML", () => {
