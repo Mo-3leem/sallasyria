@@ -54,6 +54,12 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install backend dependencies
         run: npm ci
+      # Fresh checkouts have no local D1 state: `wrangler d1 execute --local`
+      # auto-creates an EMPTY database, so every integration suite fails in
+      # assertCleanVerify with "no such table". Apply migrations first (local
+      # only, idempotent, no secrets, no remote writes).
+      - name: Apply migrations to local test database
+        run: npm run db:migrate:local
       - name: Backend test suite (local D1/workerd, no secrets)
         run: npm test
 
