@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "test": "vitest run",
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && npm run check:frontend",
+    "check:frontend": "npm run typecheck --prefix frontend",
     "deploy": "wrangler deploy",
     "db:migrations:create": "wrangler d1 migrations create sallasyria-db",
     "db:migrations:list": "wrangler d1 migrations list sallasyria-db --local",
