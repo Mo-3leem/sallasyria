@@ -546,7 +546,7 @@ const listMerchantsRoute = createRoute({
   summary: "List/search merchants",
   description:
     "Platform admin only. Merchants only (admin accounts never list). " +
-    "Optional ?q= partially matches email (case-insensitive) or phone (any common formatting); capped result set.",
+    "Optional ?q= prefix-matches email (case-insensitive) or phone (any common formatting); capped result set.",
   middleware: [...authedAdmin],
   request: {
     query: z.object({ q: z.string().max(254).optional() }),

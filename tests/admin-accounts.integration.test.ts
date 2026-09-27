@@ -202,19 +202,23 @@ describe("admin merchants", () => {
     expect((none.body as { data: { merchants: unknown[] } }).data.merchants).toEqual([]);
   });
 
-  it("matches partial email and phone fragments while typing", async () => {
+  it("matches email/phone prefixes; middle substrings do not match", async () => {
     async function ids(q: string): Promise<string[]> {
       const res = await api(`${MERCHANTS}?q=${encodeURIComponent(q)}`, {}, jarAdmin);
       expect(res.status).toBe(200);
       return (res.body as { data: { merchants: { id: string }[] } }).data.merchants.map((m) => m.id);
     }
-    // Email prefix, infix, and case-insensitive forms.
+    // Email prefix, and case-insensitive prefix.
     expect(await ids("b9ma")).toContain("user_verify_b9_ma");
-    expect(await ids("ma@example")).toContain("user_verify_b9_ma");
     expect(await ids("B9MA@EXAMPLE")).toContain("user_verify_b9_ma");
-    // Phone infix in stored canonical form and national form.
-    expect(await ids("000083")).toContain("user_verify_b9_ma");
+    // Phone prefix in canonical and national form.
+    expect(await ids("+9639000008")).toContain("user_verify_b9_ma");
     expect(await ids("0900000832")).toContain("user_verify_b9_ma");
+    // Middle-only substrings must NOT match ("000083" is too short to
+    // normalize, so only the raw prefix applies — and it is not one).
+    expect(await ids("ma@example")).not.toContain("user_verify_b9_ma");
+    expect(await ids("example.com")).toEqual([]);
+    expect(await ids("000083")).not.toContain("user_verify_b9_ma");
     // Literal wildcards match literally (no wildcard injection).
     expect(await ids("b9ma%")).toEqual([]);
     expect(await ids("%")).toEqual([]);
