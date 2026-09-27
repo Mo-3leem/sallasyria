@@ -870,6 +870,43 @@
   outline-offset: 2px;
 }
 
+/* ---------- Blocking/error card (destructive actions stopped) ---------- */
+.shell-card-blocking {
+  border: 2px solid #f0b3ab;
+  background: #fff7f6;
+}
+.blocking-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #b91c1c;
+  margin: 0 0 8px;
+}
+.blocking-title i {
+  font-size: 1.2rem;
+}
+.blocking-reason {
+  font-size: 0.9rem;
+  color: #7f1d1d;
+  line-height: 1.9;
+  margin: 0 0 4px;
+}
+.blocking-subtitle {
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: var(--dark);
+  margin: 14px 0 10px;
+}
+.shell-card-blocking-inner {
+  border: 1px solid #f0b3ab;
+  border-radius: var(--radius);
+  background: var(--white);
+  padding: 14px 16px;
+  margin: 12px 0;
+}
+
 /* ---------- Confirm dialog ---------- */
 .confirm-overlay {
   position: fixed;

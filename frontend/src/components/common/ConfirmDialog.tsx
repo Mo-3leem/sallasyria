@@ -7,8 +7,9 @@ import { createPortal } from "react-dom";
  * Reusable confirmation dialog for sensitive actions.
  * Rendered only; callers own the destructive behavior. Optional
  * `requireConfirmText` turns it into a retype-to-confirm dialog for
- * permanent deletions: confirm stays disabled until the typed value
- * matches exactly.
+ * permanent deletions: confirming with empty input shows an inline
+ * validation error, a mismatched value shows a mismatch error, and the
+ * destructive action only runs on an exact match.
  */
 export function ConfirmDialog({
   open,
@@ -19,6 +20,7 @@ export function ConfirmDialog({
   confirming = false,
   requireConfirmText,
   requireConfirmPlaceholder,
+  emptyErrorText = "الرجاء إدخال القيمة المطلوبة للتأكيد.",
   onConfirm,
   onClose,
 }: {
@@ -30,15 +32,18 @@ export function ConfirmDialog({
   confirming?: boolean;
   requireConfirmText?: string;
   requireConfirmPlaceholder?: string;
+  emptyErrorText?: string;
   onConfirm: () => void;
   onClose: () => void;
 }) {
   const [typed, setTyped] = useState("");
   const [copied, setCopied] = useState(false);
+  const [attemptError, setAttemptError] = useState<string | null>(null);
   useEffect(() => {
     if (!open) return;
     setTyped("");
     setCopied(false);
+    setAttemptError(null);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
@@ -51,7 +56,18 @@ export function ConfirmDialog({
   }, [open, onClose]);
 
   if (!open || typeof document === "undefined") return null;
-  const blocked = confirming || (requireConfirmText !== undefined && typed !== requireConfirmText);
+
+  function handleConfirm() {
+    if (requireConfirmText !== undefined && typed !== requireConfirmText) {
+      setAttemptError(
+        typed.trim() === ""
+          ? emptyErrorText
+          : "القيمة المدخلة غير مطابقة للقيمة المطلوبة. انسخها والصقها بدقة."
+      );
+      return;
+    }
+    onConfirm();
+  }
 
   async function copyConfirmText() {
     if (requireConfirmText === undefined || copied) return;
@@ -127,10 +143,20 @@ export function ConfirmDialog({
               className="auth-input"
               dir="ltr"
               value={typed}
-              onChange={(e) => setTyped(e.target.value)}
+              onChange={(e) => {
+                setTyped(e.target.value);
+                setAttemptError(null);
+              }}
               placeholder={requireConfirmPlaceholder}
               autoComplete="off"
+              aria-invalid={attemptError !== null}
+              aria-describedby={attemptError ? "confirm-retype-error" : undefined}
             />
+            {attemptError && (
+              <p id="confirm-retype-error" className="auth-field-error" role="alert">
+                {attemptError}
+              </p>
+            )}
           </div>
         )}
         <div className="confirm-actions">
@@ -145,8 +171,8 @@ export function ConfirmDialog({
           <button
             type="button"
             className="btn btn-primary"
-            onClick={onConfirm}
-            disabled={blocked}
+            onClick={handleConfirm}
+            disabled={confirming}
             autoFocus={requireConfirmText === undefined}
           >
             {confirming ? "جاري التنفيذ..." : confirmLabel}
