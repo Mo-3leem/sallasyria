@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 import { adminApi } from "@/lib/api";
-import type { Customer, MerchantAccount, Store } from "@/types/api";
+import type { Customer, MerchantAccount, Store, Subscription } from "@/types/api";
 import {
   authErrorMessage,
   getErrorCode,
@@ -85,7 +85,13 @@ function AdminMerchantDetail({ id }: { id: string }) {
   // Store deletion inside the blocking flow
   const [storeConfirm, setStoreConfirm] = useState<Store | null>(null);
   const [storeDeleting, setStoreDeleting] = useState(false);
-  const [storeMsg, setStoreMsg] = useState<{ kind: "success" | "error"; storeName: string; text: string } | null>(null);
+  const [storeMsg, setStoreMsg] = useState<{
+    kind: "success" | "error";
+    storeId: string;
+    storeName: string;
+    text: string;
+    subscriptions?: Subscription[];
+  } | null>(null);
 
   // Customers
   const [storeId, setStoreId] = useState("");
@@ -332,7 +338,17 @@ function AdminMerchantDetail({ id }: { id: string }) {
           await refreshAuth();
           return;
         }
-        setStoreMsg({ kind: "error", storeName: target.name, text: storeDeleteMessage(code, res) });
+        if (code === "store_has_subscriptions") {
+          setStoreMsg({
+            kind: "error",
+            storeId: target.id,
+            storeName: target.name,
+            text: storeDeleteMessage(code, res),
+            subscriptions: await loadStoreSubscriptions(target.id),
+          });
+        } else {
+          setStoreMsg({ kind: "error", storeId: target.id, storeName: target.name, text: storeDeleteMessage(code, res) });
+        }
         setStoreConfirm(null);
         return;
       }
@@ -340,12 +356,22 @@ function AdminMerchantDetail({ id }: { id: string }) {
       const fresh = await load();
       const remaining = fresh ? fresh.stores : (blockedStores ?? []).filter((s) => s.id !== target.id);
       setBlockedStores(remaining);
-      setStoreMsg({ kind: "success", storeName: target.name, text: `تم حذف متجر «${target.name}» نهائياً.` });
+      setStoreMsg({ kind: "success", storeId: target.id, storeName: target.name, text: `تم حذف متجر «${target.name}» نهائياً.` });
     } catch {
-      setStoreMsg({ kind: "error", storeName: target.name, text: NETWORK_ERROR_MESSAGE });
+      setStoreMsg({ kind: "error", storeId: target.id, storeName: target.name, text: NETWORK_ERROR_MESSAGE });
       setStoreConfirm(null);
     } finally {
       setStoreDeleting(false);
+    }
+  }
+
+  async function loadStoreSubscriptions(storeId: string): Promise<Subscription[] | undefined> {
+    try {
+      const res = await adminApi.subscriptions.list();
+      if (!res.ok) return undefined;
+      return res.data.subscriptions.filter((s) => s.store_id === storeId);
+    } catch {
+      return undefined;
     }
   }
 
@@ -451,11 +477,13 @@ function AdminMerchantDetail({ id }: { id: string }) {
       </div>
 
       {blockedStores !== null && (
-        <div className="shell-card" ref={blockedRef} role="alert" aria-label="تعذّر حذف التاجر" tabIndex={-1}>
-          <h2 className="shell-card-title">لا يمكن حذف التاجر حاليًا</h2>
-          <p className="shell-note" style={{ marginBottom: 12 }}>
-            لا يمكن حذف هذا التاجر لأنه يمتلك متاجر مرتبطة بحسابه. احذف المتاجر المرتبطة أولًا،
-            ثم يمكنك العودة إلى هنا ومحاولة حذف التاجر مرة أخرى.
+        <div className="shell-card shell-card-blocking" ref={blockedRef} role="alert" aria-label="تعذّر حذف التاجر" tabIndex={-1}>
+          <h2 className="blocking-title">
+            <i className="fas fa-ban" aria-hidden="true"></i>
+            لا يمكن حذف التاجر حاليًا
+          </h2>
+          <p className="blocking-reason">
+            هذا التاجر لديه متاجر مرتبطة بحسابه، لذلك لا يمكن حذف حسابه قبل حذف جميع المتاجر المرتبطة به.
           </p>
           {storeMsg && storeMsg.kind === "success" && (
             <div className="shell-success" role="status" style={{ marginBottom: 12 }}>
@@ -464,12 +492,47 @@ function AdminMerchantDetail({ id }: { id: string }) {
             </div>
           )}
           {storeMsg && storeMsg.kind === "error" && (
-            <div className="shell-error" role="alert" style={{ marginBottom: 12 }}>
-              <i className="fas fa-exclamation-circle" aria-hidden="true"></i>
-              <span>
-                <strong>«{storeMsg.storeName}»: </strong>
-                {storeMsg.text}
-              </span>
+            <div className="shell-card-blocking-inner" role="alert" aria-label={`تعذّر حذف المتجر ${storeMsg.storeName}`}>
+              <h3 className="blocking-title" style={{ fontSize: "0.95rem" }}>
+                <i className="fas fa-ban" aria-hidden="true"></i>
+                لا يمكن حذف المتجر «{storeMsg.storeName}»
+              </h3>
+              <p className="blocking-subtitle">سبب منع الحذف:</p>
+              <p className="blocking-reason">{storeMsg.text}</p>
+              {storeMsg.subscriptions !== undefined && (
+                <>
+                  {storeMsg.subscriptions.length > 0 && (
+                    <>
+                      <p className="blocking-subtitle">الاشتراكات المرتبطة:</p>
+                      <div className="shell-stack" style={{ marginBottom: 12 }}>
+                        {storeMsg.subscriptions.map((sub) => (
+                          <div key={sub.id} className="store-row">
+                            <span className="store-row-icon" aria-hidden="true">
+                              <i className="fas fa-file-contract"></i>
+                            </span>
+                            <span className="store-row-body">
+                              <span className="store-row-name" dir="ltr">{sub.id}</span>
+                              <span className="store-row-meta">
+                                <span>{sub.status}</span>
+                                <span aria-hidden="true">·</span>
+                                <span>{sub.billing_period}</span>
+                              </span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  <p className="blocking-subtitle">الإجراء المطلوب:</p>
+                  <p className="blocking-reason" style={{ marginBottom: 12 }}>
+                    قم بمعالجة/إلغاء الاشتراك المرتبط بهذا المتجر، ثم ارجع إلى هذه الصفحة وحاول حذف المتجر مرة أخرى.
+                  </p>
+                  <Link href="/app/admin/subscriptions" className="btn btn-outline btn-sm">
+                    <i className="fas fa-file-contract" aria-hidden="true"></i>
+                    إدارة الاشتراك
+                  </Link>
+                </>
+              )}
             </div>
           )}
           {blockedStores.length === 0 ? (
@@ -484,9 +547,7 @@ function AdminMerchantDetail({ id }: { id: string }) {
             </>
           ) : (
             <>
-              <p className="shell-note" style={{ marginBottom: 12 }}>
-                المتاجر المرتبطة بهذا التاجر:
-              </p>
+              <p className="blocking-subtitle">المتاجر التي تمنع حذف التاجر:</p>
               <div className="shell-stack">
                 {blockedStores.map((s) => (
                   <div key={s.id} className="store-row">
@@ -613,6 +674,7 @@ function AdminMerchantDetail({ id }: { id: string }) {
         confirming={deleting}
         requireConfirmText={confirmIdentity}
         requireConfirmPlaceholder={confirmIdentity}
+        emptyErrorText="الرجاء إدخال البريد الإلكتروني للتأكيد."
         onClose={() => setConfirmDelete(false)}
         onConfirm={onDelete}
       />
@@ -629,6 +691,7 @@ function AdminMerchantDetail({ id }: { id: string }) {
         confirming={storeDeleting}
         requireConfirmText={storeConfirm?.slug}
         requireConfirmPlaceholder={storeConfirm?.slug}
+        emptyErrorText="الرجاء إدخال رابط المتجر للتأكيد."
         onClose={() => setStoreConfirm(null)}
         onConfirm={onConfirmStoreDelete}
       />

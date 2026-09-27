@@ -260,6 +260,11 @@ function AdminCustomerBody({
         confirming={deleting}
         requireConfirmText={confirmIdentity}
         requireConfirmPlaceholder={confirmIdentity}
+        emptyErrorText={
+          customer.email
+            ? "الرجاء إدخال البريد الإلكتروني للتأكيد."
+            : "الرجاء إدخال رقم الهاتف للتأكيد."
+        }
         onClose={() => setConfirmDelete(false)}
         onConfirm={onDelete}
       />
