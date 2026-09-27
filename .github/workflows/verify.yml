@@ -1,10 +1,11 @@
-# Post-MVP verification: backend + frontend typechecks on every push/PR.
-# No secrets, no external services, no deployment.
+# Post-MVP verification: typechecks, frontend build, backend tests, secret
+# scan on every push/PR. No production secrets, no external services
+# (all tests run against local D1/workerd), no deployment.
 name: verify
 
 on:
   push:
-    branches: [phase/post-mvp-hardening]
+    branches: [main, phase/post-mvp-hardening]
   pull_request:
 
 jobs:
@@ -12,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -25,3 +28,41 @@ jobs:
         run: npm ci --prefix frontend
       - name: Verify (backend tsc + frontend typecheck)
         run: npm run check
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+      - name: Frontend production build
+        run: npm run build --prefix frontend
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install backend dependencies
+        run: npm ci
+      - name: Backend test suite (local D1/workerd, no secrets)
+        run: npm test
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Picks up .gitleaks.toml at the repo root; fails on any leak outside
+      # the documented test-fixture/build-output allowlists.
+      - uses: gitleaks/gitleaks-action@v2
