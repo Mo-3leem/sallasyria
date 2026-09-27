@@ -396,7 +396,7 @@ auth.openapi(forgotPasswordRoute, async (c) => {
       dispatchMail(
         c,
         sendMail(
-          { to: found.email, subject: msg.subject, text: msg.text },
+          { to: found.email, subject: msg.subject, text: msg.text, html: msg.html },
           { apiKey: c.env.SENDGRID_API_KEY, from: c.env.MAIL_FROM }
         )
       );

@@ -247,10 +247,20 @@ describe("email builders", () => {
     expect(v.html).toContain('href="https://sallasyria.com/"');
     expect(v.html).toContain("sallasyria.com</a>");
     expect(v.html).toContain("جميع الحقوق محفوظة");
-    const r = buildResetEmail("Layla", "https://app/reset-password?token=tok-456", "tok-456");
-    expect(r.subject).toBe("Reset your Salla Syria password");
-    expect(r.text).toContain("tok-456");
-    expect(r.text).toContain("1 hour");
+    const r = buildResetEmail("Layla Haddad", "https://app/reset-password?token=tok-456", "tok-456");
+    expect(r.subject).toBe("إعادة تعيين كلمة المرور في سلة سوريا");
+    // Same contract as the verification mail: link behind a CTA, never a raw token.
+    expect(r.text).toContain("https://app/reset-password?token=tok-456");
+    expect(r.text.replace("https://app/reset-password?token=tok-456", "")).not.toContain("tok-456");
+    expect(r.text).toContain("ساعة واحدة");
+    expect(r.text).toContain("مرحبًا Layla،");
+    expect(r.text).toContain("© 2025 سلة سوريا");
+    expect(r.html).toContain(">إعادة تعيين كلمة المرور</a>");
+    expect(r.html).toContain('href="https://app/reset-password?token=tok-456"');
+    expect(r.html.replace("https://app/reset-password?token=tok-456", "")).not.toContain("tok-456");
+    expect(r.html).toContain('dir="rtl"');
+    expect(r.html).toContain("سلة سوريا</span>");
+    expect(r.html).toContain("جميع الحقوق محفوظة");
     const done = buildResetSuccessEmail("Layla");
     expect(done.text).not.toMatch(/tok|password.*reset.*token/i);
     expect(done.text).toContain("signed out");
