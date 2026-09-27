@@ -254,15 +254,17 @@ export async function setBuyerPassword(
 
 // Self-service password change (POST /:slug/account/change-password).
 // Verifies the current password (same invalid_credentials code as merchant
-// change-password: no oracle), stores the new hash. Unlike setBuyerPassword
-// (reset flow), the caller's session — and every other session — survives,
-// mirroring the merchant default (logout_other_sessions false).
+// change-password: no oracle), stores the new hash, and revokes every OTHER
+// buyer session atomically — mirroring the merchant secure default. The
+// caller's own session (excluded by id) always survives, unlike
+// setBuyerPassword (reset flow) which revokes all sessions unconditionally.
 export async function changeBuyerPassword(
   db: D1Database,
   storeId: string,
   buyerId: string,
   currentPassword: string,
   newPassword: string,
+  callerSessionId: string,
   nowIso: string = touch()
 ): Promise<void> {
   const row = await db
@@ -272,10 +274,14 @@ export async function changeBuyerPassword(
   if (!row?.password_hash || !(await verifyPassword(currentPassword, row.password_hash))) {
     throw new AppError("invalid_credentials", 401, "Invalid email or password.");
   }
-  await db
-    .prepare("UPDATE customers SET password_hash = ?, updated_at = ? WHERE store_id = ? AND id = ?")
-    .bind(await hashPassword(newPassword), nowIso, storeId, buyerId)
-    .run();
+  await db.batch([
+    db
+      .prepare("UPDATE customers SET password_hash = ?, updated_at = ? WHERE store_id = ? AND id = ?")
+      .bind(await hashPassword(newPassword), nowIso, storeId, buyerId),
+    db
+      .prepare("UPDATE buyer_sessions SET revoked_at = ? WHERE customer_id = ? AND id != ? AND revoked_at IS NULL")
+      .bind(nowIso, buyerId, callerSessionId),
+  ]);
 }
 
 // Store that owns a customer (token-store binding check for verify/reset).

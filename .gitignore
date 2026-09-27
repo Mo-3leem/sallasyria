@@ -1,11 +1,18 @@
-@"
 node_modules/
 .wrangler/
 .dev.vars
 .dev.vars.*.local
 
+# Local environment files (never commit real values; examples stay tracked)
+.env
+.env.local
+.env.*.local
+!.env.example
+frontend/.env*
+!frontend/.env.example
+
 # Next.js
 .next/
 out/
-"@ | Set-Content .gitignore
+
 *.tsbuildinfo

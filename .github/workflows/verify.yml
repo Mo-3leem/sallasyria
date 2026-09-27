@@ -1,0 +1,27 @@
+# Post-MVP verification: backend + frontend typechecks on every push/PR.
+# No secrets, no external services, no deployment.
+name: verify
+
+on:
+  push:
+    branches: [phase/post-mvp-hardening]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - name: Install backend dependencies
+        run: npm ci
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+      - name: Verify (backend tsc + frontend typecheck)
+        run: npm run check

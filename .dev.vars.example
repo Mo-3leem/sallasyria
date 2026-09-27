@@ -1,11 +1,13 @@
 # Copy to .dev.vars for local development (NEVER commit the real file).
 # Production values live ONLY in `wrangler secret` / dashboard — never here.
 #
-# Bootstrap admin password used by scripts/seed.mjs. After first login +
-# rotation, UNSET/rotate this value: while set, every admin request pays one
-# extra password check (rotation enforcement), and the value itself is a live
-# credential as long as any admin still uses it.
-ADMIN_BOOTSTRAP_PASSWORD=change-me-before-seeding
+# Bootstrap admin password used by scripts/seed.mjs. LOCAL/DEV ONLY — never a
+# real credential. Generate a fresh value per machine (e.g. `openssl rand
+# -base64 24`) and keep it in your untracked `.dev.vars`, never here.
+# After first login + rotation, UNSET/rotate this value: while set, every
+# admin request pays one extra password check (rotation enforcement), and
+# the value itself is a live credential as long as any admin still uses it.
+# ADMIN_BOOTSTRAP_PASSWORD=
 
 # Cloudflare Turnstile secret for public-mutation bot defense.
 # Absent locally = documented dev bypass; required in production.

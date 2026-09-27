@@ -356,9 +356,9 @@ export async function createMerchant(
   return row;
 }
 
-// Password-hash rotation WITHOUT session revocation (opt-out counterpart to
-// resetUserPassword below). Used by user-initiated flows whose revocation is
-// explicitly opt-in; the caller keeps every session either way.
+// Password-hash rotation WITHOUT session revocation (explicit opt-out
+// counterpart to resetUserPassword below). Used only when the caller passes
+// logout_other_sessions false; the caller keeps every session either way.
 export async function setPasswordHash(
   db: D1Database,
   targetId: string,

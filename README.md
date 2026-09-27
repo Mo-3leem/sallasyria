@@ -5,7 +5,7 @@
 ```powershell
 npm run dev              # wrangler dev (Worker + local D1)
 npm test                 # vitest run (B1 unit + route tests)
-npm run check            # tsc --noEmit
+npm run check            # backend tsc + frontend typecheck
 npm run db:migrate:local # apply migrations to local D1
 npm run db:test:all      # full DB verification suite (must stay green)
 npm run db:clean         # remove all verification fixtures

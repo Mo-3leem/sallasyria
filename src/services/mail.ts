@@ -139,13 +139,16 @@ export function buildResetEmail(name: string, link: string, token: string): { su
   };
 }
 
-export function buildResetSuccessEmail(name: string): { subject: string; text: string } {
+export function buildResetSuccessEmail(name: string, sessionsRevoked = true): { subject: string; text: string } {
   return {
     subject: "Your Salla Syria password was reset",
     text:
       `Hi ${name},\n\n` +
-      `Your password was just reset and every session was signed out. ` +
-      `If this was not you, contact the platform admin immediately.\n`,
+      (sessionsRevoked
+        ? `Your password was just reset and every session was signed out. ` +
+          `If this was not you, contact the platform admin immediately.\n`
+        : `Your password was just reset (existing sessions were kept as requested). ` +
+          `If this was not you, contact the platform admin immediately.\n`),
   };
 }
 

@@ -23,7 +23,7 @@ function ResetPasswordForm() {
   const { locked, remaining, lock } = useCooldown();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [logoutOthers, setLogoutOthers] = useState(false);
+  const [logoutOthers, setLogoutOthers] = useState(true);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [done, setDone] = useState(false);

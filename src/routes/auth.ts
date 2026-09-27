@@ -413,7 +413,7 @@ const resetPasswordSchema = z.object({
     .string()
     .min(PASSWORD_RULES.minNewChars)
     .max(PASSWORD_RULES.maxChars),
-  logout_other_sessions: z.boolean().default(false),
+  logout_other_sessions: z.boolean().default(true),
 });
 
 const resetPasswordRoute = createRoute({
@@ -421,8 +421,9 @@ const resetPasswordRoute = createRoute({
   path: "/reset-password",
   summary: "Reset a password with an emailed token",
   description:
-    "Redeems a single-use reset token (1h TTL) and sets the new password. Sessions are revoked " +
-    "only when logout_other_sessions is true (default false, keep everything); there is no calling " +
+    "Redeems a single-use reset token (1h TTL) and sets the new password. All sessions are revoked " +
+    "by default (logout_other_sessions defaults true); pass logout_other_sessions false explicitly " +
+    "to keep existing sessions (weaker: a stolen session would survive the reset). There is no calling " +
     "session in this token flow. Unknown, expired, and already-used " +
     "tokens return an identical 400. A confirmation email is sent best-effort afterwards.",
   request: {
@@ -431,7 +432,7 @@ const resetPasswordRoute = createRoute({
   responses: {
     200: {
       content: { "application/json": { schema: okOf(z.object({ reset: z.boolean() })) } },
-      description: "Password reset; sessions revoked only when requested",
+      description: "Password reset; all sessions revoked unless explicitly kept",
     },
     400: {
       content: { "application/json": { schema: failEnvelope } },
@@ -457,10 +458,12 @@ auth.openapi(resetPasswordRoute, async (c) => {
     throw new AppError("invalid_token", 400, "Invalid or expired token.");
   }
   const now = touch();
-  // Opt-in revocation only: by default the hash rotates while every session
-  // stays alive. The forced variant (existing resetUserPassword, also used by
-  // the admin reset) additionally revokes all target sessions.
-  if (input.logout_other_sessions) {
+  // Secure default: the hash rotates AND every live session is revoked in one
+  // batch (resetUserPassword), so a stolen session cannot survive the reset.
+  // Explicit logout_other_sessions false keeps the old opt-out (hash only);
+  // the confirmation email below is worded to match whichever path ran.
+  const sessionsRevoked = input.logout_other_sessions;
+  if (sessionsRevoked) {
     await resetUserPassword(getDb(c), claimed.userId, hashPassword(input.new_password), now);
   } else {
     await setPasswordHash(getDb(c), claimed.userId, hashPassword(input.new_password), now);
@@ -469,7 +472,7 @@ auth.openapi(resetPasswordRoute, async (c) => {
   try {
     const account = await getUserPublic(getDb(c), claimed.userId);
     if (account && account.email) {
-      const msg = buildResetSuccessEmail(publicUser(account).name);
+      const msg = buildResetSuccessEmail(publicUser(account).name, sessionsRevoked);
       dispatchMail(
         c,
         sendMail(
@@ -1041,22 +1044,24 @@ const changePasswordSchema = z.object({
     .string()
     .min(PASSWORD_RULES.minNewChars)
     .max(PASSWORD_RULES.maxChars),
-  logout_other_sessions: z.boolean().default(false),
+  logout_other_sessions: z.boolean().default(true),
 });
 
 // POST /auth/change-password — self-service rotation (B7). Verifies the
 // current password (same invalid_credentials code as login: no oracle),
-// stores the new scrypt hash. Other sessions are revoked only on explicit
-// opt-in (logout_other_sessions, default false); the caller keeps its own
-// either way so the rotation flow itself is not interrupted.
+// stores the new scrypt hash. Other sessions are revoked by default
+// (logout_other_sessions defaults true); pass false explicitly to keep them.
+// The caller keeps its own session either way so the rotation flow itself is
+// not interrupted.
 const changePasswordRoute = createRoute({
   method: "post",
   path: "/change-password",
   summary: "Change own password",
   description:
     "Verifies the current password (same 401 as login: no oracle), stores the new scrypt hash. " +
-    "Other sessions are revoked only when logout_other_sessions is true (default false, keep everything); " +
-    "the calling session always survives. New password minimum 8 characters.",
+    "Other sessions are revoked by default (logout_other_sessions defaults true, keep nothing); " +
+    "pass logout_other_sessions false explicitly to keep other sessions. " +
+    "The calling session always survives. New password minimum 8 characters.",
   middleware: [requireAuth],
   request: {
     body: { content: { "application/json": { schema: changePasswordSchema } } },
@@ -1066,7 +1071,7 @@ const changePasswordRoute = createRoute({
       content: {
         "application/json": { schema: okOf(z.object({ changed: z.boolean() })) },
       },
-      description: "Password changed; other sessions revoked only when requested",
+      description: "Password changed; other sessions revoked unless explicitly kept",
     },
     400: {
       content: { "application/json": { schema: failEnvelope } },
@@ -1090,9 +1095,10 @@ auth.openapi(changePasswordRoute, async (c) => {
     throw new AppError("invalid_credentials", 401, "Invalid email or password.");
   }
   const now = touch();
-  // The sessions statement is included only on explicit opt-in; by default
-  // (false) the hash rotates while every session — including the caller's —
-  // stays alive.
+  // Secure default: revoke every OTHER session atomically with the hash
+  // update; the caller's own session (excluded by id) always survives so the
+  // rotation flow is not interrupted. Explicit false keeps the old behavior
+  // (hash only, every session survives).
   const statements = [
     getDb(c)
       .prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
