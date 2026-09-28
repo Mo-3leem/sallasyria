@@ -16,6 +16,7 @@ import { buildResetEmail, buildResetSuccessEmail, buildVerificationEmail, dispat
 import { normalizeEmail } from "../lib/email.js";
 import { normalizePhone } from "../lib/phone.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
+import { idParam } from "../openapi/params.js";
 import { auditLog } from "../lib/audit.js";
 import { resourceId } from "../db/tenant.js";
 import { uuidv7 } from "../lib/ids.js";
@@ -740,6 +741,108 @@ auth.openapi(logoutOthersRoute, async (c) => {
     .bind(now, now, user.id, currentSessionId(c))
     .run();
   return ok(c, { revoked: res.meta.changes ?? 0 });
+}, validationHook);
+
+// GET /auth/sessions — list the caller's live sessions for the session
+// management UI. Never accepts a user id: identity comes only from the
+// session. Returns safe metadata only (no token, no token_hash); revoked and
+// expired rows are excluded, and the calling session is flagged.
+const sessionIdParams = z.object({ id: idParam });
+
+const sessionEntrySchema = z.object({
+  id: z.string(),
+  created_at: z.string(),
+  last_used_at: z.string().nullable(),
+  current: z.boolean(),
+});
+
+const listSessionsRoute = createRoute({
+  method: "get",
+  path: "/sessions",
+  summary: "List my live sessions",
+  description:
+    "Returns the caller's non-revoked, unexpired sessions newest first with the current session flagged. Metadata only: no token material is ever serialized.",
+  middleware: [requireAuth],
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: okOf(z.object({ sessions: z.array(sessionEntrySchema) })) },
+      },
+      description: "Caller's live sessions",
+    },
+    401: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Unauthenticated",
+    },
+  },
+});
+
+auth.openapi(listSessionsRoute, async (c) => {
+  const user = currentUser(c);
+  const now = touch();
+  const rows = await getDb(c)
+    .prepare(
+      "SELECT id, created_at, last_used_at FROM sessions WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY created_at DESC"
+    )
+    .bind(user.id, now)
+    .all<{ id: string; created_at: string; last_used_at: string | null }>();
+  const current = currentSessionId(c);
+  return ok(c, {
+    sessions: (rows.results ?? []).map((r) => ({ ...r, current: r.id === current })),
+  });
+}, validationHook);
+
+// DELETE /auth/sessions/:id — revoke one of the caller's own non-current
+// sessions (per-session "log out elsewhere"). Caller-scoped: the UPDATE is
+// keyed by (id, user_id), so unknown and foreign ids answer an identical
+// 404 and reveal nothing. The current session is rejected with 400 (use
+// POST /auth/logout for that); already-revoked rows 404 like unknown ones.
+// Rows are never deleted: revoked_at preserves the audit trail.
+const deleteSessionRoute = createRoute({
+  method: "delete",
+  path: "/sessions/:id",
+  summary: "Revoke one of my sessions",
+  description:
+    "Revokes a single non-current session of the caller. Unknown, foreign, and already-revoked ids answer an identical 404; the current session is rejected (log out instead).",
+  middleware: [requireAuth],
+  request: { params: sessionIdParams },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: okOf(z.object({ revoked: z.boolean() })) },
+      },
+      description: "Session revoked",
+    },
+    400: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Cannot revoke the current session here",
+    },
+    401: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Unauthenticated",
+    },
+    404: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Unknown session",
+    },
+  },
+});
+
+auth.openapi(deleteSessionRoute, async (c) => {
+  const user = currentUser(c);
+  const targetId = resourceId(c);
+  if (targetId === currentSessionId(c)) {
+    throw new AppError("cannot_revoke_current", 400, "Cannot revoke the current session here. Log out instead.");
+  }
+  const now = touch();
+  const res = await getDb(c)
+    .prepare("UPDATE sessions SET revoked_at = ?, updated_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL")
+    .bind(now, now, targetId, user.id)
+    .run();
+  if ((res.meta.changes ?? 0) === 0) {
+    throw new AppError("session_not_found", 404, "Session not found.");
+  }
+  return ok(c, { revoked: true });
 }, validationHook);
 
 const meRoute = createRoute({

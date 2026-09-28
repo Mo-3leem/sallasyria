@@ -19,6 +19,14 @@ export interface MerchantAccount {
   is_active?: number;
 }
 
+/** Own live session (safe metadata only — never token material). */
+export interface SessionEntry {
+  id: string;
+  created_at: string;
+  last_used_at: string | null;
+  current: boolean;
+}
+
 export interface LoginResponse {  user: User;
   must_rotate: boolean;
 }
