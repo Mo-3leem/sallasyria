@@ -12,7 +12,7 @@ import {
   issueEmailToken,
   redeemEmailToken,
 } from "../services/email-tokens.js";
-import { buildResetEmail, buildResetSuccessEmail, buildVerificationEmail, dispatchMail, sendMail } from "../services/mail.js";
+import { buildEmailChangeNotice, buildResetEmail, buildResetSuccessEmail, buildVerificationEmail, dispatchMail, sendMail } from "../services/mail.js";
 import { normalizeEmail } from "../lib/email.js";
 import { normalizePhone } from "../lib/phone.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
@@ -896,6 +896,8 @@ const patchMeRoute = createRoute({
     "Partial update of name, email, phone, plus logout_other_sessions (default false, keep everything). " +
     "Phone/email changes require current_password; with logout_other_sessions true all other " +
     "sessions are revoked while the current session stays alive, with false (or omitted) every session survives. " +
+    "Changing the email resets email_verified and mails a fresh verification link to the new address " +
+    "(the current session survives; login requires verification afterwards). " +
     "id, role, is_active, and password_hash in the body are 400.",
   middleware: [requireAuth],
   request: {
@@ -961,6 +963,52 @@ auth.openapi(patchMeRoute, async (c) => {
     phone: normalizedPhone,
   });
   if (!updated) throw new AppError("internal", 500, "Something went wrong.");
+  // Re-verification on email change: the new address must prove ownership
+  // before it is trusted, so it starts unverified. Issuing the token also
+  // retires any live verify tokens for previous addresses (same mechanism
+  // as resend). Skipped when the address is removed entirely (null): there
+  // is nothing to verify, and phone login keeps working on the kept flag.
+  // The current session always survives; login gates on the flag afterwards.
+  let profile = updated;
+  if (emailChanged && updated.email !== null) {
+    const nowVerify = touch();
+    await getDb(c)
+      .prepare("UPDATE users SET email_verified = 0, updated_at = ? WHERE id = ?")
+      .bind(nowVerify, user.id)
+      .run();
+    const issued = await issueEmailToken(getDb(c), user.id, "verify", VERIFY_TOKEN_TTL_MS);
+    const oldEmail = user.email;
+    try {
+      const msg = buildVerificationEmail(
+        updated.name,
+        `${appUrl(c.env)}/auth/verify-email?token=${issued.token}`,
+        issued.token
+      );
+      dispatchMail(
+        c,
+        sendMail(
+          { to: updated.email, subject: msg.subject, text: msg.text, html: msg.html },
+          { apiKey: c.env.SENDGRID_API_KEY, from: c.env.MAIL_FROM }
+        )
+      );
+      if (oldEmail) {
+        const notice = buildEmailChangeNotice(updated.name);
+        dispatchMail(
+          c,
+          sendMail(
+            { to: oldEmail, subject: notice.subject, text: notice.text },
+            { apiKey: c.env.SENDGRID_API_KEY, from: c.env.MAIL_FROM }
+          )
+        );
+      }
+    } catch {
+      // Best-effort mail, like registration/resend: the flag reset and the
+      // token stand on their own, and authed resend remains available.
+    }
+    const fresh = await getUserPublic(getDb(c), user.id);
+    if (!fresh) throw new AppError("internal", 500, "Something went wrong.");
+    profile = fresh;
+  }
   if ((emailChanged || phoneChanged) && input.logout_other_sessions) {
     // Other sessions only: the caller's session always survives (its id is
     // excluded), same statement shape as the change-password route.
@@ -971,7 +1019,7 @@ auth.openapi(patchMeRoute, async (c) => {
       .run();
   }
   auditLog("user.profile.update", { actor: user.id, result: user.id });
-  return ok(c, { user: await userWithAvatar(c, updated), reauth_required: false });
+  return ok(c, { user: await userWithAvatar(c, profile), reauth_required: false });
 }, validationHook);
 
 // POST /auth/me/avatar — self-service profile picture upload. Multipart
