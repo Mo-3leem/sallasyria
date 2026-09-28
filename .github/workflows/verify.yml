@@ -66,9 +66,13 @@ jobs:
   secrets:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       # Picks up .gitleaks.toml at the repo root; fails on any leak outside
-      # the documented test-fixture/build-output allowlists.
-      - uses: gitleaks/gitleaks-action@v2
+      # the documented test-fixture/build-output allowlists. v3 requires the
+      # automatic GITHUB_TOKEN for pull-request scans (no PAT, no custom
+      # secret: secrets.GITHUB_TOKEN is provided by Actions itself).
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
