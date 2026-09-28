@@ -4,7 +4,8 @@
 // carrying a TEST-ONLY signing secret (same pattern as the B7 bootstrap
 // test); the file is removed in afterAll with an existence assertion.
 
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
+import { spawnDevServer, stopDevServer, waitForHealthy } from "../scripts/dev-server.mjs";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,17 +47,7 @@ function d1(sql: string) {
   }
 }
 
-async function waitForHealth(): Promise<void> {
-  const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(`${BASE}/health`);
-      if (r.ok) return;
-    } catch { /* retry */ }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  throw new Error(`dev server never ready\n${serverOutput.slice(-3000)}`);
-}
+
 
 async function apiRaw(path: string, init: RequestInit = {}, cookies = ""): Promise<Response> {
   const doFetch = () =>
@@ -129,15 +120,8 @@ beforeAll(async () => {
   }
   writeFileSync(DEV_VARS, `URL_SIGNING_SECRET=${SECRET}\n`, "utf8");
 
-  server = spawn(isWindows ? "npx.cmd" : "npx", ["wrangler", "dev", "--port", String(PORT), "--ip", "127.0.0.1"], {
-    cwd: process.cwd(),
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: isWindows,
-    windowsHide: true,
-  });
-  server.stdout?.on("data", (d) => { serverOutput += String(d); });
-  server.stderr?.on("data", (d) => { serverOutput += String(d); });
-  await waitForHealth();
+  server = spawnDevServer(PORT, (d: string) => { serverOutput += d; });
+  await waitForHealthy(BASE, () => server, () => serverOutput);
 
   assertCleanVerify("b8 reset");
   const h = hashPassword(PASS);
@@ -172,12 +156,7 @@ afterAll(async () => {
   try {
     assertCleanVerify("b8 end");
   } finally {
-    if (server && server.exitCode === null) {
-      try {
-        if (isWindows && server.pid !== undefined) execFileSync("taskkill", ["/pid", String(server.pid), "/T", "/F"], { stdio: "ignore" });
-        else server.kill("SIGTERM");
-      } catch { /* best effort */ }
-    }
+    stopDevServer(server);
     server = null;
     if (existsSync(DEV_VARS)) rmSync(DEV_VARS, { force: true });
     if (existsSync(DEV_VARS)) throw new Error(".dev.vars was not removed");

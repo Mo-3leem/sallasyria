@@ -2,7 +2,8 @@
 // plan limits + subscription gate. Real workerd + real local D1. Fixtures use
 // user_verify_b4c_* (covered by scripts/clean-verify.mjs). Two logins total.
 
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
+import { spawnDevServer, stopDevServer, waitForHealthy } from "../scripts/dev-server.mjs";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,17 +42,7 @@ function d1(sql: string) {
   }
 }
 
-async function waitForHealth(): Promise<void> {
-  const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(`${BASE}/health`);
-      if (r.ok) return;
-    } catch { /* retry */ }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  throw new Error(`dev server never ready\n${serverOutput.slice(-3000)}`);
-}
+
 
 async function api(path: string, init: RequestInit = {}, cookies = "") {
   const res = await fetch(`${BASE}${path}`, {
@@ -83,15 +74,8 @@ let jarA = "";
 let jarB = "";
 
 beforeAll(async () => {
-  server = spawn(isWindows ? "npx.cmd" : "npx", ["wrangler", "dev", "--port", String(PORT), "--ip", "127.0.0.1"], {
-    cwd: process.cwd(),
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: isWindows,
-    windowsHide: true,
-  });
-  server.stdout?.on("data", (d) => { serverOutput += String(d); });
-  server.stderr?.on("data", (d) => { serverOutput += String(d); });
-  await waitForHealth();
+  server = spawnDevServer(PORT, (d: string) => { serverOutput += d; });
+  await waitForHealthy(BASE, () => server, () => serverOutput);
 
   const h = hashPassword(PASS);
   assertCleanVerify("b4 reset");
@@ -136,12 +120,7 @@ afterAll(async () => {
   try {
     assertCleanVerify("b4 end");
   } finally {
-    if (server && server.exitCode === null) {
-      try {
-        if (isWindows && server.pid !== undefined) execFileSync("taskkill", ["/pid", String(server.pid), "/T", "/F"], { stdio: "ignore" });
-        else server.kill("SIGTERM");
-      } catch { /* best effort */ }
-    }
+    stopDevServer(server);
     server = null;
   }
 }, 60_000);

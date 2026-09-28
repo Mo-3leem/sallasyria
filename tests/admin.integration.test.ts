@@ -6,7 +6,8 @@
 // server (wrangler dev reads it at boot), and deletes it in afterAll with an
 // existence assertion. The value is unique per run and never the real secret.
 
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
+import { spawnDevServer, stopDevServer, waitForHealthy } from "../scripts/dev-server.mjs";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,17 +56,7 @@ function qrows(res: { result?: unknown[] }): Record<string, unknown>[] {
   return first?.results ?? [];
 }
 
-async function waitForHealth(): Promise<void> {
-  const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(`${BASE}/health`);
-      if (r.ok) return;
-    } catch { /* retry */ }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  throw new Error(`dev server never ready\n${serverOutput.slice(-3000)}`);
-}
+
 
 async function api(path: string, init: RequestInit = {}, cookies = "") {
   const doFetch = () =>
@@ -130,15 +121,8 @@ beforeAll(async () => {
   }
   writeFileSync(DEV_VARS, `ADMIN_BOOTSTRAP_PASSWORD=${BOOTSTRAP}\n`, "utf8");
 
-  server = spawn(isWindows ? "npx.cmd" : "npx", ["wrangler", "dev", "--port", String(PORT), "--ip", "127.0.0.1"], {
-    cwd: process.cwd(),
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: isWindows,
-    windowsHide: true,
-  });
-  server.stdout?.on("data", (d) => { serverOutput += String(d); });
-  server.stderr?.on("data", (d) => { serverOutput += String(d); });
-  await waitForHealth();
+  server = spawnDevServer(PORT, (d: string) => { serverOutput += d; });
+  await waitForHealthy(BASE, () => server, () => serverOutput);
 
   assertCleanVerify("b7 reset");
   const bHash = hashPassword(BOOTSTRAP);
@@ -171,12 +155,7 @@ afterAll(async () => {
   try {
     assertCleanVerify("b7 end");
   } finally {
-    if (server && server.exitCode === null) {
-      try {
-        if (isWindows && server.pid !== undefined) execFileSync("taskkill", ["/pid", String(server.pid), "/T", "/F"], { stdio: "ignore" });
-        else server.kill("SIGTERM");
-      } catch { /* best effort */ }
-    }
+    stopDevServer(server);
     server = null;
     if (existsSync(DEV_VARS)) rmSync(DEV_VARS, { force: true });
     if (existsSync(DEV_VARS)) throw new Error(".dev.vars was not removed");

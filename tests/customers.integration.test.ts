@@ -3,7 +3,8 @@
 // user_verify_b5c_* (covered by scripts/clean-verify.mjs). Two logins total;
 // public probes are anonymous by design.
 
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
+import { spawnDevServer, stopDevServer, waitForHealthy } from "../scripts/dev-server.mjs";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { hashPassword } from "../src/lib/password.js";
 import { assertCleanVerify } from "../scripts/clean-verify.mjs";
 
-const PORT = 18882;
+const PORT = 18892;
 const BASE = `http://127.0.0.1:${PORT}`;
 const isWindows = process.platform === "win32";
 
@@ -42,17 +43,7 @@ function d1(sql: string) {
   }
 }
 
-async function waitForHealth(): Promise<void> {
-  const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(`${BASE}/health`);
-      if (r.ok) return;
-    } catch { /* retry */ }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  throw new Error(`dev server never ready\n${serverOutput.slice(-3000)}`);
-}
+
 
 async function api(path: string, init: RequestInit = {}, cookies = "") {
   const res = await fetch(`${BASE}${path}`, {
@@ -83,15 +74,8 @@ let jarA = "";
 let jarB = "";
 
 beforeAll(async () => {
-  server = spawn(isWindows ? "npx.cmd" : "npx", ["wrangler", "dev", "--port", String(PORT), "--ip", "127.0.0.1"], {
-    cwd: process.cwd(),
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: isWindows,
-    windowsHide: true,
-  });
-  server.stdout?.on("data", (d) => { serverOutput += String(d); });
-  server.stderr?.on("data", (d) => { serverOutput += String(d); });
-  await waitForHealth();
+  server = spawnDevServer(PORT, (d: string) => { serverOutput += d; });
+  await waitForHealthy(BASE, () => server, () => serverOutput);
 
   assertCleanVerify("b5 reset");
   const h = hashPassword(PASS);
@@ -131,12 +115,7 @@ afterAll(async () => {
   try {
     assertCleanVerify("b5 end");
   } finally {
-    if (server && server.exitCode === null) {
-      try {
-        if (isWindows && server.pid !== undefined) execFileSync("taskkill", ["/pid", String(server.pid), "/T", "/F"], { stdio: "ignore" });
-        else server.kill("SIGTERM");
-      } catch { /* best effort */ }
-    }
+    stopDevServer(server);
     server = null;
   }
 }, 60_000);
@@ -291,6 +270,33 @@ describe("B5 customers: private management + isolation", () => {
     expect((await api(`${A}/customers/${id}`, { method: "DELETE" }, jarA)).status).toBe(200);
     expect((await api(`${A}/customers/${id}`, {}, jarA)).status).toBe(404);
     expect((await api(`${A}/customers/cust_verify_b5c_b`, { method: "DELETE" }, jarA)).status).toBe(404);
+  });
+
+  it("anonymous writes are 401; order history blocks merchant delete with 409", async () => {
+    expect((await api(`${A}/customers/cust_verify_b5c_a`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: "X" }),
+    })).status).toBe(401);
+    expect((await api(`${A}/customers/cust_verify_b5c_a`, { method: "DELETE" })).status).toBe(401);
+
+    const mk = await api(`${A}/customers`, {
+      method: "POST",
+      body: JSON.stringify({ name: "Ordered", phone: "+963911500066" }),
+    });
+    expect(mk.status).toBe(200);
+    const id = (mk.body as { data: { customer: { id: string } } }).data.customer.id;
+    const ord = d1(
+      `INSERT INTO orders (id, store_id, customer_id, order_number, customer_name, customer_phone, shipping_method, shipping_governorate, shipping_address) VALUES ('ord_verify_b5c_hist', 'store_verify_b5c_a', '${id}', 1, 'Ordered', '+963911500066', 'Standard', 'Damascus', 'Street 1');`
+    );
+    expect(ord.ok, `order seed failed: ${ord.error}`).toBe(true);
+    const blocked = await api(`${A}/customers/${id}`, { method: "DELETE" }, jarA);
+    expect(blocked.status).toBe(409);
+    expect(blocked.body).toEqual({
+      ok: false,
+      error: { code: "customer_has_orders", message: expect.any(String) },
+    });
+    // Still there: history intact.
+    expect((await api(`${A}/customers/${id}`, {}, jarA)).status).toBe(200);
   });
 });
 

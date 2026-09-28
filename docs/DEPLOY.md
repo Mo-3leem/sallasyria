@@ -120,3 +120,30 @@ Local (`wrangler dev`) and production (`--env production`) share NOTHING:
 separate D1 databases, separate R2 buckets, separate secrets. `.dev.vars`
 never leaves the machine. Remote migrations run only with `--remote` +
 explicit review of `migrations list` before/after.
+
+## 9. Seed / bootstrap verification checklist
+
+`scripts/seed.mjs` targets LOCAL D1 by default. Remote execution is
+fail-closed by construction: `--remote` without `--allow-remote` refuses;
+without an explicit `--admin-password` (or `ADMIN_BOOTSTRAP_PASSWORD`) it
+refuses; without an explicit `--merchant-password` it refuses — so the
+committed `Demo-Merchant-1` development password can never reach production
+unless an operator deliberately passes it. Verify before any production seed:
+
+- [ ] `ADMIN_BOOTSTRAP_PASSWORD` is a fresh signing-grade value
+  (`openssl rand -base64 32`), set via `wrangler secret` or a one-time
+  `--admin-password` flag — never copied from any example file
+  (`.dev.vars.example` ships the field blank on purpose).
+- [ ] `--merchant-password` is operator-chosen if demo merchants are seeded
+  remotely; the committed `Demo-Merchant-1` value is local/dev only.
+- [ ] The exact command was reviewed: `node scripts/seed.mjs --remote
+  --allow-remote --admin-password <secret> [--merchant-password <secret>]`.
+  No `--allow-remote` anywhere except this step.
+- [ ] First admin login shows `must_rotate: true`; rotate immediately, then
+  UNSET/remove the bootstrap value (while set it stays a live credential).
+- [ ] Post-seed: exactly one admin exists; no `Demo-Merchant-1`-password
+  accounts outside dev; `wrangler d1 execute --remote` spot-checks
+  `users(role, email_verified)` and per-table `COUNT(*)` against expectations.
+- [ ] `.dev.vars`, `.env.local`, and any local credential helpers were never
+  committed (`git status --short` clean of them; `.gitignore` + Gitleaks CI
+  enforce this).

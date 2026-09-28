@@ -1,0 +1,18 @@
+# Salla Syria Gitleaks config — extends the default rule set with two narrow,
+# documented allowlists. Anything else that looks like a secret fails CI.
+# See docs/DEPLOY.md section 1 (production secrets live ONLY in
+# `wrangler secret` / dashboard, never in the repo).
+
+title = "Salla Syria gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "gitignored Next.js build output (frontend/.next/); absent from clean CI checkouts"
+paths = ['''frontend/\.next/''']
+
+[[allowlists]]
+description = "Local-D1 test fixture passwords in tests/ (B7 rotation fixtures and MARKER canaries). These seed throwaway local databases inside integration tests and are never production credentials."
+paths = ['''tests/.*\.test\.ts''']
+regexes = ['''B7-[A-Za-z]+-[A-Za-z]+-[0-9]''', '''MARKER''']
