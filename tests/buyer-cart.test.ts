@@ -25,9 +25,15 @@ interface Line {
   quantity: number;
 }
 
-const NOW = "2026-09-23T12:00:00Z";
-const LIVE = "2026-10-23T12:00:00Z";
-const PAST = "2026-09-01T12:00:00Z";
+// Runtime-relative timestamps (DB format, no millis): the service derives
+// expiries from the real clock while liveness is checked against the passed
+// nowIso, so fixed dates would rot. NOW = now, LIVE = now + 30d (live),
+// PAST = now - 30d (expired) — ordering preserved forever.
+const fmtIso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+const NOW_MS = Date.now();
+const NOW = fmtIso(NOW_MS);
+const LIVE = fmtIso(NOW_MS + 30 * 24 * 3600 * 1000);
+const PAST = fmtIso(NOW_MS - 30 * 24 * 3600 * 1000);
 
 function stubDb() {
   const carts = new Map<string, Cart>();
