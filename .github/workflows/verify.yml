@@ -65,6 +65,11 @@ jobs:
 
   secrets:
     runs-on: ubuntu-latest
+    # Least privilege: only this job needs repo/PR read access (Gitleaks v3
+    # lists PR commits via the API). Other jobs keep the default token scope.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v6
         with:
