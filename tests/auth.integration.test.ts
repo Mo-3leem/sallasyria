@@ -122,6 +122,8 @@ beforeAll(async () => {
     `INSERT INTO users (id, phone, email, name, password_hash, is_active) VALUES ('user_verify_b2_inactive', '${INACTIVE_PHONE}', 'b2i@example.com', 'B2 Inactive', '${adminHash}', 0);`,
     `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_b2_legacy', '${LEGACY_PHONE}', '${LEGACY_EMAIL}', 'B2 Legacy', '${merchantHash}', 'merchant');`,
     `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_b2_unverified', '${UNVERIFIED_PHONE}', '${UNVERIFIED_EMAIL}', 'B2 Unverified', '${merchantHash}', 'merchant');`,
+    `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_b2_sess_a', '+963900000608', 'b2sessa@example.com', 'B2 Sessions A', '${merchantHash}', 'merchant');`,
+    `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_b2_sess_b', '+963900000609', 'b2sessb@example.com', 'B2 Sessions B', '${merchantHash}', 'merchant');`,
   ];
   for (const sql of stmts) {
     const r = d1(sql);
@@ -130,7 +132,7 @@ beforeAll(async () => {
   // Verification-gated login: seeded fixture users are verified, except the
   // dedicated unverified fixture; the unverified-login path is covered by
   // dedicated tests below.
-  d1(`UPDATE users SET email_verified = 1 WHERE id IN ('user_verify_b2_merchant', 'user_verify_b2_admin', 'user_verify_b2_inactive', 'user_verify_b2_legacy');`);
+  d1(`UPDATE users SET email_verified = 1 WHERE id IN ('user_verify_b2_merchant', 'user_verify_b2_admin', 'user_verify_b2_inactive', 'user_verify_b2_legacy', 'user_verify_b2_sess_a', 'user_verify_b2_sess_b');`);
 }, 180_000);
 
 afterAll(async () => {
@@ -452,4 +454,100 @@ describe("B2 sessions", () => {
     expect(statuses[0]).toBe(401);
     expect(statuses[statuses.length - 1]).toBe(429);
   }, 120_000);
+});
+
+describe("B2 session list + per-session revoke", () => {
+  // Dedicated fixtures: the login rate limiter (10/10min per identity) is
+  // already exhausted for the shared merchant by earlier tests in this file.
+  async function loginJar(email = "b2sessa@example.com"): Promise<{ jar: ReturnType<typeof jar>; header: string }> {
+    const j = jar();
+    const res = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password: MERCHANT_PASS }),
+    });
+    expect(res.status).toBe(200);
+    j.ingest(res.setCookie);
+    return { jar: j, header: j.header() };
+  }
+
+  type SessionEntry = { id: string; created_at: string; last_used_at: string | null; current: boolean };
+
+  async function listSessions(header: string) {
+    const res = await api("/auth/sessions", {}, header);
+    expect(res.status).toBe(200);
+    return (res.body as { ok: boolean; data: { sessions: SessionEntry[] } }).data.sessions;
+  }
+
+  it("lists only the caller's live sessions with the current one flagged, never secrets", async () => {
+    const a = await loginJar();
+    const b = await loginJar();
+    const mine = await listSessions(a.header);
+    expect(mine.length).toBeGreaterThanOrEqual(2);
+    const currents = mine.filter((s) => s.current);
+    expect(currents).toHaveLength(1);
+    for (const s of mine) {
+      expect(typeof s.id).toBe("string");
+      expect(typeof s.created_at).toBe("string");
+      expect(s).not.toHaveProperty("token_hash");
+      expect(s).not.toHaveProperty("token");
+    }
+    expect(JSON.stringify(mine)).not.toContain("token_hash");
+    // The other login's session is listed too (same user), flagged non-current.
+    expect(mine.some((s) => !s.current)).toBe(true);
+    // Cleanup: leave no extra sessions for later tests.
+    const other = mine.find((s) => !s.current)!;
+    const del = await api(`/auth/sessions/${other.id}`, { method: "DELETE" }, a.header);
+    expect(del.status).toBe(200);
+    expect((await listSessions(a.header)).length).toBe(mine.length - 1);
+    expect((await api("/auth/me", {}, b.header)).status).toBe(401);
+  }, 60_000);
+
+  it("revoked sessions disappear and their cookies die; unknown ids 404", async () => {
+    const a = await loginJar();
+    const b = await loginJar();
+    const mine = await listSessions(a.header);
+    const other = mine.find((s) => !s.current)!;
+    const del = await api(`/auth/sessions/${other.id}`, { method: "DELETE" }, a.header);
+    expect(del.status).toBe(200);
+    expect(del.body).toEqual({ ok: true, data: { revoked: true } });
+    // Revoked cookie is dead and the row no longer lists.
+    expect((await api("/auth/me", {}, b.header)).status).toBe(401);
+    expect((await listSessions(a.header)).some((s) => s.id === other.id)).toBe(false);
+    // Repeat revoke is 404 (already revoked), unknown id is 404.
+    expect((await api(`/auth/sessions/${other.id}`, { method: "DELETE" }, a.header)).status).toBe(404);
+    expect((await api("/auth/sessions/no-such-session", { method: "DELETE" }, a.header)).status).toBe(404);
+    // Caller survives: exactly one live session remains for this account
+    // from this test (other tests' sessions may also list; all are ours).
+    const rest = await listSessions(a.header);
+    expect(rest.filter((s) => s.current)).toHaveLength(1);
+  }, 60_000);
+
+  it("cannot revoke the current session or another user's session; anon is 401", async () => {
+    const a = await loginJar();
+    const mine = await listSessions(a.header);
+    const current = mine.find((s) => s.current)!;
+    const selfDel = await api(`/auth/sessions/${current.id}`, { method: "DELETE" }, a.header);
+    expect(selfDel.status).toBe(400);
+    expect((await api("/auth/me", {}, a.header)).status).toBe(200);
+    // Another user's live session id is opaque: revoke attempt 404s without
+    // leaking whether it exists or belongs to someone else.
+    const otherLogin = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: "b2sessb@example.com", password: MERCHANT_PASS }),
+    });
+    const oj = jar();
+    oj.ingest(otherLogin.setCookie);
+    const otherSessions = await listSessions(oj.header());
+    const foreign = otherSessions.find((s) => s.current)!;
+    expect((await api(`/auth/sessions/${foreign.id}`, { method: "DELETE" }, a.header)).status).toBe(404);
+    expect((await api("/auth/me", {}, oj.header())).status).toBe(200);
+    // Anonymous.
+    expect((await api("/auth/sessions")).status).toBe(401);
+    expect((await api("/auth/sessions/whatever", { method: "DELETE" })).status).toBe(401);
+    // Cleanup caller's extra session.
+    const leftover = (await listSessions(a.header)).find((s) => !s.current);
+    if (leftover) {
+      expect((await api(`/auth/sessions/${leftover.id}`, { method: "DELETE" }, a.header)).status).toBe(200);
+    }
+  }, 60_000);
 });

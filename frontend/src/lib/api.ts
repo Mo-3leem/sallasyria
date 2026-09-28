@@ -10,6 +10,7 @@ import type {
   Plan,
   Product,
   ProductImage,
+  SessionEntry,
   ShippingRate,
   Store,
   Subscription,
@@ -98,6 +99,14 @@ export const authApi = {
   logout: () => api.post<{ loggedOut: boolean }>("/auth/logout", {}),
 
   logoutOthers: () => api.post<{ revoked: number }>("/auth/logout-others", {}),
+
+  sessions: {
+    /** Own live sessions (metadata only), current flagged. */
+    list: () => api.get<{ sessions: SessionEntry[] }>("/auth/sessions"),
+    /** Revoke one own non-current session. */
+    remove: (id: string) =>
+      api.delete<{ revoked: boolean }>(`/auth/sessions/${encodeURIComponent(id)}`),
+  },
 
   me: () => api.get<{ user: User }>("/auth/me"),
 
