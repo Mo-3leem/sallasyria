@@ -57,7 +57,7 @@ import {
 import { touch } from "../lib/time.js";
 import { requireTurnstile } from "../middleware/turnstile.js";
 import { appUrl } from "../env.js";
-import { checkLoginRateLimit, checkRegisterRateLimit, checkResendPubAccountLimit, clientIp, loginFailCount, loginFailKey, LOGIN_FAIL_CHALLENGE_AFTER, loginRateLimitKey, recordLoginFailure, registerRateLimitKey, resetLoginFailures } from "../lib/rate-limit.js";
+import { checkLoginRateLimit, checkPublicFileLimit, checkRegisterRateLimit, checkResendPubAccountLimit, clientIp, loginFailCount, loginFailKey, LOGIN_FAIL_CHALLENGE_AFTER, loginRateLimitKey, recordLoginFailure, registerRateLimitKey, resetLoginFailures } from "../lib/rate-limit.js";
 import {
   currentSessionId,
   currentUser,
@@ -1230,6 +1230,10 @@ const avatarFileRoute = createRoute({
       content: { "application/json": { schema: failEnvelope } },
       description: "Missing, expired, or tampered link",
     },
+    429: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Too many attempts",
+    },
     503: {
       content: { "application/json": { schema: failEnvelope } },
       description: "Image storage is not configured",
@@ -1238,6 +1242,11 @@ const avatarFileRoute = createRoute({
 });
 
 auth.openapi(avatarFileRoute, async (c) => {
+  // Abuse guard first: R2 egress is the expensive part below. Shared budget
+  // with the product file route (same bearer-URL egress boundary).
+  if (!checkPublicFileLimit(clientIp(c))) {
+    throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
+  }
   const secret = signingSecretOrThrow(c.env);
   const file = resourceId(c, "key");
   const uid = c.req.query("uid") ?? "";

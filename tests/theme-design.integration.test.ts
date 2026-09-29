@@ -274,4 +274,27 @@ describe("theme publish + public exposure", () => {
       (rendered.body as { data: { theme: { draft: { palette: { background: string } } } } }).data.theme.draft.palette.background
     ).toBe(draftBg);
   });
+
+  it("preview fan-out is bounded: unknown tokens 404, then 429", async () => {
+    // Limiter runs before the token lookup, so misses still count. Loop past
+    // the generous budget; assert the trip plus ample legitimate headroom
+    // (prior tests in this file make only a handful of preview calls).
+    let successes = 0;
+    let trippedAt = -1;
+    for (let i = 0; i < 80 && trippedAt < 0; i++) {
+      const res = await api(`/s/preview/${"9".repeat(42)}${String(i % 10)}`, {});
+      if (res.status === 429) {
+        trippedAt = i;
+        expect(res.body).toEqual({
+          ok: false,
+          error: { code: "rate_limited", message: expect.any(String) },
+        });
+      } else {
+        expect(res.status).toBe(404);
+        successes++;
+      }
+    }
+    expect(trippedAt).toBeGreaterThanOrEqual(0);
+    expect(successes).toBeGreaterThanOrEqual(50);
+  });
 });

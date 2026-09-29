@@ -7,6 +7,7 @@ import { ok } from "../http/respond.js";
 import { z, validationHook } from "../http/validate.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { idParam, storeIdParam } from "../openapi/params.js";
+import { checkPreviewLimit, clientIp } from "../lib/rate-limit.js";
 import { auditLog } from "../lib/audit.js";
 import { currentUser, requireAuth } from "../middleware/auth.js";
 import { requireStoreAccess, resolveStore } from "../middleware/store.js";
@@ -285,10 +286,17 @@ const getPreviewRoute = createRoute({
       description: "Preview render payload",
     },
     404: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid or expired token" },
+    429: { content: { "application/json": { schema: failEnvelope } }, description: "Too many attempts" },
   },
 });
 
 themePreview.openapi(getPreviewRoute, async (c) => {
+  // Abuse guard first: a valid token fans out to 4 parallel catalog queries
+  // below. Generous per-IP budget; invalid tokens still 404 identically
+  // unless the budget itself is exhausted.
+  if (!checkPreviewLimit(clientIp(c))) {
+    throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
+  }
   const claimed = await resolvePreviewToken(getDb(c), resourceId(c, "token"));
   if (!claimed) throw new AppError("invalid_token", 404, "Invalid or expired token.");
   const db = getDb(c);

@@ -179,6 +179,48 @@ export function resetResendPubAccountLimit(accountHash: string): void {
   resendPubAccount.reset(`resend-pub:acct:${accountHash}`);
 }
 
+// B7a abuse-surface guards (roadmap B7a): generous per-IP buckets for
+// expensive public reads that previously had no limiter at all. Each has a
+// distinct namespace so unrelated surfaces never share quota:
+//   - public-file (120/min): R2 egress on both bearer-URL file routes
+//     (product images + avatars). Galleries burst dozens of images per page
+//     load, so the budget mirrors the webhook flood guard's generosity.
+//   - preview (60/min): token-gated preview fan-out (1 token lookup + 4
+//     parallel catalog queries per hit).
+//   - docs (60/min): OpenAPI document regenerated from route definitions on
+//     every /doc hit.
+// Static/cheap surfaces stay unthrottled on purpose: /health (load-balancer
+// probing must never 429), /ready (single SELECT 1), /ui (static string),
+// single-row catalog/shipping/plan reads.
+const publicFile = createRateLimiter({ maxAttempts: 120, windowMs: 60_000 });
+const previewHits = createRateLimiter({ maxAttempts: 60, windowMs: 60_000 });
+const docsHits = createRateLimiter({ maxAttempts: 60, windowMs: 60_000 });
+
+export function checkPublicFileLimit(ip: string): boolean {
+  return publicFile.check(`public-file:${ip}`);
+}
+
+export function checkPreviewLimit(ip: string): boolean {
+  return previewHits.check(`preview:${ip}`);
+}
+
+export function checkDocsLimit(ip: string): boolean {
+  return docsHits.check(`docs:${ip}`);
+}
+
+// Test seams (mirrors the existing seams; never exposed via HTTP).
+export function resetPublicFileLimit(ip: string): void {
+  publicFile.reset(`public-file:${ip}`);
+}
+
+export function resetPreviewLimit(ip: string): void {
+  previewHits.reset(`preview:${ip}`);
+}
+
+export function resetDocsLimit(ip: string): void {
+  docsHits.reset(`docs:${ip}`);
+}
+
 // Test seam for the registration bucket (mirrors the login seam).
 export function resetRegisterRateLimit(key: string): void {
   registerHits.delete(key);

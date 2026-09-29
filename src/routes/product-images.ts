@@ -8,6 +8,7 @@ import { ok } from "../http/respond.js";
 import { assertNoImmutableFields, z, validationHook } from "../http/validate.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { idParam, storeIdParam, storeIdParams } from "../openapi/params.js";
+import { checkPublicFileLimit, clientIp } from "../lib/rate-limit.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
@@ -161,6 +162,10 @@ const fileRoute = createRoute({
       content: { "application/json": { schema: failEnvelope } },
       description: "Missing, expired, or tampered link",
     },
+    429: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Too many attempts",
+    },
     503: {
       content: { "application/json": { schema: failEnvelope } },
       description: "Image storage is not configured",
@@ -169,6 +174,12 @@ const fileRoute = createRoute({
 });
 
 productImages.openapi(fileRoute, async (c) => {
+  // Abuse guard first: R2 egress is the expensive part below. Generous
+  // per-IP budget shared with the avatar file route (same bearer-URL
+  // egress boundary).
+  if (!checkPublicFileLimit(clientIp(c))) {
+    throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
+  }
   const { storeId } = storeScope(c);
   const key = resourceId(c, "key");
   const expRaw = c.req.query("exp");

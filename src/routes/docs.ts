@@ -2,6 +2,8 @@ import { SwaggerUI } from "@hono/swagger-ui";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { AppEnv } from "../env.js";
 import { normalizeDocPaths } from "../openapi/paths.js";
+import { AppError } from "../http/errors.js";
+import { checkDocsLimit, clientIp } from "../lib/rate-limit.js";
 
 // API documentation surface (Swagger/OpenAPI, manual testing).
 // Per explicit approval: mounted in ALL environments (local + production),
@@ -22,7 +24,14 @@ export function registerDocs(app: OpenAPIHono<AppEnv>): void {
   // NOTE: generated on each request (not cached) so the document always
   // reflects the registered routes, and so path templates pass through
   // normalizeDocPaths (see src/openapi/paths.ts for why this is required).
-  app.get("/doc", (c) => c.json(normalizeDocPaths(app.getOpenAPI31Document(config))));
+  // Abuse guard: regeneration walks every route definition, so bound it
+  // generously per IP. The static /ui shell below stays unthrottled.
+  app.get("/doc", (c) => {
+    if (!checkDocsLimit(clientIp(c))) {
+      throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
+    }
+    return c.json(normalizeDocPaths(app.getOpenAPI31Document(config)));
+  });
   app.get("/ui", (c) =>
     c.html(`<!doctype html>
 <html lang="en">

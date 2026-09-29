@@ -266,3 +266,33 @@ describe("B8 hardened upload flow", () => {
     expect((await api(filePath)).status).toBe(404);
   }, 120_000);
 });
+
+describe("file-serving flood guard", () => {
+  it("repeated invalid file reads eventually 429; product and avatar share one guard", async () => {
+    // Limiter runs before HMAC/R2, so tampered links still count. Alternate
+    // both file routes to prove they share the single public-file budget:
+    // either route's flood trips the other. Loop past the generous budget;
+    // assert the trip plus ample legitimate headroom.
+    let successes = 0;
+    let trippedAt = -1;
+    for (let i = 0; i < 160 && trippedAt < 0; i++) {
+      const path =
+        i % 2 === 0
+          ? `${A}/product-images/file/nope-${i}.jpg?exp=999&sig=nope`
+          : `/auth/avatar/file/nope-${i}.jpg?uid=x&exp=999&sig=nope`;
+      const res = await api(path);
+      if (res.status === 429) {
+        trippedAt = i;
+        expect(res.body).toEqual({
+          ok: false,
+          error: { code: "rate_limited", message: expect.any(String) },
+        });
+      } else {
+        expect(res.status).toBe(404);
+        successes++;
+      }
+    }
+    expect(trippedAt).toBeGreaterThanOrEqual(0);
+    expect(successes).toBeGreaterThanOrEqual(100);
+  }, 180_000);
+});

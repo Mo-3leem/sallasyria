@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  checkDocsLimit,
   checkForgotTargetLimit,
   checkLoginRateLimit,
+  checkPreviewLimit,
+  checkPublicFileLimit,
   checkRegisterRateLimit,
   checkResendPubAccountLimit,
   checkWebhookIpLimit,
@@ -12,8 +15,11 @@ import {
   LOGIN_RATE_LIMIT,
   recordLoginFailure,
   registerRateLimitKey,
+  resetDocsLimit,
   resetLoginFailures,
   resetLoginRateLimit,
+  resetPreviewLimit,
+  resetPublicFileLimit,
   resetRegisterRateLimit,
   resetResendPubAccountLimit,
 } from "../src/lib/rate-limit.js";
@@ -173,5 +179,32 @@ describe("billing webhook IP limiting", () => {
     }
     expect(checkWebhookIpLimit(hot)).toBe(false);
     expect(checkWebhookIpLimit(`192.0.2.44-${stamp}`)).toBe(true);
+  });
+});
+
+describe("B7a public-surface limiting", () => {
+  it("trips each bucket at its own cap, resets, and isolates namespaces", () => {
+    const stamp = Date.now();
+    const fileIp = `203.0.113.50-${stamp}`;
+    const previewIp = `203.0.113.51-${stamp}`;
+    const docsIp = `203.0.113.52-${stamp}`;
+    for (let i = 0; i < 120; i++) {
+      expect(checkPublicFileLimit(fileIp)).toBe(true);
+    }
+    expect(checkPublicFileLimit(fileIp)).toBe(false);
+    for (let i = 0; i < 60; i++) {
+      expect(checkPreviewLimit(previewIp)).toBe(true);
+      expect(checkDocsLimit(docsIp)).toBe(true);
+    }
+    expect(checkPreviewLimit(previewIp)).toBe(false);
+    expect(checkDocsLimit(docsIp)).toBe(false);
+    // Distinct namespaces never share quota, and seams reopen them.
+    expect(checkPublicFileLimit(previewIp)).toBe(true);
+    resetPublicFileLimit(fileIp);
+    resetPreviewLimit(previewIp);
+    resetDocsLimit(docsIp);
+    expect(checkPublicFileLimit(fileIp)).toBe(true);
+    expect(checkPreviewLimit(previewIp)).toBe(true);
+    expect(checkDocsLimit(docsIp)).toBe(true);
   });
 });

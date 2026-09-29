@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
+import { resetDocsLimit } from "../src/lib/rate-limit.js";
 
 // OpenAPI surface tests: the /doc document must stay a valid, complete
 // contract, and /ui must render the Swagger shell. If a route is added or
@@ -229,6 +230,31 @@ describe("OpenAPI docs", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html.toLowerCase()).toContain("swagger");
+  });
+
+  it("repeated /doc regeneration eventually 429s without changing shapes", async () => {
+    // In-process app shares one limiter bucket ("unknown" client); reset for
+    // a clean slate, then loop past the generous budget. Reset again at the
+    // end so following tests in this file see a fresh bucket.
+    resetDocsLimit("unknown");
+    let successes = 0;
+    let trippedAt = -1;
+    for (let i = 0; i < 70 && trippedAt < 0; i++) {
+      const res = await createApp().request("/doc");
+      if (res.status === 429) {
+        trippedAt = i;
+        expect(await res.json()).toEqual({
+          ok: false,
+          error: { code: "rate_limited", message: expect.any(String) },
+        });
+      } else {
+        expect(res.status).toBe(200);
+        successes++;
+      }
+    }
+    expect(trippedAt).toBeGreaterThanOrEqual(0);
+    expect(successes).toBeGreaterThanOrEqual(60);
+    resetDocsLimit("unknown");
   });
 
   it("uses only OpenAPI {param} templates, never Hono :param", async () => {
