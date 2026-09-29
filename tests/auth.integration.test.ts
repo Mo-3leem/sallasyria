@@ -480,11 +480,18 @@ describe("B2 session list + per-session revoke", () => {
 
   it("lists only the caller's live sessions with the current one flagged, never secrets", async () => {
     const a = await loginJar();
+    // Capture A's own id explicitly via the current flag: created_at has
+    // second precision, so rapid logins tie and list order is arbitrary —
+    // never select positionally.
+    const idA = (await listSessions(a.header)).find((s) => s.current)!.id;
     const b = await loginJar();
+    const idB = (await listSessions(b.header)).find((s) => s.current)!.id;
+    expect(idB).not.toBe(idA);
     const mine = await listSessions(a.header);
     expect(mine.length).toBeGreaterThanOrEqual(2);
-    const currents = mine.filter((s) => s.current);
-    expect(currents).toHaveLength(1);
+    expect(mine.filter((s) => s.current)).toHaveLength(1);
+    expect(mine.find((s) => s.current)!.id).toBe(idA);
+    expect(mine.some((s) => s.id === idB)).toBe(true);
     for (const s of mine) {
       expect(typeof s.id).toBe("string");
       expect(typeof s.created_at).toBe("string");
@@ -492,33 +499,33 @@ describe("B2 session list + per-session revoke", () => {
       expect(s).not.toHaveProperty("token");
     }
     expect(JSON.stringify(mine)).not.toContain("token_hash");
-    // The other login's session is listed too (same user), flagged non-current.
-    expect(mine.some((s) => !s.current)).toBe(true);
-    // Cleanup: leave no extra sessions for later tests.
-    const other = mine.find((s) => !s.current)!;
-    const del = await api(`/auth/sessions/${other.id}`, { method: "DELETE" }, a.header);
+    // Revoke exactly B's session and prove B died while A survived.
+    const del = await api(`/auth/sessions/${idB}`, { method: "DELETE" }, a.header);
     expect(del.status).toBe(200);
-    expect((await listSessions(a.header)).length).toBe(mine.length - 1);
+    expect((await listSessions(a.header)).some((s) => s.id === idB)).toBe(false);
+    expect((await listSessions(a.header)).some((s) => s.id === idA)).toBe(true);
     expect((await api("/auth/me", {}, b.header)).status).toBe(401);
   }, 60_000);
 
   it("revoked sessions disappear and their cookies die; unknown ids 404", async () => {
     const a = await loginJar();
+    const idA = (await listSessions(a.header)).find((s) => s.current)!.id;
     const b = await loginJar();
-    const mine = await listSessions(a.header);
-    const other = mine.find((s) => !s.current)!;
-    const del = await api(`/auth/sessions/${other.id}`, { method: "DELETE" }, a.header);
+    const idB = (await listSessions(b.header)).find((s) => s.current)!.id;
+    expect(idB).not.toBe(idA);
+    const del = await api(`/auth/sessions/${idB}`, { method: "DELETE" }, a.header);
     expect(del.status).toBe(200);
     expect(del.body).toEqual({ ok: true, data: { revoked: true } });
-    // Revoked cookie is dead and the row no longer lists.
+    // Revoked cookie is dead and the row no longer lists; caller untouched.
     expect((await api("/auth/me", {}, b.header)).status).toBe(401);
-    expect((await listSessions(a.header)).some((s) => s.id === other.id)).toBe(false);
-    // Repeat revoke is 404 (already revoked), unknown id is 404.
-    expect((await api(`/auth/sessions/${other.id}`, { method: "DELETE" }, a.header)).status).toBe(404);
-    expect((await api("/auth/sessions/no-such-session", { method: "DELETE" }, a.header)).status).toBe(404);
-    // Caller survives: exactly one live session remains for this account
-    // from this test (other tests' sessions may also list; all are ours).
+    expect((await api("/auth/me", {}, a.header)).status).toBe(200);
     const rest = await listSessions(a.header);
+    expect(rest.some((s) => s.id === idB)).toBe(false);
+    expect(rest.some((s) => s.id === idA)).toBe(true);
+    // Repeat revoke is 404 (already revoked), unknown id is 404.
+    expect((await api(`/auth/sessions/${idB}`, { method: "DELETE" }, a.header)).status).toBe(404);
+    expect((await api("/auth/sessions/no-such-session", { method: "DELETE" }, a.header)).status).toBe(404);
+    // Exactly one current session: the caller's own.
     expect(rest.filter((s) => s.current)).toHaveLength(1);
   }, 60_000);
 

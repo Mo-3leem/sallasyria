@@ -4,6 +4,7 @@
 // user-scoped, so the tenant tests stay untouched.
 
 import { execFileSync, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { spawnDevServer, stopDevServer, waitForHealthy } from "../scripts/dev-server.mjs";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -95,12 +96,13 @@ beforeAll(async () => {
     `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_pf_admin', '${ADMIN_PHONE}', 'pfa@example.com', 'PF Admin', '${h}', 'admin');`,
     `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_pf_ma', '${MERCHANT_A_PHONE}', 'pfma@example.com', 'PF Merchant A', '${h}', 'merchant');`,
     `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_pf_mb', '${MERCHANT_B_PHONE}', '${MERCHANT_B_EMAIL}', 'PF Merchant B', '${h}', 'merchant');`,
+    `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_pf_mc', '+963900001304', 'pfc@example.com', 'PF Merchant C', '${h}', 'merchant');`,
   ];
   for (const sql of seed) {
     const r = d1(sql);
     if (!r.ok) throw new Error(`profile seed failed: ${r.error}`);
   }
-  d1(`UPDATE users SET email_verified = 1 WHERE id IN ('user_verify_pf_admin', 'user_verify_pf_ma', 'user_verify_pf_mb');`);
+  d1(`UPDATE users SET email_verified = 1 WHERE id IN ('user_verify_pf_admin', 'user_verify_pf_ma', 'user_verify_pf_mb', 'user_verify_pf_mc');`);
   jarAdmin = await loginJar("pfa@example.com", PASS);
   jarMerchant = await loginJar("pfma@example.com", PASS);
 }, 180_000);
@@ -299,19 +301,28 @@ describe("PATCH /auth/me logout_other_sessions", () => {
     }, jar1);
     expect(first.status).toBe(200);
     expect(((first.body as MeBody).data.user.email)).toBe("pfb-new@example.com");
+    // Re-verification: the new address starts unverified.
+    expect(((first.body as MeBody).data.user.email_verified)).toBe(0);
     expect((await api("/auth/me", {}, jar1)).status).toBe(200);
     expect((await api("/auth/me", {}, jar2)).status).toBe(401);
-    // New email authenticates; old email no longer does.
-    expect((await api("/auth/login", { method: "POST", body: JSON.stringify({ email: "pfb-new@example.com", password: PASS }) })).status).toBe(200);
+    // New email must verify before it authenticates; old email is dead.
+    expect((await api("/auth/login", { method: "POST", body: JSON.stringify({ email: "pfb-new@example.com", password: PASS }) })).status).toBe(403);
     expect((await api("/auth/login", { method: "POST", body: JSON.stringify({ email: MERCHANT_B_EMAIL, password: PASS }) })).status).toBe(401);
+    // Verify out-of-band (test shortcut for the mailed link; redeem itself
+    // is covered in the email suite), then the new identity logs in.
+    expect(d1(`UPDATE users SET email_verified = 1 WHERE id = 'user_verify_pf_mb';`).ok).toBe(true);
+    expect((await api("/auth/login", { method: "POST", body: JSON.stringify({ email: "pfb-new@example.com", password: PASS }) })).status).toBe(200);
     const jar3 = await loginJar("pfb-new@example.com", PASS);
     const second = await api("/auth/me", {
       method: "PATCH",
       body: JSON.stringify({ email: "pfb-new2@example.com", current_password: PASS, logout_other_sessions: false }),
     }, jar1);
     expect(second.status).toBe(200);
+    expect(((second.body as MeBody).data.user.email_verified)).toBe(0);
     expect((await api("/auth/me", {}, jar1)).status).toBe(200);
     expect((await api("/auth/me", {}, jar3)).status).toBe(200);
+    // Re-verify so later tests can log in as the restored address.
+    expect(d1(`UPDATE users SET email_verified = 1 WHERE id = 'user_verify_pf_mb';`).ok).toBe(true);
   });
 
   it("email change with omitted flag keeps every session", async () => {
@@ -322,14 +333,17 @@ describe("PATCH /auth/me logout_other_sessions", () => {
       body: JSON.stringify({ email: "pfb-new3@example.com", current_password: PASS }),
     }, jar1);
     expect(res.status).toBe(200);
+    expect(((res.body as MeBody).data.user.email_verified)).toBe(0);
     expect((await api("/auth/me", {}, jar1)).status).toBe(200);
     expect((await api("/auth/me", {}, jar2)).status).toBe(200);
-    // restore the known address for later tests
+    // restore the known address for later tests (and re-verify it, since
+    // the change above reset the flag).
     const back = await api("/auth/me", {
       method: "PATCH",
       body: JSON.stringify({ email: "pfb-new2@example.com", current_password: PASS }),
     }, jar1);
     expect(back.status).toBe(200);
+    expect(d1(`UPDATE users SET email_verified = 1 WHERE id = 'user_verify_pf_mb';`).ok).toBe(true);
   });
 
   it("same-value phone/email needs no password and revokes nothing", async () => {
@@ -345,3 +359,58 @@ describe("PATCH /auth/me logout_other_sessions", () => {
     expect((await api("/auth/me", {}, jar2)).status).toBe(200);
   });
 }, 120_000);
+
+describe("PATCH /auth/me email re-verification", () => {
+  const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
+
+  function liveVerifyTokens(userId: string): string[] {
+    const r = d1(
+      `SELECT token_hash FROM email_tokens WHERE user_id = '${userId}' AND purpose = 'verify' AND used_at IS NULL;`
+    );
+    if (!r.ok) throw new Error(`token lookup failed: ${r.error}`);
+    return ((r.result?.[0] as unknown as { results?: { token_hash: string }[] } | undefined)?.results ?? []).map(
+      (row) => row.token_hash
+    );
+  }
+
+  it("email change resets verification, retires old tokens, issues a live one, gates login", async () => {
+    // A known pre-change token: must be retired by the change.
+    const oldRaw = "pfmc-old-token-1";
+    expect(
+      d1(
+        `INSERT INTO email_tokens (id, user_id, purpose, token_hash, expires_at) VALUES ('tok_pfmc_old_1', 'user_verify_pf_mc', 'verify', '${tokenHash(oldRaw)}', '2099-01-01T00:00:00Z');`
+      ).ok
+    ).toBe(true);
+    const jar1 = await loginJar("pfc@example.com", PASS);
+    const res = await api("/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify({ email: "pfc-new@example.com", current_password: PASS, logout_other_sessions: false }),
+    }, jar1);
+    expect(res.status).toBe(200);
+    expect(((res.body as MeBody).data.user.email)).toBe("pfc-new@example.com");
+    expect(((res.body as MeBody).data.user.email_verified)).toBe(0);
+    // Current session survives (flag omitted/false keeps everything).
+    expect((await api("/auth/me", {}, jar1)).status).toBe(200);
+    // Stale token is dead: redeeming it 400s like an unknown token.
+    expect(
+      (await api("/auth/verify-email", { method: "POST", body: JSON.stringify({ token: oldRaw }) })).status
+    ).toBe(400);
+    // Exactly one live token remains, and it is not the old one.
+    const live = liveVerifyTokens("user_verify_pf_mc");
+    expect(live).toHaveLength(1);
+    expect(live[0]).not.toBe(tokenHash(oldRaw));
+    // Gate: new address 403s until verified; old address is a dead identity.
+    expect(
+      (await api("/auth/login", { method: "POST", body: JSON.stringify({ email: "pfc-new@example.com", password: PASS }) })).status
+    ).toBe(403);
+    expect(
+      (await api("/auth/login", { method: "POST", body: JSON.stringify({ email: "pfc@example.com", password: PASS }) })).status
+    ).toBe(401);
+    // Verify out-of-band (test shortcut for the mailed link; the redeem
+    // mechanics are covered in the email suite), then login works normally.
+    expect(d1(`UPDATE users SET email_verified = 1 WHERE id = 'user_verify_pf_mc';`).ok).toBe(true);
+    expect(
+      (await api("/auth/login", { method: "POST", body: JSON.stringify({ email: "pfc-new@example.com", password: PASS }) })).status
+    ).toBe(200);
+  }, 60_000);
+});

@@ -43,6 +43,9 @@ function ProfileContent() {
   const [saved, setSaved] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [resendDone, setResendDone] = useState(false);
+  const [resendError, setResendError] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [avatarError, setAvatarError] = useState<string | null>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
@@ -128,6 +131,26 @@ function ProfileContent() {
   const emailChanged = curEmail.trim() !== (user.email ?? "");
   const phoneChanged = curPhone.trim() !== user.phone;
   const identityChanged = emailChanged || phoneChanged;
+
+  async function onResendVerification() {
+    const address = user?.email ?? null;
+    if (resending || !address) return;
+    setResending(true);
+    setResendDone(false);
+    setResendError(null);
+    try {
+      const res = await authApi.resendVerification(address);
+      if (!res.ok) {
+        setResendError(authErrorMessage(res, 400));
+        return;
+      }
+      setResendDone(true);
+    } catch {
+      setResendError(NETWORK_ERROR_MESSAGE);
+    } finally {
+      setResending(false);
+    }
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -265,6 +288,32 @@ function ProfileContent() {
           <span className="value">{user.email_verified === 1 ? "موثّق" : "غير موثّق"}</span>
         </div>
       </div>
+
+      {user.email && user.email_verified !== 1 && (
+        <div className="shell-note" role="status" style={{ marginBottom: 16 }}>
+          <span>بريدك الجديد بحاجة إلى توثيق قبل أن تتمكن من تسجيل الدخول به. تحقق من بريدك الوارد أو أعد إرسال رسالة التوثيق.</span>
+          <div style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className="btn btn-outline btn-sm"
+              disabled={resending}
+              onClick={onResendVerification}
+            >
+              {resending ? "جاري الإرسال..." : "إعادة إرسال رسالة التوثيق"}
+            </button>
+            {resendDone && (
+              <span className="auth-success" role="status" style={{ marginInlineStart: 8 }}>
+                تم الإرسال. تحقق من بريدك.
+              </span>
+            )}
+            {resendError && (
+              <span className="auth-field-error" role="alert" style={{ marginInlineStart: 8 }}>
+                {resendError}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       <form className="auth-form" onSubmit={onSubmit} noValidate>
         <FormError message={formError} />

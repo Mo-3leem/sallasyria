@@ -9,6 +9,7 @@ import {
   redeemEmailToken,
 } from "../src/services/email-tokens.js";
 import {
+  buildEmailChangeNotice,
   buildOrderConfirmationEmail,
   buildResetEmail,
   buildResetSuccessEmail,
@@ -267,6 +268,11 @@ describe("email builders", () => {
     const kept = buildResetSuccessEmail("Layla", false);
     expect(kept.text).not.toContain("signed out");
     expect(kept.text).toContain("kept as requested");
+    const notice = buildEmailChangeNotice("Layla");
+    expect(notice.subject).toContain("changed");
+    expect(notice.text).toContain("Layla");
+    expect(notice.text).toContain("no longer be used");
+    expect(notice.text).not.toMatch(/token|password|secret|http/i);
   });
 
   it("greets by first name and escapes merchant-controlled HTML", () => {

@@ -201,6 +201,21 @@ export function buildResetSuccessEmail(name: string, sessionsRevoked = true): { 
   };
 }
 
+// Notice to the PREVIOUS address after an account email change. Contains no
+// token, no password, no undo mechanism — it is informational only, so the
+// old mailbox holder learns the login identity moved. Best-effort like every
+// other send; never fails the profile update.
+export function buildEmailChangeNotice(name: string): { subject: string; text: string } {
+  return {
+    subject: "Your Salla Syria account email was changed",
+    text:
+      `Hi ${name},\n\n` +
+      `The email address on your Salla Syria account was just changed. ` +
+      `This address can no longer be used to log in to that account.\n\n` +
+      `If this was not you, contact the platform admin immediately.\n`,
+  };
+}
+
 export function buildOrderConfirmationEmail(
   storeName: string,
   order: CheckoutOrderRow,
