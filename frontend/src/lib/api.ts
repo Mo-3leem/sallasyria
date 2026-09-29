@@ -77,8 +77,12 @@ export const api = {
       body: JSON.stringify(body),
       ...(headers ? { headers } : {}),
     }),
-  patch: <T>(path: string, body: unknown) =>
-    request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
+  patch: <T>(path: string, body: unknown, headers?: Record<string, string>) =>
+    request<T>(path, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+      ...(headers ? { headers } : {}),
+    }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
   /** Multipart POST (FormData body passes through unstringified). */
   postForm: <T>(path: string, form: FormData) =>
@@ -86,12 +90,20 @@ export const api = {
 };
 
 export const authApi = {
-  register: (data: {
-    email: string;
-    phone: string;
-    password: string;
-    name: string;
-  }) => api.post<{ user: { id: string; phone: string; email: string | null; name: string; role: string; email_verified: number; avatar_url: string | null } }>("/auth/register", data),
+  register: (
+    data: {
+      email: string;
+      phone: string;
+      password: string;
+      name: string;
+    },
+    turnstileToken?: string
+  ) =>
+    api.post<{ user: { id: string; phone: string; email: string | null; name: string; role: string; email_verified: number; avatar_url: string | null } }>(
+      "/auth/register",
+      data,
+      turnstileToken ? { "X-Turnstile-Token": turnstileToken } : undefined
+    ),
 
   login: (data: { identity: string; password: string }, turnstileToken?: string) =>
     api.post<{ user: { id: string; phone: string; email: string | null; name: string; role: string; email_verified: number; avatar_url: string | null }; must_rotate: boolean }>(
@@ -899,14 +911,24 @@ const guestCartPath = (slug: string, rest: string) =>
   `/s/${encodeURIComponent(slug)}/cart${rest}`;
 
 export const cartApi = {
-  create: (slug: string) => api.post<{ cart: ServerCart }>(guestCartPath(slug, ""), {}),
+  create: (slug: string, turnstileToken?: string) =>
+    api.post<{ cart: ServerCart }>(
+      guestCartPath(slug, ""),
+      {},
+      turnstileToken ? { "X-Turnstile-Token": turnstileToken } : undefined
+    ),
   get: (slug: string, cartId: string) =>
     api.get<{ cart: ServerCart }>(guestCartPath(slug, `/${encodeURIComponent(cartId)}`)),
-  add: (slug: string, cartId: string, data: { product_id: string; quantity: number }) =>
-    api.post<{ cart: ServerCart }>(guestCartPath(slug, `/${encodeURIComponent(cartId)}/items`), data),
-  setQty: (slug: string, cartId: string, itemId: string, quantity: number) =>
+  add: (slug: string, cartId: string, data: { product_id: string; quantity: number }, turnstileToken?: string) =>
+    api.post<{ cart: ServerCart }>(
+      guestCartPath(slug, `/${encodeURIComponent(cartId)}/items`),
+      data,
+      turnstileToken ? { "X-Turnstile-Token": turnstileToken } : undefined
+    ),
+  setQty: (slug: string, cartId: string, itemId: string, quantity: number, turnstileToken?: string) =>
     api.patch<{ cart: ServerCart }>(
       guestCartPath(slug, `/${encodeURIComponent(cartId)}/items/${encodeURIComponent(itemId)}`),
-      { quantity }
+      { quantity },
+      turnstileToken ? { "X-Turnstile-Token": turnstileToken } : undefined
     ),
 };

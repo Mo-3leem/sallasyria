@@ -26,6 +26,18 @@ export function currentBuyer(c: BuyerContext): BuyerIdentity {
   return buyer;
 }
 
+// Optional buyer authentication for endpoints shared with the merchant
+// dashboard (e.g. standalone address writes): returns the buyer when a valid
+// same-store buyer session is present, null otherwise. Callers pin writes to
+// buyer.id; a null result falls through to the merchant path or a 401.
+export async function tryAuthenticateBuyer(c: BuyerContext): Promise<BuyerIdentity | null> {
+  try {
+    return await authenticateBuyer(c);
+  } catch {
+    return null;
+  }
+}
+
 export function currentBuyerSessionId(c: BuyerContext): string {
   const sid = c.get("buyerSessionId");
   if (!sid) throw new AppError("unauthorized", 401, "Authentication required.");

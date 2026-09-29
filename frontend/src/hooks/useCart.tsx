@@ -19,12 +19,14 @@ interface CartState {
   countFor: (slug: string) => number;
   loadingFor: (slug: string) => boolean;
   notice: string | null;
+  /** Machine-readable code of the last failed mutation (e.g. turnstile_required). */
+  lastCode: string | null;
   ensure: (slug: string) => Promise<void>;
   refresh: (slug: string) => Promise<void>;
   mergeGuest: (slug: string) => Promise<boolean>;
-  add: (slug: string, productId: string, quantity?: number) => Promise<boolean>;
-  setQuantity: (slug: string, itemId: string, quantity: number) => Promise<boolean>;
-  removeByProduct: (slug: string, productId: string) => Promise<boolean>;
+  add: (slug: string, productId: string, quantity?: number, captchaToken?: string) => Promise<boolean>;
+  setQuantity: (slug: string, itemId: string, quantity: number, captchaToken?: string) => Promise<boolean>;
+  removeByProduct: (slug: string, productId: string, captchaToken?: string) => Promise<boolean>;
   forgetGuestCart: (slug: string) => void;
 }
 
@@ -66,6 +68,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [carts, setCarts] = useState<Record<string, ServerCart | null>>({});
   const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [notice, setNotice] = useState<string | null>(null);
+  const [lastCode, setLastCode] = useState<string | null>(null);
   const idsRef = useRef<Record<string, string> | null>(null);
 
   const ids = (): Record<string, string> => {
@@ -86,6 +89,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const fail = useCallback(async (slug: string, res: unknown): Promise<false> => {
     const code = (res as { error?: { code?: string } } | null)?.error?.code;
+    setLastCode(code ?? null);
     if (code === "cart_not_found") {
       // Guest cart expired/consumed server-side: drop the stale id so the
       // next operation mints a fresh cart instead of looping on a 404.
@@ -97,7 +101,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
         ? "هذا المنتج غير متاح حالياً."
         : code === "quantity_exceeded"
           ? "تجاوزت الكمية الحد الأقصى (999)."
-          : "تعذّر تحديث السلة. حاول مجدداً."
+          : code === "turnstile_required"
+            ? "يرجى إكمال التحقق الأمني أولاً."
+            : code === "turnstile_failed"
+              ? "فشل التحقق الأمني. حاول مجدداً."
+              : "تعذّر تحديث السلة. حاول مجدداً."
     );
     return false;
   }, [remember]);
@@ -176,9 +184,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const mutate = useCallback(
     async (
       slug: string,
-      op: (cartId: string | null, authed: boolean) => Promise<{ ok: boolean; data?: { cart: ServerCart } } | { ok: boolean; error?: { code?: string } }>
+      op: (cartId: string | null, authed: boolean, captchaToken?: string) => Promise<{ ok: boolean; data?: { cart: ServerCart } } | { ok: boolean; error?: { code?: string } }>,
+      captchaToken?: string
     ): Promise<boolean> => {
       setNotice(null);
+      setLastCode(null);
       const buyer = buyerFor(slug);
       try {
         if (buyer) {
@@ -189,22 +199,22 @@ export function CartProvider({ children }: { children: ReactNode }) {
         }
         let id = ids()[slug] ?? null;
         if (!id) {
-          const created = await cartApi.create(slug);
+          const created = await cartApi.create(slug, captchaToken);
           if (!created.ok) return fail(slug, created);
           id = (created as { data: { cart: ServerCart } }).data.cart.id;
           remember(slug, id);
         }
-        const res = await op(id, false);
+        const res = await op(id, false, captchaToken);
         if (!res.ok) {
           const code = (res as { error?: { code?: string } }).error?.code;
           // Creation race / stale id: mint once more, then give up.
           if (code === "cart_not_found") {
             remember(slug, null);
-            const created = await cartApi.create(slug);
+            const created = await cartApi.create(slug, captchaToken);
             if (!created.ok) return fail(slug, created);
             id = (created as { data: { cart: ServerCart } }).data.cart.id;
             remember(slug, id);
-            const retry = await op(id, false);
+            const retry = await op(id, false, captchaToken);
             if (!retry.ok) return fail(slug, retry);
             apply(slug, (retry as { data: { cart: ServerCart } }).data.cart);
             return true;
@@ -222,31 +232,31 @@ export function CartProvider({ children }: { children: ReactNode }) {
   );
 
   const add = useCallback(
-    (slug: string, productId: string, quantity = 1) =>
-      mutate(slug, (cartId, authed) =>
+    (slug: string, productId: string, quantity = 1, captchaToken?: string) =>
+      mutate(slug, (cartId, authed, token) =>
         authed
           ? buyerApi.cart.add(slug, { product_id: productId, quantity })
-          : cartApi.add(slug, cartId as string, { product_id: productId, quantity })
-      ),
+          : cartApi.add(slug, cartId as string, { product_id: productId, quantity }, token)
+      , captchaToken),
     [mutate]
   );
 
   const setQuantity = useCallback(
-    (slug: string, itemId: string, quantity: number) =>
-      mutate(slug, (cartId, authed) =>
+    (slug: string, itemId: string, quantity: number, captchaToken?: string) =>
+      mutate(slug, (cartId, authed, token) =>
         authed
           ? buyerApi.cart.setQty(slug, itemId, quantity)
-          : cartApi.setQty(slug, cartId as string, itemId, quantity)
-      ),
+          : cartApi.setQty(slug, cartId as string, itemId, quantity, token)
+      , captchaToken),
     [mutate]
   );
 
   const removeByProduct = useCallback(
-    async (slug: string, productId: string) => {
+    async (slug: string, productId: string, captchaToken?: string) => {
       const cart = carts[slug];
       const line = cart?.items.find((l) => l.product_id === productId) ?? null;
       if (!line) return true;
-      return setQuantity(slug, line.id, 0);
+      return setQuantity(slug, line.id, 0, captchaToken);
     },
     [carts, setQuantity]
   );
@@ -267,8 +277,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const loadingFor = useCallback((slug: string) => loading[slug] ?? false, [loading]);
 
   const value = useMemo(
-    () => ({ cartFor, countFor, loadingFor, notice, ensure, refresh, mergeGuest, add, setQuantity, removeByProduct, forgetGuestCart }),
-    [cartFor, countFor, loadingFor, notice, ensure, refresh, mergeGuest, add, setQuantity, removeByProduct, forgetGuestCart]
+    () => ({ cartFor, countFor, loadingFor, notice, lastCode, ensure, refresh, mergeGuest, add, setQuantity, removeByProduct, forgetGuestCart }),
+    [cartFor, countFor, loadingFor, notice, lastCode, ensure, refresh, mergeGuest, add, setQuantity, removeByProduct, forgetGuestCart]
   );
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

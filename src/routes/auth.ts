@@ -29,7 +29,7 @@ import { buildEmailChangeNotice, buildResetEmail, buildResetSuccessEmail, buildV
 import { normalizeEmail } from "../lib/email.js";
 import { normalizePhone } from "../lib/phone.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
-import { idParam } from "../openapi/params.js";
+import { idParam, turnstileTokenHeader } from "../openapi/params.js";
 import { auditLog } from "../lib/audit.js";
 import { resourceId } from "../db/tenant.js";
 import { uuidv7 } from "../lib/ids.js";
@@ -118,11 +118,10 @@ const REGISTER_FORBIDDEN = ["id", "role"] as const;
 // POST /auth/register — public merchant self-registration (MVP). No admin
 // involvement, no approval: a visitor becomes a merchant and then logs in
 // via /auth/login with their EMAIL (separate step by design — registration
-// mints no session). Abuse control is a dedicated ip+email sliding window
-// (same 429 shape as login) rather than Turnstile: Turnstile fail-closed
-// 503s when unconfigured, which would brick registration in any environment
-// without a widget, while rate-limit-only is the accepted pattern for
-// public auth mutations.
+// mints no session). Abuse control is defense in depth: Turnstile bot check
+// first, then a dedicated ip+email sliding window (same 429 shape as login).
+// Development without a Turnstile secret passes through via the standard dev
+// bypass; misconfigured production fails closed.
 // Duplicate identities are 409 (email_taken / phone_taken): signup
 // uniqueness is inherently an existence signal — unavoidable and standard;
 // login keeps its no-oracle 401 for credential guessing, which is the
@@ -132,11 +131,13 @@ const registerRoute = createRoute({
   path: "/register",
   summary: "Register a merchant account",
   description:
-    "Public self-service registration. Email is required and unique; " +
+    "Public self-service registration (Turnstile + rate limit). Email is required and unique; " +
     "phone is required, unique, and stored in canonical form (see lib/phone.ts) so it can also authenticate at login. Role is always merchant — role in the body is 400. " +
     "Returns the public profile (never the password hash); log in separately via /auth/login. " +
     "A verification email is sent when mail is configured (best-effort; informational only).",
+  middleware: [requireTurnstile()],
   request: {
+    headers: turnstileTokenHeader,
     body: { content: { "application/json": { schema: registerSchema } } },
   },
   responses: {
@@ -146,7 +147,11 @@ const registerRoute = createRoute({
     },
     400: {
       content: { "application/json": { schema: failEnvelope } },
-      description: "Invalid body or forbidden field",
+      description: "Invalid body, forbidden field, or bot token required",
+    },
+    403: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Bot verification failed",
     },
     409: {
       content: { "application/json": { schema: failEnvelope } },

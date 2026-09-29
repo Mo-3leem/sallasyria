@@ -18,6 +18,8 @@ import { FormError } from "@/components/auth/FormError";
 import { RateLimitNotice } from "@/components/auth/RateLimitNotice";
 import { Button } from "@/components/ui/Button";
 import { Loading } from "@/components/ui/Loading";
+import { TurnstileWidget, TURNSTILE_READY, logCaptchaFailure } from "@/components/auth/TurnstileWidget";
+import { getLastRequestId } from "@/lib/api";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -31,6 +33,13 @@ function RegisterForm() {
   const [formError, setFormError] = useState<string | null>(null);
   const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaKey, setCaptchaKey] = useState(0);
+
+  function retryCaptcha() {
+    setCaptchaToken(null);
+    setCaptchaKey((k) => k + 1);
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -49,6 +58,16 @@ function RegisterForm() {
       setFieldErrors(local);
       return;
     }
+    if (TURNSTILE_READY && !captchaToken) {
+      setFormError("أكمل التحقق الأمني أولاً.");
+      return;
+    }
+    if (!TURNSTILE_READY) {
+      // No widget baked in: no token can ever be produced. Backend answers
+      // 400/503; say so instead of pointing at a missing checkbox.
+      setFormError("التحقق الأمني غير مفعّل حالياً — تواصل مع الإدارة.");
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -59,7 +78,7 @@ function RegisterForm() {
         phone: phone.trim(),
         password,
         name: name.trim(),
-      });
+      }, captchaToken ?? undefined);
       if (!res.ok) {
         const code = getErrorCode(res);
         if (code === "rate_limited") lock(30);
@@ -67,8 +86,19 @@ function RegisterForm() {
         if (code === "email_taken") fields.email = fields.email || "هذا البريد مسجّل مسبقاً.";
         if (code === "phone_taken") fields.phone = fields.phone || "هذا الرقم مسجّل مسبقاً.";
         if (code === "invalid_phone") fields.phone = fields.phone || INVALID_PHONE_MESSAGE;
+        if (code === "turnstile_required") {
+          logCaptchaFailure(code, getLastRequestId());
+          setFormError("أكمل التحقق الأمني أولاً.");
+        } else if (code === "turnstile_failed") {
+          logCaptchaFailure(code, getLastRequestId());
+          setFormError("فشل التحقق الأمني. حاول مجدداً.");
+          retryCaptcha();
+        } else if (code === "turnstile_misconfigured") {
+          logCaptchaFailure(code, getLastRequestId());
+          setFormError("التحقق الأمني غير مفعّل حالياً — تواصل مع الإدارة.");
+        }
         if (Object.keys(fields).length > 0) setFieldErrors(fields);
-        setFormError(authErrorMessage(res, 400));
+        setFormError((prev) => prev ?? authErrorMessage(res, 400));
         return;
       }
       // Registration mints NO session — the merchant must verify, then log in.
@@ -76,6 +106,9 @@ function RegisterForm() {
     } catch {
       setFormError(NETWORK_ERROR_MESSAGE);
     } finally {
+      // Turnstile tokens are single-use: every attempt consumes the token,
+      // so a retry always mints a fresh one.
+      retryCaptcha();
       setSubmitting(false);
     }
   }
@@ -151,6 +184,7 @@ function RegisterForm() {
           error={fieldErrors.password}
           hint="8 أحرف على الأقل."
         />
+        <TurnstileWidget key={captchaKey} onToken={setCaptchaToken} />
         <Button
           type="submit"
           variant="primary"

@@ -153,6 +153,27 @@ export function checkResendPubAccountLimit(accountHash: string): boolean {
   return resendPubAccount.check(`resend-pub:acct:${accountHash}`);
 }
 
+// Buyer forgot-password target throttle (roadmap B3): same recovery-mail
+// class as public resend (5/hour per target) — repeated reset mail to one
+// address or phone is capped even across rotated IPs. Keyed by SHA-256 of
+// the canonical target (trimmed + lowercased, mirroring lookup); the raw
+// target is never a key and never logged.
+const forgotTarget = createRateLimiter({ maxAttempts: 5, windowMs: 60 * 60 * 1000 });
+
+export function checkForgotTargetLimit(targetHash: string): boolean {
+  return forgotTarget.check(`forgot-target:${targetHash}`);
+}
+
+// Billing webhook flood guard (roadmap B3): generous per-IP bucket —
+// providers legitimately retry in bursts, so only abuse floods trip it
+// (120/min sustained). HMAC verification stays the real boundary and
+// idempotent settle makes replays converge; this just bounds junk traffic.
+const webhookIp = createRateLimiter({ maxAttempts: 120, windowMs: 60_000 });
+
+export function checkWebhookIpLimit(ip: string): boolean {
+  return webhookIp.check(`webhook:${ip}`);
+}
+
 // Test seam (mirrors the login/register seams; never exposed via HTTP).
 export function resetResendPubAccountLimit(accountHash: string): void {
   resendPubAccount.reset(`resend-pub:acct:${accountHash}`);

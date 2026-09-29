@@ -97,6 +97,9 @@ beforeAll(async () => {
     if (!r.ok) throw new Error(`B5 seed failed: ${r.error}`);
   }
   d1(`UPDATE users SET email_verified = 1 WHERE id IN ('user_verify_b5c_a', 'user_verify_b5c_b');`);
+  // Buyer flows resolve published stores only; publish store A for the
+  // buyer-session tests below (store B stays a draft).
+  d1(`UPDATE stores SET is_published = 1 WHERE id = 'store_verify_b5c_a';`);
 
   async function loginCookie(email: string): Promise<string> {
     const res = await fetch(`${BASE}/auth/login`, {
@@ -300,34 +303,32 @@ describe("B5 customers: private management + isolation", () => {
   });
 });
 
-describe("B5 addresses: public create, atomic default swap", () => {
-  it("anonymous create works; cross-store customer and bad governorate rejected", async () => {
-    const created = await api(`${A}/customer-addresses`, {
+describe("B5 addresses: session ownership + atomic default swap", () => {
+  const buyerJar = async (slug: string, phone: string): Promise<string> => {
+    const res = await fetch(`${BASE}/s/${slug}/account/register`, {
       method: "POST",
-      body: JSON.stringify({
-        customer_id: "cust_verify_b5c_a",
-        recipient_name: "Recip",
-        phone: "0991 500 031",
-        governorate: "Damascus",
-        address_line: "Street 1",
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Addr Buyer", phone, password: "Buyer-Strong-1" }),
     });
-    expect(created.status).toBe(201);
-    const addr = (created.body as { data: { address: { phone: string; is_default: number } } }).data.address;
-    expect(addr.phone).toBe("+963991500031");
-    expect(addr.is_default).toBe(0);
+    expect(res.status).toBe(201);
+    const setCookie = res.headers.get("set-cookie");
+    if (!setCookie) throw new Error("buyer register did not set a session cookie");
+    return `ss_buyer=${(setCookie.split(";")[0] ?? "").split("=").slice(1).join("=")}`;
+  };
 
-    const foreign = await api(`${A}/customer-addresses`, {
+  it("guests are rejected; bad governorate still 400 for callers", async () => {
+    const anonBody = {
+      customer_id: "cust_verify_b5c_a",
+      recipient_name: "Recip",
+      phone: "0991 500 031",
+      governorate: "Damascus",
+      address_line: "Street 1",
+    };
+    expect((await api(`${A}/customer-addresses`, {
       method: "POST",
-      body: JSON.stringify({
-        customer_id: "cust_verify_b5c_b",
-        recipient_name: "X",
-        phone: "+963911500032",
-        governorate: "Aleppo",
-        address_line: "Street X",
-      }),
-    });
-    expect(foreign.status).toBe(404);
+      body: JSON.stringify(anonBody),
+    })).status).toBe(401);
+    expect((await api(`${A}/customer-addresses/addr_verify_nope/make-default`, { method: "POST" })).status).toBe(401);
 
     const badGov = await api(`${A}/customer-addresses`, {
       method: "POST",
@@ -338,15 +339,63 @@ describe("B5 addresses: public create, atomic default swap", () => {
         governorate: "Atlantis",
         address_line: "Street X",
       }),
-    });
+    }, jarA);
     expect(badGov.status).toBe(400);
   });
 
-  it("reads require auth and stay scoped", async () => {
-    expect((await api(`${A}/customer-addresses?customer_id=cust_verify_b5c_a`)).status).toBe(401);
-    const listed = await api(`${A}/customer-addresses?customer_id=cust_verify_b5c_a`, {}, jarA);
-    expect(listed.status).toBe(200);
-    expect((await api(`${A}/customer-addresses?customer_id=cust_verify_b5c_b`, {}, jarA)).status).toBe(404);
+  it("merchant manages own store; cross-merchant access is 404", async () => {
+    const created = await api(`${A}/customer-addresses`, {
+      method: "POST",
+      body: JSON.stringify({
+        customer_id: "cust_verify_b5c_a",
+        recipient_name: "Recip",
+        phone: "0991 500 031",
+        governorate: "Damascus",
+        address_line: "Street 1",
+      }),
+    }, jarA);
+    expect(created.status).toBe(201);
+    const addr = (created.body as { data: { address: { id: string; phone: string; is_default: number } } }).data.address;
+    expect(addr.phone).toBe("+963991500031");
+    expect(addr.is_default).toBe(0);
+
+    // Merchant B has no access to store A: indistinguishable 404s.
+    expect((await api(`${A}/customer-addresses`, {
+      method: "POST",
+      body: JSON.stringify({
+        customer_id: "cust_verify_b5c_b",
+        recipient_name: "X",
+        phone: "+963911500032",
+        governorate: "Aleppo",
+        address_line: "Street X",
+      }),
+    }, jarB)).status).toBe(404);
+    expect((await api(`${B}/customer-addresses/${addr.id}/make-default`, { method: "POST" }, jarA)).status).toBe(404);
+  });
+
+  it("buyers write only their own customer; victims stay untouched", async () => {
+    const buyer = await buyerJar("b5c-store-a", "+963911500081");
+    // Capture victim state first: earlier tests may have renamed it.
+    const before = await api(`${A}/customers/cust_verify_b5c_a`, {}, jarA);
+    expect(before.status).toBe(200);
+    const victimName = ((before.body as { data: { customer: { name: string } } }).data.customer.name);
+    const own = await api(`${A}/customer-addresses`, {
+      method: "POST",
+      body: JSON.stringify({
+        customer_id: "cust_verify_b5c_a",
+        recipient_name: "Mine",
+        phone: "+963911500082",
+        governorate: "Damascus",
+        address_line: "Mine St",
+      }),
+    }, buyer);
+    // cust_verify_b5c_a is a different customer than the buyer's own row.
+    expect(own.status).toBe(404);
+
+    // Victim's data is unchanged by the attempt.
+    const victim = await api(`${A}/customers/cust_verify_b5c_a`, {}, jarA);
+    expect(victim.status).toBe(200);
+    expect(((victim.body as { data: { customer: { name: string } } }).data.customer.name)).toBe(victimName);
   });
 
   it("make-default swaps atomically; direct is_default writes are 400", async () => {
@@ -356,19 +405,19 @@ describe("B5 addresses: public create, atomic default swap", () => {
         customer_id: "cust_verify_b5c_a", recipient_name: "D1", phone: "+963911500041",
         governorate: "Homs", address_line: "S1",
       }),
-    });
+    }, jarA);
     const mk2 = await api(`${A}/customer-addresses`, {
       method: "POST",
       body: JSON.stringify({
         customer_id: "cust_verify_b5c_a", recipient_name: "D2", phone: "+963911500042",
         governorate: "Hama", address_line: "S2",
       }),
-    });
+    }, jarA);
     const id1 = (mk1.body as { data: { address: { id: string } } }).data.address.id;
     const id2 = (mk2.body as { data: { address: { id: string } } }).data.address.id;
 
-    expect((await api(`${A}/customer-addresses/${id1}/make-default`, { method: "POST" })).status).toBe(200);
-    const swapped = await api(`${A}/customer-addresses/${id2}/make-default`, { method: "POST" });
+    expect((await api(`${A}/customer-addresses/${id1}/make-default`, { method: "POST" }, jarA)).status).toBe(200);
+    const swapped = await api(`${A}/customer-addresses/${id2}/make-default`, { method: "POST" }, jarA);
     expect(swapped.status).toBe(200);
     const list = await api(`${A}/customer-addresses?customer_id=cust_verify_b5c_a`, {}, jarA);
     const rows = (list.body as { data: { addresses: { id: string; is_default: number }[] } }).data.addresses;
@@ -381,8 +430,35 @@ describe("B5 addresses: public create, atomic default swap", () => {
     }, jarA);
     expect(direct.status).toBe(400);
 
-    const foreign = await api(`${B}/customer-addresses/${id1}/make-default`, { method: "POST" });
+    // A logged-in buyer cannot flip another customer's address.
+    const buyer = await buyerJar("b5c-store-a", "+963911500083");
+    expect((await api(`${A}/customer-addresses/${id1}/make-default`, { method: "POST" }, buyer)).status).toBe(404);
+    const still = await api(`${A}/customer-addresses?customer_id=cust_verify_b5c_a`, {}, jarA);
+    const stillRows = (still.body as { data: { addresses: { id: string; is_default: number }[] } }).data.addresses;
+    expect(stillRows.filter((r) => r.is_default === 1).map((r) => r.id)).toEqual([id2]);
+
+    const foreign = await api(`${B}/customer-addresses/${id1}/make-default`, { method: "POST" }, jarB);
     expect(foreign.status).toBe(404);
+  });
+
+  it("buyer creates and defaults their own address", async () => {
+    const buyer = await buyerJar("b5c-store-a", "+963911500084");
+    const me = await api(`/s/b5c-store-a/account/me`, {}, buyer);
+    expect(me.status).toBe(200);
+    const myId = (me.body as { data: { buyer: { id: string } } }).data.buyer.id;
+    const created = await api(`${A}/customer-addresses`, {
+      method: "POST",
+      body: JSON.stringify({
+        customer_id: myId,
+        recipient_name: "Home",
+        phone: "+963911500085",
+        governorate: "Damascus",
+        address_line: "Home St",
+      }),
+    }, buyer);
+    expect(created.status).toBe(201);
+    const addrId = (created.body as { data: { address: { id: string } } }).data.address.id;
+    expect((await api(`${A}/customer-addresses/${addrId}/make-default`, { method: "POST" }, buyer)).status).toBe(200);
   });
 });
 

@@ -62,6 +62,8 @@ import {
   updateAddress,
 } from "../services/customers.js";
 import { sendMail, dispatchMail } from "../services/mail.js";
+import { hashEmailToken } from "../services/email-tokens.js";
+import { checkForgotTargetLimit } from "../lib/rate-limit.js";
 import { cookieSameSite } from "./auth.js";
 
 export const buyer = new OpenAPIHono<AppEnv>();
@@ -122,6 +124,10 @@ const buyerOkSchema = okOf(z.object({ buyer: buyerDocSchema }));
 const storeMw = [resolvePublishedStoreBySlug, limitPublicMutations] as const;
 const accountMutating = [...storeMw, requireTurnstile()] as const;
 const authed = [...storeMw, requireBuyer] as const;
+// Guest cart mutations farm rows with a bare capability id, so they carry
+// the same bot check as account mutations. Reads stay open; account carts
+// stay on the session-only authed stack.
+const guestCartMutating = [...storeMw, requireTurnstile()] as const;
 
 const passwordSchema = z
   .string()
@@ -342,7 +348,7 @@ const forgotRoute = createRoute({
   method: "post",
   path: "/:slug/account/forgot-password",
   summary: "Request buyer password reset",
-  description: "Always 200 with accepted:true: existence of the account is never revealed.",
+  description: "Always 200 with accepted:true: existence of the account is never revealed. Per-target mail cap (5/hour) plus the shared IP+store limit bound floods.",
   middleware: [...accountMutating],
   request: {
     params: slugParams,
@@ -351,12 +357,20 @@ const forgotRoute = createRoute({
   },
   responses: {
     200: { content: { "application/json": { schema: okOf(z.object({ accepted: z.boolean() })) } }, description: "Accepted" },
+    429: { content: { "application/json": { schema: failEnvelope } }, description: "Too many attempts" },
   },
 });
 
 buyer.openapi(forgotRoute, async (c) => {
   const { storeId } = storeScope(c);
   const identity = c.req.valid("json").identity.trim();
+  // Per-target mail-bomb cap (recovery-mail class: 5/hour, same as public
+  // resend): counted for every request including unknown targets, so IP
+  // rotation cannot flood one address. Keyed by hash; the raw target never
+  // lands in limiter state or logs. IP+store limit already ran in middleware.
+  if (!checkForgotTargetLimit(await hashEmailToken(identity.toLowerCase()))) {
+    throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
+  }
   try {
     // Reset needs a deliverable email: phone-only accounts cannot reset,
     // and the outcome stays indistinguishable regardless.
@@ -662,10 +676,12 @@ const createCartRoute = createRoute({
   path: "/:slug/cart",
   summary: "Create a guest cart",
   description: "Returns a capability cart id; knowledge of the id is ownership.",
-  middleware: [...storeMw],
-  request: { params: slugParams },
+  middleware: [...guestCartMutating],
+  request: { params: slugParams, headers: turnstileTokenHeader },
   responses: {
     201: { content: { "application/json": { schema: cartOkSchema } }, description: "Cart created" },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Bot verification token required" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Bot verification failed" },
     404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store" },
   },
 });
@@ -703,13 +719,16 @@ const addItemRoute = createRoute({
   method: "post",
   path: "/:slug/cart/:cartId/items",
   summary: "Add a line to a guest cart",
-  middleware: [...storeMw],
+  middleware: [...guestCartMutating],
   request: {
     params: cartIdParams,
+    headers: turnstileTokenHeader,
     body: { content: { "application/json": { schema: addItemSchema } } },
   },
   responses: {
     200: { content: { "application/json": { schema: cartOkSchema } }, description: "Cart" },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid body or bot token required" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Bot verification failed" },
     404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown cart" },
     409: { content: { "application/json": { schema: failEnvelope } }, description: "Product unavailable" },
   },
@@ -728,13 +747,16 @@ const setQtyRoute = createRoute({
   method: "patch",
   path: "/:slug/cart/:cartId/items/:itemId",
   summary: "Set a guest cart line quantity (0 removes)",
-  middleware: [...storeMw],
+  middleware: [...guestCartMutating],
   request: {
     params: cartItemIdParams,
+    headers: turnstileTokenHeader,
     body: { content: { "application/json": { schema: setQtySchema } } },
   },
   responses: {
     200: { content: { "application/json": { schema: cartOkSchema } }, description: "Cart" },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid body or bot token required" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Bot verification failed" },
     404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown cart or item" },
   },
 });

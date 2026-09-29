@@ -6,10 +6,9 @@ import { AppError } from "../http/errors.js";
 import { ok } from "../http/respond.js";
 import { assertNoImmutableFields, z, validationHook } from "../http/validate.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
-import { idParam, storeIdParam, storeIdParams, turnstileTokenHeader } from "../openapi/params.js";
+import { idParam, storeIdParam, storeIdParams } from "../openapi/params.js";
 import { GOVERNORATES } from "../lib/governorates.js";
-import { requireAuth } from "../middleware/auth.js";
-import { requireTurnstile } from "../middleware/turnstile.js";
+import { requireAuth, tryAuthenticate } from "../middleware/auth.js";
 import { limitPublicMutations } from "../middleware/public.js";
 import { requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
@@ -21,21 +20,25 @@ import {
   makeDefaultAddress,
   updateAddress,
 } from "../services/customers.js";
+import { tryAuthenticateBuyer } from "../middleware/buyer.js";
 
 export const customerAddresses = new OpenAPIHono<AppEnv>();
 
 // NOTE (type-level boundary): zero SQL strings here; scoping only from
 // storeScope(c). Enforced by tests/tenant-conventions.test.ts.
 //
-// PUBLIC / PRIVATE SPLIT: buyers have no login, so create + make-default are
-// PUBLIC (Turnstile + rate-limited, address ids unguessable); every read and
-// all other mutations stay merchant-private. is_default is writable ONLY via
-// make-default (direct writes are 400) so the single-default rule has exactly
-// one writer.
+// AUTH SPLIT: create + make-default accept EITHER a merchant session with
+// store access (dashboard management) OR a logged-in buyer session pinned to
+// their own customer (storefront self-service). Guests get 401 — guest
+// checkout carries its own inline address handling inside its batch and never
+// calls these routes. Sessions (not bot checks) are the credential, exactly
+// like the authenticated buyer address book; rate limiting still applies.
+// is_default is writable ONLY via make-default (direct writes are 400) so
+// the single-default rule has exactly one writer.
 
 const authed = [requireAuth, resolveStore, requireStoreAccess] as const;
 const merchantMutating = [...authed, requireActiveSubscription] as const;
-const buyerMutating = [resolveStore, limitPublicMutations, requireTurnstile()] as const;
+const scoped = [resolveStore, limitPublicMutations] as const;
 
 const addressSchema = z.object({
   customer_id: z.string().min(1),
@@ -78,20 +81,19 @@ const createAddressRoute = createRoute({
   method: "post",
   path: "/",
   summary: "Save a delivery address",
-  description: "Public buyer flow (Turnstile + rate limit). The customer must belong to the same store.",
-  middleware: [...buyerMutating],
+  description: "Merchant dashboard (owner/admin session) or logged-in buyer writing only their own customer. Guests get 401. The customer must belong to the same store.",
+  middleware: [...scoped],
   request: {
     params: storeIdParams,
-    headers: turnstileTokenHeader,
     body: { content: { "application/json": { schema: addressSchema } } },
   },
   responses: {
     201: {
       content: { "application/json": { schema: addressOkSchema } },
-      description: "Address saved (public buyer flow)",
+      description: "Address saved",
     },
     400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid body, phone, governorate, or immutable field" },
-    403: { content: { "application/json": { schema: failEnvelope } }, description: "Bot verification failed" },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
     404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store or customer" },
     429: { content: { "application/json": { schema: failEnvelope } }, description: "Rate limited" },
   },
@@ -101,7 +103,24 @@ customerAddresses.openapi(createAddressRoute, async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   assertNoImmutableFields(raw, CREATE_FORBIDDEN);
   const { storeId } = storeScope(c);
-  return ok(c, { address: await createAddress(getDb(c), storeId, c.req.valid("json")) }, 201);
+  const input = c.req.valid("json");
+  // Buyer path: the caller's own customer only — a foreign customer_id is
+  // indistinguishable from an unknown one (same 404 as a missing customer).
+  const buyer = await tryAuthenticateBuyer(c);
+  if (buyer) {
+    if (input.customer_id !== buyer.id) {
+      throw new AppError("customer_not_found", 404, "Customer not found.");
+    }
+  } else {
+    // Merchant dashboard path: owner/admin of this store (404 otherwise, so
+    // store existence and ownership stay hidden, like requireStoreAccess).
+    const merchant = await tryAuthenticate(c);
+    if (!merchant) {
+      throw new AppError("unauthorized", 401, "Authentication required.");
+    }
+    await requireStoreAccess(c, async () => {});
+  }
+  return ok(c, { address: await createAddress(getDb(c), storeId, input) }, 201);
 }, validationHook);
 
 // customer_id stays a documented-but-optional query string on purpose: the
@@ -224,15 +243,15 @@ const makeDefaultRoute = createRoute({
   method: "post",
   path: "/:id/make-default",
   summary: "Set the default delivery address",
-  description: "Public buyer flow (Turnstile + rate limit). Clears the old default atomically in one batch.",
-  middleware: [...buyerMutating],
-  request: { params: idParams, headers: turnstileTokenHeader },
+  description: "Merchant dashboard (owner/admin session) or logged-in buyer for their own address only. Guests get 401. Clears the old default atomically in one batch.",
+  middleware: [...scoped],
+  request: { params: idParams },
   responses: {
     200: {
       content: { "application/json": { schema: addressOkSchema } },
       description: "Address promoted to default (atomic swap)",
     },
-    403: { content: { "application/json": { schema: failEnvelope } }, description: "Bot verification failed" },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
     404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store or address" },
     429: { content: { "application/json": { schema: failEnvelope } }, description: "Rate limited" },
   },
@@ -240,7 +259,23 @@ const makeDefaultRoute = createRoute({
 
 customerAddresses.openapi(makeDefaultRoute, async (c) => {
   const { storeId } = storeScope(c);
-  const row = await makeDefaultAddress(getDb(c), storeId, resourceId(c));
+  const id = resourceId(c);
+  // Buyer path: only an address belonging to the caller's own customer.
+  // Foreign and unknown ids answer identically, revealing nothing.
+  const buyer = await tryAuthenticateBuyer(c);
+  if (buyer) {
+    const current = await getAddress(getDb(c), storeId, id);
+    if (!current || current.customer_id !== buyer.id) {
+      throw new AppError("address_not_found", 404, "Address not found.");
+    }
+  } else {
+    const merchant = await tryAuthenticate(c);
+    if (!merchant) {
+      throw new AppError("unauthorized", 401, "Authentication required.");
+    }
+    await requireStoreAccess(c, async () => {});
+  }
+  const row = await makeDefaultAddress(getDb(c), storeId, id);
   if (!row) throw new AppError("address_not_found", 404, "Address not found.");
   return ok(c, { address: row });
 }, validationHook);

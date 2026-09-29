@@ -52,8 +52,11 @@ function d1(sql: string) {
 function mvpCleanupDeletes(): void {
   // Own namespace only (uuid ids never match the shared clean-verify
   // prefixes, so this suite owns its residue). Child-first for RESTRICT FKs:
-  // sessions -> stores -> users.
+  // sessions -> subscriptions -> stores -> users. Subscriptions matter because
+  // API-created stores auto-grant trials; without this delete the stores
+  // below stay FK-blocked and phones collide on reruns.
   d1(`DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE phone IN ('${PHONE_A}', '${PHONE_B}') OR email = 'em-new@example.com' OR id = 'user_verify_mvp_admin');`);
+  d1(`DELETE FROM subscriptions WHERE store_id IN (SELECT id FROM stores WHERE slug LIKE 'mvp-%');`);
   d1(`DELETE FROM stores WHERE slug LIKE 'mvp-%';`);
   d1(`DELETE FROM users WHERE id = 'user_verify_mvp_admin' OR phone IN ('${PHONE_A}', '${PHONE_B}') OR email = 'em-new@example.com';`);
 }

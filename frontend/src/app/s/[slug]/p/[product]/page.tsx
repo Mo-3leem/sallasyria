@@ -5,6 +5,7 @@ import { useState } from "react";
 import { ShopPage } from "@/components/shop/ShopPage";
 import { useCart } from "@/hooks/useCart";
 import { EmptyState } from "@/components/common/EmptyState";
+import { TurnstileWidget } from "@/components/auth/TurnstileWidget";
 
 /** Buyer product page: details + quantity + add to cart. */
 export default function ShopProductPage({
@@ -13,11 +14,15 @@ export default function ShopProductPage({
   params: { slug: string; product: string };
 }) {
   const { slug, product: productSlug } = params;
-  const { add, notice } = useCart();
+  const { add, notice, lastCode } = useCart();
   const [quantity, setQuantity] = useState(1);
   const [added, setAdded] = useState(false);
   const [adding, setAdding] = useState(false);
   const [photo, setPhoto] = useState(0);
+  // Bot check appears only if the backend demands it (challenge-on-demand);
+  // the solved token is attached to the next add attempt.
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaKey] = useState(0);
 
   return (
     <ShopPage slug={slug}>
@@ -116,14 +121,22 @@ export default function ShopProductPage({
                     disabled={adding}
                     onClick={async () => {
                       setAdding(true);
-                      const okAdded = await add(slug, product.id, quantity);
+                      const okAdded = await add(slug, product.id, quantity, captchaToken ?? undefined);
                       setAdding(false);
-                      if (okAdded) setAdded(true);
+                      if (okAdded) {
+                        setAdded(true);
+                        setCaptchaToken(null);
+                      }
                     }}
                   >
                     <i className="fas fa-cart-plus" aria-hidden="true"></i>
                     {adding ? "جاري الإضافة..." : "أضف إلى السلة"}
                   </button>
+                  {!added && lastCode === "turnstile_required" && (
+                    <div className="mt-12">
+                      <TurnstileWidget key={captchaKey} onToken={setCaptchaToken} />
+                    </div>
+                  )}
                   {notice && !added && (
                     <p className="shell-error mt-12" role="alert">
                       {notice}

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  checkForgotTargetLimit,
   checkLoginRateLimit,
   checkRegisterRateLimit,
   checkResendPubAccountLimit,
+  checkWebhookIpLimit,
   loginFailCount,
   loginFailKey,
   LOGIN_FAIL_CHALLENGE_AFTER,
@@ -124,5 +126,52 @@ describe("login failure counter (brute-force escalation)", () => {
     expect(checkLoginRateLimit(`login:127.0.0.1:counter-iso-a-${stamp}@example.com`, 4_000_000)).toBe(true);
     resetLoginFailures(a);
     expect(loginFailCount(a)).toBe(0);
+  });
+});
+
+describe("buyer forgot-password target limiting", () => {
+  it("allows five per hour per target hash, then blocks", () => {
+    const hash = `test-forgot-${Date.now()}`;
+    for (let i = 0; i < 5; i++) {
+      expect(checkForgotTargetLimit(hash)).toBe(true);
+    }
+    expect(checkForgotTargetLimit(hash)).toBe(false);
+  });
+
+  it("isolates target hashes from each other and the login bucket", () => {
+    const stamp = Date.now();
+    const a = `test-forgot-iso-a-${stamp}`;
+    const b = `test-forgot-iso-b-${stamp}`;
+    for (let i = 0; i < 5; i++) {
+      checkForgotTargetLimit(a);
+    }
+    expect(checkForgotTargetLimit(a)).toBe(false);
+    expect(checkForgotTargetLimit(b)).toBe(true);
+    expect(checkLoginRateLimit(`login:127.0.0.1:${a}`, 5_000_000)).toBe(true);
+  });
+});
+
+describe("billing webhook IP limiting", () => {
+  it("is generous: over a hundred rapid calls pass before any 429", () => {
+    const ip = `203.0.113.9-${Date.now()}`;
+    let allowed = 0;
+    let tripped = false;
+    for (let i = 0; i < 200 && !tripped; i++) {
+      if (checkWebhookIpLimit(ip)) allowed++;
+      else tripped = true;
+    }
+    // Generosity bound: legitimate retry bursts (tens of calls) never trip.
+    expect(tripped).toBe(true);
+    expect(allowed).toBeGreaterThanOrEqual(100);
+  });
+
+  it("trips eventually and isolates IPs", () => {
+    const stamp = Date.now();
+    const hot = `198.51.100.7-${stamp}`;
+    for (let i = 0; i < 120; i++) {
+      checkWebhookIpLimit(hot);
+    }
+    expect(checkWebhookIpLimit(hot)).toBe(false);
+    expect(checkWebhookIpLimit(`192.0.2.44-${stamp}`)).toBe(true);
   });
 });

@@ -134,7 +134,7 @@ function CheckoutBody(props: {
     captchaToken: string | null; captchaKey: number; retryCaptcha: () => void;
     setCaptchaToken: (v: string | null) => void;
   };
-  setQuantity: (slug: string, itemId: string, quantity: number) => Promise<boolean>;
+  setQuantity: (slug: string, itemId: string, quantity: number, captchaToken?: string) => Promise<boolean>;
   forgetGuestCart: (slug: string) => void;
   notice: string | null;
 }) {
@@ -353,6 +353,14 @@ function CheckoutBody(props: {
     );
   }
 
+  // Cart edits share the page's captcha token when present (guest mutations
+  // are bot-checked); tokens are single-use, so rotate after each edit and
+  // let the widget prompt afresh for the next one.
+  async function setQtyWithCaptcha(itemId: string, quantity: number): Promise<void> {
+    await props.setQuantity(slug, itemId, quantity, s.captchaToken ?? undefined);
+    if (s.captchaToken) s.retryCaptcha();
+  }
+
   return (
     <>
       <div className="shop-hero">
@@ -376,7 +384,7 @@ function CheckoutBody(props: {
                   <button
                     type="button"
                     aria-label="إنقاص"
-                    onClick={() => props.setQuantity(slug, l.id, l.quantity - 1)}
+                    onClick={() => setQtyWithCaptcha(l.id, l.quantity - 1)}
                   >
                     −
                   </button>
@@ -384,7 +392,7 @@ function CheckoutBody(props: {
                   <button
                     type="button"
                     aria-label="زيادة"
-                    onClick={() => props.setQuantity(slug, l.id, l.quantity + 1)}
+                    onClick={() => setQtyWithCaptcha(l.id, l.quantity + 1)}
                   >
                     +
                   </button>
@@ -392,7 +400,7 @@ function CheckoutBody(props: {
                 <button
                   type="button"
                   className="btn btn-outline btn-sm"
-                  onClick={() => props.setQuantity(slug, l.id, 0)}
+                  onClick={() => setQtyWithCaptcha(l.id, 0)}
                 >
                   إزالة
                 </button>

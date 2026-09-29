@@ -8,6 +8,7 @@ import { assertNoImmutableFields, z, validationHook } from "../http/validate.js"
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { idParam, storeIdParam } from "../openapi/params.js";
 import { auditLog } from "../lib/audit.js";
+import { checkWebhookIpLimit, clientIp } from "../lib/rate-limit.js";
 import { configuredProvider, selectProvider } from "../lib/billing/registry.js";
 import { currentUser, requireAuth, requireRole } from "../middleware/auth.js";
 import { requireStoreAccess, resolveStore } from "../middleware/store.js";
@@ -291,11 +292,18 @@ const webhookRoute = createRoute({
     },
     400: { content: { "application/json": { schema: failEnvelope } }, description: "Bad signature, stale event, or malformed payload" },
     404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown provider" },
+    429: { content: { "application/json": { schema: failEnvelope } }, description: "Too many attempts" },
     503: { content: { "application/json": { schema: failEnvelope } }, description: "Provider not configured" },
   },
 });
 
 billingWebhook.openapi(webhookRoute, async (c) => {
+  // Flood guard first (cheap reject before any crypto/DB work). Generous on
+  // purpose: legitimate provider retries are sparse; HMAC verification below
+  // stays the real boundary and keeps its exact failure shapes.
+  if (!checkWebhookIpLimit(clientIp(c))) {
+    throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
+  }
   const pathProvider = resourceId(c, "provider");
   const adapter = selectProvider(pathProvider);
   if (adapter.name !== configuredProvider(c.env).name) {

@@ -321,4 +321,30 @@ describe("checkout intents + stub webhook", () => {
     });
     expect(res.status).toBe(404);
   }, 60_000);
+
+  it("sustained invalid deliveries eventually 429; legitimate volume passes", async () => {
+    // Defense in depth only: HMAC stays the real boundary (bad signatures
+    // keep 400ing), the bucket just bounds junk floods. Generous by design:
+    // dozens of rapid retries must still succeed before any 429.
+    let successes = 0;
+    let trippedAt = -1;
+    for (let i = 0; i < 150 && trippedAt < 0; i++) {
+      const res = await api(`/billing/webhook/stub`, {
+        method: "POST",
+        body: JSON.stringify({ intent_id: "flood-intent", stub_token: "bogus" }),
+      });
+      if (res.status === 429) {
+        trippedAt = i;
+        expect(res.body).toEqual({
+          ok: false,
+          error: { code: "rate_limited", message: expect.any(String) },
+        });
+      } else {
+        expect(res.status).toBe(400);
+        successes++;
+      }
+    }
+    expect(trippedAt).toBeGreaterThanOrEqual(0);
+    expect(successes).toBeGreaterThanOrEqual(50);
+  }, 180_000);
 });
