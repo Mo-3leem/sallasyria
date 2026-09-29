@@ -55,8 +55,9 @@ import {
   sessionExpiryIso,
 } from "../lib/session.js";
 import { touch } from "../lib/time.js";
+import { requireTurnstile } from "../middleware/turnstile.js";
 import { appUrl } from "../env.js";
-import { checkLoginRateLimit, checkRegisterRateLimit, checkResendPubAccountLimit, clientIp, loginRateLimitKey, registerRateLimitKey } from "../lib/rate-limit.js";
+import { checkLoginRateLimit, checkRegisterRateLimit, checkResendPubAccountLimit, clientIp, loginFailCount, loginFailKey, LOGIN_FAIL_CHALLENGE_AFTER, loginRateLimitKey, recordLoginFailure, registerRateLimitKey, resetLoginFailures } from "../lib/rate-limit.js";
 import {
   currentSessionId,
   currentUser,
@@ -608,6 +609,7 @@ const loginRoute = createRoute({
     "Verifies credentials and mints one opaque server-side session returned as an HttpOnly cookie. " +
     "The identity is an email (contains @) or a phone number (Syrian shapes, any common formatting). " +
     "Unknown identity, inactive account, and wrong password all return an identical 401. " +
+    "After repeated failed passwords for one identity, a Turnstile challenge is required first. " +
     "Correct credentials on an unverified email return 403 email_not_verified — verify first, then log in.",
   request: {
     body: { content: { "application/json": { schema: loginSchema } } },
@@ -664,6 +666,18 @@ auth.openapi(loginRoute, async (c) => {
     throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
   }
 
+  // Brute-force escalation (B4): after LOGIN_FAIL_CHALLENGE_AFTER consecutive
+  // wrong passwords for one canonical identity, require a Turnstile challenge
+  // BEFORE checking credentials, so the challenge reveals nothing about
+  // account existence (unknown identities accumulate identically). Reuses the
+  // standard middleware verbatim: missing token 400s, bad token 403s,
+  // misconfigured production 503s, dev without secret passes through.
+  // Never a lockout — the base 10/10min limiter above still applies.
+  const failKey = loginFailKey(canonical ?? "invalid-phone");
+  if (loginFailCount(failKey) >= LOGIN_FAIL_CHALLENGE_AFTER) {
+    await requireTurnstile()(c, async () => {});
+  }
+
   const db = getDb(c);
   let user: UserRow | null = null;
   if (canonical !== null) {
@@ -684,8 +698,15 @@ auth.openapi(loginRoute, async (c) => {
   const hashToCheck = user !== null && user.is_active === 1 ? user.password_hash : dummyHash();
   const passwordOk = verifyPassword(password, hashToCheck);
   if (user === null || user.is_active !== 1 || !passwordOk) {
+    // Wrong password (unknown, inactive, and mismatched accounts share this
+    // path by design): count the failure toward challenge escalation, then
+    // answer the identical 401. Successes reset below.
+    recordLoginFailure(failKey);
     throw new AppError("invalid_credentials", 401, "Invalid email/phone or password.");
   }
+  // Password proven (even when the verified-gate 403s below): the account is
+  // not being guessed, so clear its failure count.
+  resetLoginFailures(failKey);
   // Verification gate (policy): correct credentials alone do not authenticate
   // until the email is verified. Ordered AFTER the password check so wrong
   // passwords keep the identical 401 (no verified-state oracle); a correct

@@ -3,9 +3,14 @@ import {
   checkLoginRateLimit,
   checkRegisterRateLimit,
   checkResendPubAccountLimit,
+  loginFailCount,
+  loginFailKey,
+  LOGIN_FAIL_CHALLENGE_AFTER,
   loginRateLimitKey,
   LOGIN_RATE_LIMIT,
+  recordLoginFailure,
   registerRateLimitKey,
+  resetLoginFailures,
   resetLoginRateLimit,
   resetRegisterRateLimit,
   resetResendPubAccountLimit,
@@ -87,5 +92,37 @@ describe("public resend account limiting", () => {
     expect(checkResendPubAccountLimit(b)).toBe(true);
     resetResendPubAccountLimit(a);
     expect(checkResendPubAccountLimit(a)).toBe(true);
+  });
+});
+
+describe("login failure counter (brute-force escalation)", () => {
+  it("starts at zero and thresholds at five", () => {
+    expect(LOGIN_FAIL_CHALLENGE_AFTER).toBe(5);
+    const key = loginFailKey(`counter-user-${Date.now()}@example.com`);
+    expect(loginFailCount(key)).toBe(0);
+  });
+
+  it("increments per failure and resets on success", () => {
+    const key = loginFailKey(`counter-reset-${Date.now()}@example.com`);
+    recordLoginFailure(key);
+    recordLoginFailure(key);
+    expect(loginFailCount(key)).toBe(2);
+    resetLoginFailures(key);
+    expect(loginFailCount(key)).toBe(0);
+  });
+
+  it("isolates identities and never touches the login bucket", () => {
+    const stamp = Date.now();
+    const a = loginFailKey(`counter-iso-a-${stamp}@example.com`);
+    const b = loginFailKey(`counter-iso-b-${stamp}@example.com`);
+    for (let i = 0; i < LOGIN_FAIL_CHALLENGE_AFTER; i++) {
+      recordLoginFailure(a);
+    }
+    expect(loginFailCount(a)).toBe(LOGIN_FAIL_CHALLENGE_AFTER);
+    expect(loginFailCount(b)).toBe(0);
+    // Same identity string in the login bucket is a different namespace.
+    expect(checkLoginRateLimit(`login:127.0.0.1:counter-iso-a-${stamp}@example.com`, 4_000_000)).toBe(true);
+    resetLoginFailures(a);
+    expect(loginFailCount(a)).toBe(0);
   });
 });

@@ -93,8 +93,12 @@ export const authApi = {
     name: string;
   }) => api.post<{ user: { id: string; phone: string; email: string | null; name: string; role: string; email_verified: number; avatar_url: string | null } }>("/auth/register", data),
 
-  login: (data: { identity: string; password: string }) =>
-    api.post<{ user: { id: string; phone: string; email: string | null; name: string; role: string; email_verified: number; avatar_url: string | null }; must_rotate: boolean }>("/auth/login", data),
+  login: (data: { identity: string; password: string }, turnstileToken?: string) =>
+    api.post<{ user: { id: string; phone: string; email: string | null; name: string; role: string; email_verified: number; avatar_url: string | null }; must_rotate: boolean }>(
+      "/auth/login",
+      data,
+      turnstileToken ? { "X-Turnstile-Token": turnstileToken } : undefined
+    ),
 
   logout: () => api.post<{ loggedOut: boolean }>("/auth/logout", {}),
 

@@ -107,6 +107,33 @@ export function checkRegisterRateLimit(key: string, nowMs: number = Date.now()):
   return true;
 }
 
+// Failed-login counter for brute-force escalation (roadmap B4). Separate
+// namespace from the login bucket: this counts CONSECUTIVE wrong passwords
+// per canonical identity (no IP component, so distributed guesses against
+// one account accumulate), reset on any successful authentication. Unknown
+// identities count identically, so the challenge reveals nothing about
+// account existence. In-memory like the rest of this module; reaching the
+// threshold only escalates to a Turnstile challenge — never a lockout.
+export const LOGIN_FAIL_CHALLENGE_AFTER = 5;
+
+const loginFailCounts = new Map<string, number>();
+
+export function loginFailKey(identity: string): string {
+  return `login-fail:${identity}`;
+}
+
+export function loginFailCount(key: string): number {
+  return loginFailCounts.get(key) ?? 0;
+}
+
+export function recordLoginFailure(key: string): void {
+  loginFailCounts.set(key, loginFailCount(key) + 1);
+}
+
+export function resetLoginFailures(key: string): void {
+  loginFailCounts.delete(key);
+}
+
 // Test seam: reset one key (tests) — never exposed via HTTP.
 export function resetLoginRateLimit(key: string): void {
   hits.delete(key);
