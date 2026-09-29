@@ -112,6 +112,25 @@ export function resetLoginRateLimit(key: string): void {
   hits.delete(key);
 }
 
+// Public resend-verification buckets (roadmap B6): separate namespaces from
+// the login bucket so resend floods can never 429 victims' logins (same
+// reason the register bucket is split). BOTH buckets gate every public
+// attempt, counted pass-or-fail:
+//   - IP bucket (10/10min, existing helper): bounds single-source floods.
+//   - Account bucket (5/hour, keyed by SHA-256 of the normalized email):
+//     bounds targeted mail-bombing of one address across rotated IPs.
+// The raw email is never a key and never logged; only its hash is stored.
+const resendPubAccount = createRateLimiter({ maxAttempts: 5, windowMs: 60 * 60 * 1000 });
+
+export function checkResendPubAccountLimit(accountHash: string): boolean {
+  return resendPubAccount.check(`resend-pub:acct:${accountHash}`);
+}
+
+// Test seam (mirrors the login/register seams; never exposed via HTTP).
+export function resetResendPubAccountLimit(accountHash: string): void {
+  resendPubAccount.reset(`resend-pub:acct:${accountHash}`);
+}
+
 // Test seam for the registration bucket (mirrors the login seam).
 export function resetRegisterRateLimit(key: string): void {
   registerHits.delete(key);

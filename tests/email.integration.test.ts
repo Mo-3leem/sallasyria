@@ -105,7 +105,7 @@ beforeAll(async () => {
   // API-registered users carry random uuid ids outside the shared prefixes:
   // remove them explicitly (by email) so reruns stay green. Sessions and
   // email tokens cascade from the user rows.
-  d1(`DELETE FROM users WHERE email IN ('em-resend@example.com', 'em-resend2@example.com', 'em-new@example.com', 'em-gated@example.com');`);
+  d1(`DELETE FROM users WHERE email IN ('em-resend@example.com', 'em-resend2@example.com', 'em-new@example.com', 'em-gated@example.com', 'em-pub-fresh@example.com', 'em-pub-b2@example.com', 'em-pub-b2-new@example.com', 'em-pub-admin@example.com');`);
     // Stale token rows cascade from users, but belt-and-braces for reruns:
     // the shared cleanup predates email_tokens, so clear our scope first.
     d1(`DELETE FROM email_tokens WHERE user_id LIKE 'user\\_verify\\_em\\_%' ESCAPE '\\';`);
@@ -135,7 +135,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  d1(`DELETE FROM users WHERE email IN ('em-resend@example.com', 'em-resend2@example.com', 'em-new@example.com', 'em-gated@example.com');`);
+  d1(`DELETE FROM users WHERE email IN ('em-resend@example.com', 'em-resend2@example.com', 'em-new@example.com', 'em-gated@example.com', 'em-pub-fresh@example.com', 'em-pub-b2@example.com', 'em-pub-b2-new@example.com', 'em-pub-admin@example.com');`);
   killServer();
   assertCleanVerify("email cleanup");
 }, 120_000);
@@ -297,8 +297,9 @@ describe("email verification (live CAS path)", () => {
       body: JSON.stringify({ email: "em-resend2@example.com", current_password: MERCHANT_PASS }),
     }, targetJar);
     expect(changed.status).toBe(200);
-    // PATCH /me intentionally leaves the verified flag alone (out of scope);
-    // mark the new address unverified directly to exercise the resend path.
+    // PATCH /me resets the verified flag on email change (B2), so the
+    // explicit reset below is now redundant — kept as a belt-and-braces
+    // precondition for the resend path under test.
     d1(`UPDATE users SET email_verified = 0 WHERE id = '${target}';`);
     const live = () => Number(qval(`SELECT COUNT(*) AS n FROM email_tokens WHERE user_id = '${target}' AND purpose = 'verify' AND used_at IS NULL;`) ?? 0);
     const first = await api("/auth/resend-verification", {
@@ -481,5 +482,102 @@ describe("order mail hooks never break business flows", () => {
     }, jarMerchant);
     expect(moved.status).toBe(200);
     expect((moved.body as { data: { order: { status: string } } }).data.order.status).toBe("confirmed");
+  }, 120_000);
+});
+
+describe("public resend-verification recovery (no session)", () => {
+  const pub = (email: string) =>
+    api("/auth/resend-verification", { method: "POST", body: JSON.stringify({ email }) });
+  const liveVerifyCount = (userId: string) =>
+    Number(qval(`SELECT COUNT(*) AS n FROM email_tokens WHERE user_id = '${userId}' AND purpose = 'verify' AND used_at IS NULL;`) ?? 0);
+
+  it("unknown email gets the generic success with no token stored", async () => {
+    const before = liveVerifyCount("user_verify_em_m");
+    const res = await pub("ghost-nobody-here@example.com");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, data: { emailed: true } });
+    expect(liveVerifyCount("user_verify_em_m")).toBe(before);
+  }, 60_000);
+
+  it("verified merchant email gets the identical success with no new token", async () => {
+    const before = liveVerifyCount("user_verify_em_m");
+    const res = await pub(MERCHANT_EMAIL);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, data: { emailed: true } });
+    expect(liveVerifyCount("user_verify_em_m")).toBe(before);
+  }, 60_000);
+
+  it("unverified merchant email gets the same success plus exactly one live token", async () => {
+    const reg = await api("/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ email: "em-pub-fresh@example.com", phone: "+963900001460", password: MERCHANT_PASS, name: "EM Pub Fresh" }),
+    });
+    expect(reg.status).toBe(201);
+    const uid = ((reg.body as { data: { user: { id: string } } }).data.user.id);
+    const res = await pub("em-pub-fresh@example.com");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, data: { emailed: true } });
+    expect(liveVerifyCount(uid)).toBe(1);
+  }, 60_000);
+
+  it("second public resend retires the first token; only the newest stays live", async () => {
+    const before = await pub("em-pub-fresh@example.com");
+    expect(before.status).toBe(200);
+    const again = await pub("em-pub-fresh@example.com");
+    expect(again.status).toBe(200);
+    expect(again.body).toEqual({ ok: true, data: { emailed: true } });
+    const uid = String(qval(`SELECT id FROM users WHERE email = 'em-pub-fresh@example.com';`));
+    expect(liveVerifyCount(uid)).toBe(1);
+  }, 60_000);
+
+  it("non-merchant address gets the identical success with no token", async () => {
+    // Unverified admin: role gate must not issue, response stays identical.
+    const h = hashPassword("Admin-Pub-9");
+    expect(d1(`INSERT INTO users (id, phone, email, name, password_hash, role, email_verified) VALUES ('user_verify_em_pubadmin', '+963900001461', 'em-pub-admin@example.com', 'EM Pub Admin', '${h}', 'admin', 0);`).ok).toBe(true);
+    const res = await pub("em-pub-admin@example.com");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, data: { emailed: true } });
+    expect(liveVerifyCount("user_verify_em_pubadmin")).toBe(0);
+    expect(d1(`DELETE FROM users WHERE id = 'user_verify_em_pubadmin';`).ok).toBe(true);
+  }, 60_000);
+
+  it("B2-changed address recovers through public resend; stale token stays dead", async () => {
+    const reg = await api("/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ email: "em-pub-b2@example.com", phone: "+963900001462", password: MERCHANT_PASS, name: "EM Pub B2" }),
+    });
+    expect(reg.status).toBe(201);
+    const uid = ((reg.body as { data: { user: { id: string } } }).data.user.id);
+    await seedToken(uid, "verify", "em-pub-b2-token-1", "2099-01-01T00:00:00Z");
+    expect((await api("/auth/verify-email", {
+      method: "POST", body: JSON.stringify({ token: "em-pub-b2-token-1" }),
+    })).status).toBe(200);
+    const login = await api("/auth/login", {
+      method: "POST", body: JSON.stringify({ email: "em-pub-b2@example.com", password: MERCHANT_PASS }),
+    });
+    expect(login.status).toBe(200);
+    const authed = cookieOf(login.setCookie);
+    const changed = await api("/auth/me", {
+      method: "PATCH", body: JSON.stringify({ email: "em-pub-b2-new@example.com", current_password: MERCHANT_PASS }),
+    }, authed);
+    expect(changed.status).toBe(200);
+    expect(((changed.body as { data: { user: { email_verified: number } } }).data.user.email_verified)).toBe(0);
+    // Stale pre-change token is retired by the change.
+    expect((await api("/auth/verify-email", {
+      method: "POST", body: JSON.stringify({ token: "em-pub-b2-token-1" }),
+    })).status).toBe(400);
+    // Public resend serves the new address and mints its live token.
+    const res = await pub("em-pub-b2-new@example.com");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, data: { emailed: true } });
+    expect(liveVerifyCount(uid)).toBe(1);
+    // New address gates login until verified; verify out-of-band, then 200.
+    expect((await api("/auth/login", {
+      method: "POST", body: JSON.stringify({ email: "em-pub-b2-new@example.com", password: MERCHANT_PASS }),
+    })).status).toBe(403);
+    expect(d1(`UPDATE users SET email_verified = 1 WHERE id = '${uid}';`).ok).toBe(true);
+    expect((await api("/auth/login", {
+      method: "POST", body: JSON.stringify({ email: "em-pub-b2-new@example.com", password: MERCHANT_PASS }),
+    })).status).toBe(200);
   }, 120_000);
 });

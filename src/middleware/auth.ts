@@ -132,6 +132,19 @@ export function currentUser(c: AuthedContext): AuthUser {
   return c.get("user") as AuthUser;
 }
 
+// Optional authentication for endpoints with a public fallback (e.g. the
+// resend-verification recovery path): returns the authenticated user when a
+// valid session is present, null for missing/invalid/expired/revoked ones.
+// Any failure (including unexpected ones) falls back to the public path,
+// which reveals nothing — the safe direction for an enumeration-flat API.
+export async function tryAuthenticate(c: AuthedContext): Promise<AuthUser | null> {
+  try {
+    return await authenticate(c);
+  } catch {
+    return null;
+  }
+}
+
 export function currentSessionId(c: AuthedContext): string {
   return c.get("sessionId") as string;
 }
