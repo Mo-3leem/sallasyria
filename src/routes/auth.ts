@@ -4,11 +4,24 @@ import { getDb } from "../db.js";
 import { AppError } from "../http/errors.js";
 import { ok } from "../http/respond.js";
 import { z, assertNoImmutableFields, validationHook } from "../http/validate.js";
-import { clearUserAvatar, createMerchant, emailTaken, getUserByEmail, getUserPublic, phoneTaken, resetUserPassword, setPasswordHash, setUserAvatar, updateUserProfile } from "../services/users.js";
+import {
+  clearUserAvatar,
+  createMerchant,
+  emailTaken,
+  findMerchantForResend,
+  getUserByEmail,
+  getUserPublic,
+  phoneTaken,
+  resetUserPassword,
+  setPasswordHash,
+  setUserAvatar,
+  updateUserProfile,
+} from "../services/users.js";
 import {
   RESET_TOKEN_TTL_MS,
   VERIFY_TOKEN_TTL_MS,
   findUserByEmail,
+  hashEmailToken,
   issueEmailToken,
   redeemEmailToken,
 } from "../services/email-tokens.js";
@@ -43,11 +56,12 @@ import {
 } from "../lib/session.js";
 import { touch } from "../lib/time.js";
 import { appUrl } from "../env.js";
-import { checkLoginRateLimit, checkRegisterRateLimit, clientIp, loginRateLimitKey, registerRateLimitKey } from "../lib/rate-limit.js";
+import { checkLoginRateLimit, checkRegisterRateLimit, checkResendPubAccountLimit, clientIp, loginRateLimitKey, registerRateLimitKey } from "../lib/rate-limit.js";
 import {
   currentSessionId,
   currentUser,
   requireAuth,
+  tryAuthenticate,
   type AuthUser,
 } from "../middleware/auth.js";
 
@@ -281,25 +295,22 @@ const resendVerificationRoute = createRoute({
   path: "/resend-verification",
   summary: "Re-send the verification email",
   description:
-    "Authenticated callers only (no enumeration: the caller proves ownership with a session). " +
-    "Retires live tokens and issues a fresh 24h one. Already-verified accounts get a success " +
-    "response without an email.",
-  middleware: [requireAuth],
+    "Two modes on one path (no enumeration). Authenticated callers keep the strict behavior: the address " +
+    "must belong to the caller, and already-verified accounts get success without an email. Without a " +
+    "session, anyone may request recovery for an address and always receives the same success response; " +
+    "a fresh 24h token is issued and mailed ONLY for a real, unverified merchant account. Retires live " +
+    "tokens and issues a fresh 24h one in both modes.",
   request: {
     body: { content: { "application/json": { schema: resendVerificationSchema } } },
   },
   responses: {
     200: {
       content: { "application/json": { schema: okOf(z.object({ emailed: z.boolean() })) } },
-      description: "Verification email sent (false when already verified)",
+      description: "Accepted (public callers always receive emailed:true)",
     },
     400: {
       content: { "application/json": { schema: failEnvelope } },
-      description: "Invalid body, or email does not belong to the caller",
-    },
-    401: {
-      content: { "application/json": { schema: failEnvelope } },
-      description: "Unauthenticated",
+      description: "Invalid body, or (authenticated only) email does not belong to the caller",
     },
     429: {
       content: { "application/json": { schema: failEnvelope } },
@@ -309,41 +320,81 @@ const resendVerificationRoute = createRoute({
 });
 
 auth.openapi(resendVerificationRoute, async (c) => {
-  if (!checkLoginRateLimit(`resend:${clientIp(c)}`)) {
+  const input = c.req.valid("json");
+  const authed = await tryAuthenticate(c);
+  if (authed) {
+    if (!checkLoginRateLimit(`resend:${clientIp(c)}`)) {
+      throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
+    }
+    const user = authed;
+    const email = normalizeEmail(input.email);
+    // The address must belong to the caller — otherwise this would be an
+    // oracle/bait endpoint for third-party addresses.
+    const mine = await getDb(c)
+      .prepare("SELECT email_verified FROM users WHERE id = ?")
+      .bind(user.id)
+      .first<{ email_verified: number | null }>();
+    const currentEmail = user.email === null ? null : normalizeEmail(user.email);
+    if (!mine || currentEmail === null || email !== currentEmail) {
+      throw new AppError("invalid_email", 400, "Email address is not on this account.");
+    }
+    if ((mine.email_verified ?? 0) === 1) {
+      return ok(c, { emailed: false });
+    }
+    try {
+      const issued = await issueEmailToken(getDb(c), user.id, "verify", VERIFY_TOKEN_TTL_MS);
+      const msg = buildVerificationEmail(
+        user.name,
+        `${appUrl(c.env)}/auth/verify-email?token=${issued.token}`,
+        issued.token
+      );
+      dispatchMail(
+        c,
+        sendMail(
+          { to: email, subject: msg.subject, text: msg.text, html: msg.html },
+          { apiKey: c.env.SENDGRID_API_KEY, from: c.env.MAIL_FROM }
+        )
+      );
+    } catch {
+      // Best-effort: fall through to the normal 200 below.
+    }
+    return ok(c, { emailed: true });
+  }
+  // Public recovery path (no session): enumeration-flat always-200. Both
+  // buckets gate every attempt so one victim address cannot be mail-bombed
+  // across rotated IPs, and resend traffic never consumes the login bucket.
+  if (!checkLoginRateLimit(`resend-pub:${clientIp(c)}`)) {
     throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
   }
-  const user = currentUser(c);
-  const input = c.req.valid("json");
   const email = normalizeEmail(input.email);
-  // The address must belong to the caller — otherwise this would be an
-  // oracle/bait endpoint for third-party addresses.
-  const mine = await getDb(c)
-    .prepare("SELECT email_verified FROM users WHERE id = ?")
-    .bind(user.id)
-    .first<{ email_verified: number | null }>();
-  const currentEmail = user.email === null ? null : normalizeEmail(user.email);
-  if (!mine || currentEmail === null || email !== currentEmail) {
-    throw new AppError("invalid_email", 400, "Email address is not on this account.");
+  if (!checkResendPubAccountLimit(await hashEmailToken(email))) {
+    throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
   }
-  if ((mine.email_verified ?? 0) === 1) {
-    return ok(c, { emailed: false });
-  }
-  try {
-    const issued = await issueEmailToken(getDb(c), user.id, "verify", VERIFY_TOKEN_TTL_MS);
-    const msg = buildVerificationEmail(
-      user.name,
-      `${appUrl(c.env)}/auth/verify-email?token=${issued.token}`,
-      issued.token
-    );
-    dispatchMail(
-      c,
-      sendMail(
-        { to: email, subject: msg.subject, text: msg.text, html: msg.html },
-        { apiKey: c.env.SENDGRID_API_KEY, from: c.env.MAIL_FROM }
-      )
-    );
-  } catch {
-    // Best-effort: fall through to the normal 200 below.
+  const found = await findMerchantForResend(getDb(c), email);
+  if (
+    found &&
+    found.role === "merchant" &&
+    found.email !== null &&
+    normalizeEmail(found.email) === email &&
+    (found.email_verified ?? 0) === 0
+  ) {
+    try {
+      const issued = await issueEmailToken(getDb(c), found.id, "verify", VERIFY_TOKEN_TTL_MS);
+      const msg = buildVerificationEmail(
+        found.name,
+        `${appUrl(c.env)}/auth/verify-email?token=${issued.token}`,
+        issued.token
+      );
+      dispatchMail(
+        c,
+        sendMail(
+          { to: email, subject: msg.subject, text: msg.text, html: msg.html },
+          { apiKey: c.env.SENDGRID_API_KEY, from: c.env.MAIL_FROM }
+        )
+      );
+    } catch {
+      // Best-effort: fall through to the identical success below.
+    }
   }
   return ok(c, { emailed: true });
 }, validationHook);

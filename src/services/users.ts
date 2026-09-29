@@ -72,6 +72,20 @@ export async function getUserByEmail(
     .first<{ id: string; name: string; email: string | null }>();
 }
 
+// Merchant account lookup for the public resend-verification recovery path:
+// carries role + verification state so the route issues tokens ONLY for real,
+// unverified merchant accounts (admins use assisted reset; buyer addresses
+// live in a different table and never match here).
+export async function findMerchantForResend(
+  db: D1Database,
+  email: string
+): Promise<{ id: string; name: string; email: string | null; role: string; email_verified: number } | null> {
+  return db
+    .prepare("SELECT id, name, email, role, email_verified FROM users WHERE email = ?")
+    .bind(email)
+    .first<{ id: string; name: string; email: string | null; role: string; email_verified: number }>();
+}
+
 async function phoneTakenByOther(db: D1Database, phone: string, selfId: string): Promise<boolean> {
   const row = await db
     .prepare("SELECT 1 AS ok FROM users WHERE phone = ? AND id != ?")

@@ -21,6 +21,8 @@ import { RateLimitNotice } from "@/components/auth/RateLimitNotice";
 import { Button } from "@/components/ui/Button";
 import { Loading } from "@/components/ui/Loading";
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -32,6 +34,9 @@ function LoginForm() {
   const [formError, setFormError] = useState<string | null>(null);
   const [unverified, setUnverified] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [resendDone, setResendDone] = useState(false);
+  const [resendError, setResendError] = useState<string | null>(null);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -39,6 +44,8 @@ function LoginForm() {
     setFieldErrors({});
     setFormError(null);
     setUnverified(false);
+    setResendDone(false);
+    setResendError(null);
 
     const local: Record<string, string> = {};
     if (!identity.trim()) local.identity = "البريد الإلكتروني أو رقم الهاتف مطلوب.";
@@ -78,6 +85,30 @@ function LoginForm() {
     }
   }
 
+  async function onResend() {
+    // Public recovery: only fire for email-shaped identities, never phones.
+    // The backend answers identically whether or not the address exists.
+    const address = identity.trim();
+    if (resending || !EMAIL_RE.test(address)) return;
+    setResending(true);
+    setResendDone(false);
+    setResendError(null);
+    try {
+      const res = await authApi.resendVerification(address);
+      if (!res.ok) {
+        const code = getErrorCode(res);
+        if (code === "rate_limited") lock(30);
+        setResendError(authErrorMessage(res, 400));
+        return;
+      }
+      setResendDone(true);
+    } catch {
+      setResendError(NETWORK_ERROR_MESSAGE);
+    } finally {
+      setResending(false);
+    }
+  }
+
   return (
     <AuthCard
       title="تسجيل الدخول"
@@ -103,6 +134,28 @@ function LoginForm() {
               أرسلنا رابط التفعيل إلى بريدك عند التسجيل. تحقق من البريد الوارد
               (ومجلد الرسائل غير المرغوبة) واضغط الرابط، ثم سجّل الدخول.
             </span>
+            {EMAIL_RE.test(identity.trim()) && (
+              <div style={{ marginTop: 8 }}>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  disabled={resending}
+                  onClick={onResend}
+                >
+                  {resending ? "جاري الإرسال..." : "إعادة إرسال رسالة التفعيل"}
+                </button>
+                {resendDone && (
+                  <span role="status" style={{ marginInlineStart: 8 }}>
+                    إذا كان البريد مرتبطًا بحساب، فسيتم إرسال رسالة تحقق إليه.
+                  </span>
+                )}
+                {resendError && (
+                  <span className="auth-field-error" role="alert" style={{ marginInlineStart: 8 }}>
+                    {resendError}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         )}
         <TextField

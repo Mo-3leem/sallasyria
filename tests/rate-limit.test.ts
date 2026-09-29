@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   checkLoginRateLimit,
   checkRegisterRateLimit,
+  checkResendPubAccountLimit,
   loginRateLimitKey,
   LOGIN_RATE_LIMIT,
   registerRateLimitKey,
   resetLoginRateLimit,
   resetRegisterRateLimit,
+  resetResendPubAccountLimit,
 } from "../src/lib/rate-limit.js";
 
 describe("login rate limiting", () => {
@@ -63,5 +65,27 @@ describe("login rate limiting", () => {
     expect(checkRegisterRateLimit(`other-${stamp}`, 3_000_001)).toBe(true);
     resetRegisterRateLimit(regKey);
     expect(checkRegisterRateLimit(regKey, 3_000_000)).toBe(true);
+  });
+});
+
+describe("public resend account limiting", () => {
+  it("allows five per hour per address hash, then blocks", () => {
+    const hash = `test-resend-acct-${Date.now()}`;
+    for (let i = 0; i < 5; i++) {
+      expect(checkResendPubAccountLimit(hash)).toBe(true);
+    }
+    expect(checkResendPubAccountLimit(hash)).toBe(false);
+  });
+
+  it("isolates address hashes and supports explicit reset", () => {
+    const a = `test-resend-iso-a-${Date.now()}`;
+    const b = `test-resend-iso-b-${Date.now()}`;
+    for (let i = 0; i < 5; i++) {
+      checkResendPubAccountLimit(a);
+    }
+    expect(checkResendPubAccountLimit(a)).toBe(false);
+    expect(checkResendPubAccountLimit(b)).toBe(true);
+    resetResendPubAccountLimit(a);
+    expect(checkResendPubAccountLimit(a)).toBe(true);
   });
 });
