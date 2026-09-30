@@ -4,6 +4,7 @@ import type { AppEnv } from "./env.js";
 import { errorHandler } from "./http/errors.js";
 import { fail } from "./http/respond.js";
 import { accessLog } from "./middleware/logging.js";
+import { securityHeaders } from "./middleware/security-headers.js";
 import { bodyLimitMw } from "./middleware/body-limit.js";
 import { corsMw } from "./middleware/cors.js";
 import { csrfMw } from "./middleware/csrf.js";
@@ -38,6 +39,10 @@ export function createApp() {
   app.notFound((c) => fail(c, "not_found", "Route does not exist.", 404));
 
   app.use(requestId());
+  // Security response headers first (outermost): post-next application
+  // covers normal, notFound, and onError responses alike. CORS/CSRF/auth
+  // behavior below is untouched — different headers, no overlap.
+  app.use(securityHeaders());
   app.use(accessLog);
   app.use(bodyLimitMw());
   // Cookie-credentialed CORS for the frontend. Registered before the routes
