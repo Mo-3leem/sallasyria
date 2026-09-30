@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
+import type { Env } from "../src/env.js";
 import { resetDocsLimit } from "../src/lib/rate-limit.js";
 
 // OpenAPI surface tests: the /doc document must stay a valid, complete
@@ -281,5 +282,39 @@ describe("OpenAPI docs", () => {
         }
       }
     }
+  });
+});
+
+describe("B9 docs production gate", () => {
+  const prodEnv = { ENVIRONMENT: "production" } as unknown as Env;
+
+  it("production /doc answers the normal 404, never the document", async () => {
+    const res = await createApp().request("/doc", {}, prodEnv);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      ok: false,
+      error: { code: "not_found", message: "Route does not exist." },
+    });
+  });
+
+  it("production /ui answers 404, never Swagger HTML", async () => {
+    const res = await createApp().request("/ui", {}, prodEnv);
+    expect(res.status).toBe(404);
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({
+      ok: false,
+      error: { code: "not_found", message: "Route does not exist." },
+    });
+    expect(text.toLowerCase()).not.toContain("swagger");
+  });
+
+  it("explicit development env keeps both surfaces", async () => {
+    const devEnv = { ENVIRONMENT: "development" } as unknown as Env;
+    resetDocsLimit("unknown");
+    expect((await createApp().request("/doc", {}, devEnv)).status).toBe(200);
+    const ui = await createApp().request("/ui", {}, devEnv);
+    expect(ui.status).toBe(200);
+    expect((await ui.text()).toLowerCase()).toContain("swagger");
+    resetDocsLimit("unknown");
   });
 });

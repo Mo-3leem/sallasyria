@@ -202,4 +202,14 @@ describe("B8 docs surfaces unchanged", () => {
     expect(res.headers.get("Content-Security-Policy")).toBeNull();
     expect(res.headers.get("X-Frame-Options")).toBe("DENY");
   });
+
+  it("B9 production /doc 404 still carries the global headers", async () => {
+    const res = await createApp().request(
+      "/doc",
+      {},
+      { ENVIRONMENT: "production" } as unknown as Env
+    );
+    expect(res.status).toBe(404);
+    expectGlobalHeaders(res);
+  });
 });
