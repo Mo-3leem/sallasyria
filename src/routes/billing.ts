@@ -8,7 +8,7 @@ import { assertNoImmutableFields, z, validationHook } from "../http/validate.js"
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { idParam, storeIdParam } from "../openapi/params.js";
 import { auditLog } from "../lib/audit.js";
-import { checkWebhookIpLimit, clientIp } from "../lib/rate-limit.js";
+import { checkBillingIntentLimit, checkWebhookIpLimit, clientIp } from "../lib/rate-limit.js";
 import { configuredProvider, selectProvider } from "../lib/billing/registry.js";
 import { currentUser, requireAuth, requireRole } from "../middleware/auth.js";
 import { requireStoreAccess, resolveStore } from "../middleware/store.js";
@@ -16,6 +16,7 @@ import {
   createBillingIntent,
   getIntent,
   getIntentForStore,
+  hasIntentWithKey,
   listAllIntents,
   listIntentsForStore,
   settleWebhook,
@@ -118,6 +119,7 @@ const checkoutRoute = createRoute({
     401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
     404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store or plan" },
     422: { content: { "application/json": { schema: failEnvelope } }, description: "Idempotency key reused with a different checkout" },
+    429: { content: { "application/json": { schema: failEnvelope } }, description: "Too many attempts" }
   },
 });
 
@@ -127,6 +129,16 @@ storeBilling.openapi(checkoutRoute, async (c) => {
   const { storeId } = storeScope(c);
   const input = c.req.valid("json");
   const key = c.req.header(IDEMPOTENCY_HEADER) ?? null;
+  // Abuse guard: each fresh intent below costs one provider call plus a row.
+  // Replays bypass the limiter so idempotent retries stay valid: when the
+  // key already exists, createBillingIntent below returns the existing
+  // replay (200) or conflict (422) exactly as before. Only new keys — and
+  // keyless requests, which always mint — consume quota.
+  if (key === null || !(await hasIntentWithKey(getDb(c), storeId, key))) {
+    if (!checkBillingIntentLimit(storeId)) {
+      throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
+    }
+  }
   const { intent, redirectUrl, replayed } = await createBillingIntent(
     getDb(c),
     c.env,

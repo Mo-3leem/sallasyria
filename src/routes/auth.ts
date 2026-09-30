@@ -57,7 +57,7 @@ import {
 import { touch } from "../lib/time.js";
 import { requireTurnstile } from "../middleware/turnstile.js";
 import { appUrl } from "../env.js";
-import { checkLoginRateLimit, checkPublicFileLimit, checkRegisterRateLimit, checkResendPubAccountLimit, clientIp, loginFailCount, loginFailKey, LOGIN_FAIL_CHALLENGE_AFTER, loginRateLimitKey, recordLoginFailure, registerRateLimitKey, resetLoginFailures } from "../lib/rate-limit.js";
+import { checkEmailChangeLimit, checkLoginRateLimit, checkPublicFileLimit, checkPwChangeLimit, checkRegisterRateLimit, checkResendPubAccountLimit, checkUploadAvatarLimit, clientIp, loginFailCount, loginFailKey, LOGIN_FAIL_CHALLENGE_AFTER, loginRateLimitKey, recordLoginFailure, registerRateLimitKey, resetLoginFailures } from "../lib/rate-limit.js";
 import {
   currentSessionId,
   currentUser,
@@ -1003,6 +1003,10 @@ const patchMeRoute = createRoute({
       content: { "application/json": { schema: failEnvelope } },
       description: "Phone or email already registered",
     },
+    429: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Too many attempts",
+    },
   },
 });
 
@@ -1033,6 +1037,14 @@ auth.openapi(patchMeRoute, async (c) => {
     if (!stored || !verifyPassword(input.current_password, stored.password_hash)) {
       throw new AppError("invalid_credentials", 401, "Invalid email or password.");
     }
+  }
+  // Abuse guard on the email-identity path only: each change below issues a
+  // token and sends up to two mails. Name/phone-only updates never reach
+  // here. Runs after password verification (failed passwords consume
+  // nothing) and before any write, so a 429 leaves zero profile, token, or
+  // mail side effects.
+  if (emailChanged && !checkEmailChangeLimit(user.id)) {
+    throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
   }
   const updated = await updateUserProfile(getDb(c), user.id, {
     name: input.name,
@@ -1125,12 +1137,18 @@ const avatarUploadRoute = createRoute({
     400: { content: { "application/json": { schema: failEnvelope } }, description: "Missing file or unsupported image" },
     401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
     413: { content: { "application/json": { schema: failEnvelope } }, description: "Image exceeds the size limit" },
+    429: { content: { "application/json": { schema: failEnvelope } }, description: "Too many attempts" },
     503: { content: { "application/json": { schema: failEnvelope } }, description: "Image storage is not configured" },
   },
 });
 
 auth.openapi(avatarUploadRoute, async (c) => {
   const user = currentUser(c);
+  // Abuse guard first: buffering + sanitize + R2 PUT below are the expensive
+  // part. Per-user key; validation order after this is unchanged.
+  if (!checkUploadAvatarLimit(user.id)) {
+    throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
+  }
   const form = await c.req.parseBody().catch(() => ({}));
   const file = (form as Record<string, unknown>)["file"];
   if (!(file instanceof File)) {
@@ -1318,12 +1336,21 @@ const changePasswordRoute = createRoute({
       content: { "application/json": { schema: failEnvelope } },
       description: "Unauthenticated or wrong current password",
     },
+    429: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Too many attempts",
+    },
   },
 });
 
 auth.openapi(changePasswordRoute, async (c) => {
   const user = currentUser(c);
   const { current_password, new_password, logout_other_sessions } = c.req.valid("json");
+  // Abuse guard first: verify + re-hash below cost ~2x scrypt each call.
+  // Per-user key so one account's rotation never throttles another.
+  if (!checkPwChangeLimit(user.id)) {
+    throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
+  }
   const stored = await getDb(c)
     .prepare("SELECT password_hash FROM users WHERE id = ?")
     .bind(user.id)

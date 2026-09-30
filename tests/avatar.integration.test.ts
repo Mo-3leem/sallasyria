@@ -220,3 +220,34 @@ describe("avatar lifecycle", () => {
     expect((await api("/auth/me/avatar", { method: "DELETE" })).status).toBe(401);
   }, 60_000);
 });
+
+describe("B7b avatar-upload guard (upload-avatar: 20/hour per user)", () => {
+  it("20 uploads succeed; 21st 429s with validation unchanged below the limit", async () => {
+    // Dedicated user under the covered verify prefix: user A's bucket is
+    // already partially consumed by the validation tests above, so a flood
+    // there would trip early and couple this test to sibling consumption.
+    const h = hashPassword(PASS);
+    const seed = d1(
+      `INSERT INTO users (id, phone, email, name, password_hash, role) VALUES ('user_verify_av_c', '+963900000703', 'avc@example.com', 'AV Owner C', '${h}', 'merchant');`
+    );
+    if (!seed.ok) throw new Error(`avatar flood seed failed: ${seed.error}`);
+    d1(`UPDATE users SET email_verified = 1 WHERE id = 'user_verify_av_c';`);
+    const login = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "avc@example.com", password: PASS }),
+    });
+    if (login.status !== 200) throw new Error(`avatar flood login failed: ${login.status}`);
+    const jarC = cookieOf(login.headers.get("set-cookie"));
+    for (let i = 0; i < 20; i++) {
+      const up = await api("/auth/me/avatar", { method: "POST", body: avatarForm(tinyPng()) }, jarC);
+      expect(up.status).toBe(200);
+    }
+    const limited = await api("/auth/me/avatar", { method: "POST", body: avatarForm(tinyPng()) }, jarC);
+    expect(limited.status).toBe(429);
+    expect(limited.body).toEqual({
+      ok: false,
+      error: { code: "rate_limited", message: expect.any(String) },
+    });
+  }, 180_000);
+});

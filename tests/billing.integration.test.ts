@@ -348,3 +348,52 @@ describe("checkout intents + stub webhook", () => {
     expect(successes).toBeGreaterThanOrEqual(50);
   }, 180_000);
 });
+
+describe("B7b billing-intent guard (billing-intent: 10/hour per store)", () => {
+  it("10 fresh keys mint; 11th 429s; pre-existing key still replays 200 and conflicts 422", async () => {
+    // Dedicated store (slug covered by the bill-% afterAll cleanup): the
+    // bill-store bucket is already partially consumed by the intent tests
+    // above, so a flood there would trip early and couple this test to
+    // sibling consumption.
+    const created = await api("/stores", {
+      method: "POST",
+      body: JSON.stringify({ name: "Bill Flood", slug: "bill-flood" }),
+    }, jarMerchant);
+    expect(created.status).toBe(201);
+    const storeId = (created.body as { data: { store: { id: string } } }).data.store.id;
+    const body = (period: string) =>
+      JSON.stringify({ plan_id: "plan_verify_bill", billing_period: period });
+    const checkout = (key: string | null, period = "monthly") =>
+      api(`/stores/${storeId}/subscriptions/checkout`, {
+        method: "POST",
+        ...(key === null ? {} : { headers: { "X-Idempotency-Key": key } }),
+        body: body(period),
+      }, jarMerchant);
+    // Ten fresh keys mint intents.
+    let firstIntent = "";
+    for (let i = 1; i <= 10; i++) {
+      const res = await checkout(`bill-flood-${i}`);
+      expect(res.status).toBe(201);
+      if (i === 1) firstIntent = (res.body as { data: { intent_id: string } }).data.intent_id;
+    }
+    // Eleventh fresh key: rejected before any provider call or row.
+    const intentsBefore = qval(`SELECT COUNT(*) AS n FROM billing_intents WHERE store_id = '${storeId}';`);
+    const limited = await checkout("bill-flood-11");
+    expect(limited.status).toBe(429);
+    expect(limited.body).toEqual({
+      ok: false,
+      error: { code: "rate_limited", message: expect.any(String) },
+    });
+    expect(qval(`SELECT COUNT(*) AS n FROM billing_intents WHERE store_id = '${storeId}';`)).toBe(intentsBefore);
+    // Keyless mint also consumes quota: rejected after exhaustion.
+    const noKey = await checkout(null);
+    expect(noKey.status).toBe(429);
+    // Pre-existing key bypasses the limiter: same body replays 200 with the
+    // same intent; different body is still 422. Neither consumes quota.
+    const replay = await checkout("bill-flood-1");
+    expect(replay.status).toBe(200);
+    expect((replay.body as { data: { intent_id: string } }).data.intent_id).toBe(firstIntent);
+    const conflict = await checkout("bill-flood-1", "yearly");
+    expect(conflict.status).toBe(422);
+  }, 180_000);
+});

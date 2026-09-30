@@ -296,3 +296,32 @@ describe("file-serving flood guard", () => {
     expect(successes).toBeGreaterThanOrEqual(100);
   }, 180_000);
 });
+
+describe("B7b product-upload guard (upload-product: 60/hour per store)", () => {
+  it("60 uploads succeed; 61st 429s with no validation change below the limit", async () => {
+    // Dedicated store+product under the covered verify prefix: store A's
+    // bucket is already partially consumed by the B8 tests above, so a
+    // flood there would trip early and couple this test to sibling
+    // consumption. jarA owns the flood store (store-access pin).
+    for (const sql of [
+      `INSERT INTO stores (id, owner_id, slug, name) VALUES ('store_verify_b8c_flood', 'user_verify_b8c_a', 'b8c-flood', 'B8 Flood');`,
+      `INSERT INTO subscriptions (id, store_id, plan_id, status, billing_period, starts_at, ends_at) VALUES ('sub_verify_b8c_flood', 'store_verify_b8c_flood', 'plan_verify_b8c', 'active', 'monthly', '2026-01-01T00:00:00Z', '2099-01-01T00:00:00Z');`,
+      `INSERT INTO products (id, store_id, name, slug, price) VALUES ('prod_verify_b8c_flood', 'store_verify_b8c_flood', 'B8 Flood Prod', 'b8-flood-prod', 1000);`,
+    ]) {
+      const r = d1(sql);
+      if (!r.ok) throw new Error(`flood seed failed: ${r.error}`);
+    }
+    const F = "/stores/store_verify_b8c_flood";
+    const png = pngWithText();
+    for (let i = 0; i < 60; i++) {
+      const up = await api(`${F}/product-images/upload`, { method: "POST", body: uploadForm(png, "prod_verify_b8c_flood") }, jarA);
+      expect(up.status).toBe(201);
+    }
+    const limited = await api(`${F}/product-images/upload`, { method: "POST", body: uploadForm(png, "prod_verify_b8c_flood") }, jarA);
+    expect(limited.status).toBe(429);
+    expect(limited.body).toEqual({
+      ok: false,
+      error: { code: "rate_limited", message: expect.any(String) },
+    });
+  }, 240_000);
+});

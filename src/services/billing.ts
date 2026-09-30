@@ -69,6 +69,23 @@ export async function getIntentForStore(
     .first<BillingIntentRow>();
 }
 
+// Existence probe for the billing-intent rate limiter (roadmap B7b): the
+// route must know whether an idempotency key is a replay BEFORE deciding to
+// consume quota, but routes cannot hold SQL (tenant conventions). Narrowly
+// scoped to existence — replay/conflict semantics stay solely inside
+// createBillingIntent below; this function duplicates none of them.
+export async function hasIntentWithKey(
+  db: D1Database,
+  storeId: string,
+  idempotencyKey: string
+): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT id FROM billing_intents WHERE store_id = ? AND idempotency_key = ?")
+    .bind(storeId, idempotencyKey)
+    .first<{ id: string }>();
+  return row !== null;
+}
+
 export async function listIntentsForStore(
   db: D1Database,
   storeId: string,

@@ -8,7 +8,7 @@ import { ok } from "../http/respond.js";
 import { assertNoImmutableFields, z, validationHook } from "../http/validate.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { idParam, storeIdParam, storeIdParams } from "../openapi/params.js";
-import { checkPublicFileLimit, clientIp } from "../lib/rate-limit.js";
+import { checkPublicFileLimit, checkUploadProductLimit, clientIp } from "../lib/rate-limit.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
@@ -411,11 +411,19 @@ const uploadRoute = createRoute({
     403: { content: { "application/json": { schema: failEnvelope } }, description: "Inactive subscription" },
     404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store or product" },
     413: { content: { "application/json": { schema: failEnvelope } }, description: "Image exceeds the size limit" },
+    429: { content: { "application/json": { schema: failEnvelope } }, description: "Too many attempts" },
     503: { content: { "application/json": { schema: failEnvelope } }, description: "Image storage is not configured" },
   },
 });
 
 productImages.openapi(uploadRoute, async (c) => {
+  // Abuse guard first: storeScope reads only middleware-set context, so it
+  // is safe before body parsing. Rejects before multipart parse, buffering,
+  // sanitize CPU, R2 PUT, and the DB row below.
+  const { storeId } = storeScope(c);
+  if (!checkUploadProductLimit(storeId)) {
+    throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
+  }
   const secret = signingSecretOrThrow(c.env);
   const form = await c.req.parseBody().catch(() => ({}));
   const file = (form as Record<string, unknown>)["file"];
@@ -435,7 +443,7 @@ productImages.openapi(uploadRoute, async (c) => {
   if (typeof productId !== "string" || productId.length === 0) {
     throw new AppError("validation_failed", 400, "Multipart field 'product_id' is required.");
   }
-  const { storeId } = storeScope(c);
+  // storeId already resolved above (pre-body-parse abuse guard).
   // No-R2 production demo: fail closed with 503 (never a TypeError-500,
   // never a fake success). Remove this guard when the binding returns.
   const r2 = c.env.R2;

@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  checkBillingIntentLimit,
   checkDocsLimit,
+  checkEmailChangeLimit,
   checkForgotTargetLimit,
   checkLoginRateLimit,
   checkPreviewLimit,
   checkPublicFileLimit,
+  checkPwChangeLimit,
   checkRegisterRateLimit,
   checkResendPubAccountLimit,
+  checkUploadAvatarLimit,
+  checkUploadProductLimit,
   checkWebhookIpLimit,
   loginFailCount,
   loginFailKey,
@@ -15,13 +20,18 @@ import {
   LOGIN_RATE_LIMIT,
   recordLoginFailure,
   registerRateLimitKey,
+  resetBillingIntentLimit,
   resetDocsLimit,
+  resetEmailChangeLimit,
   resetLoginFailures,
   resetLoginRateLimit,
   resetPreviewLimit,
   resetPublicFileLimit,
+  resetPwChangeLimit,
   resetRegisterRateLimit,
   resetResendPubAccountLimit,
+  resetUploadAvatarLimit,
+  resetUploadProductLimit,
 } from "../src/lib/rate-limit.js";
 
 describe("login rate limiting", () => {
@@ -206,5 +216,97 @@ describe("B7a public-surface limiting", () => {
     expect(checkPublicFileLimit(fileIp)).toBe(true);
     expect(checkPreviewLimit(previewIp)).toBe(true);
     expect(checkDocsLimit(docsIp)).toBe(true);
+  });
+});
+
+describe("B7b authenticated-mutation limiting", () => {
+  // Each bucket: exact cap trips, window expiry reopens (deterministic
+  // nowMs), sibling keys/buckets stay isolated, reset seam reopens.
+  // Unique TEST- keys so parallel suites never share a bucket.
+  const buckets = [
+    {
+      name: "pw-change",
+      cap: 10,
+      windowMs: 10 * 60_000,
+      check: checkPwChangeLimit,
+      reset: resetPwChangeLimit,
+    },
+    {
+      name: "email-change",
+      cap: 5,
+      windowMs: 60 * 60_000,
+      check: checkEmailChangeLimit,
+      reset: resetEmailChangeLimit,
+    },
+    {
+      name: "billing-intent",
+      cap: 10,
+      windowMs: 60 * 60_000,
+      check: checkBillingIntentLimit,
+      reset: resetBillingIntentLimit,
+    },
+    {
+      name: "upload-product",
+      cap: 60,
+      windowMs: 60 * 60_000,
+      check: checkUploadProductLimit,
+      reset: resetUploadProductLimit,
+    },
+    {
+      name: "upload-avatar",
+      cap: 20,
+      windowMs: 60 * 60_000,
+      check: checkUploadAvatarLimit,
+      reset: resetUploadAvatarLimit,
+    },
+  ] as const;
+
+  for (const b of buckets) {
+    it(`${b.name} trips at cap, expires by window, isolates, resets`, () => {
+      const stamp = Date.now();
+      const key = `TEST-${b.name}-${stamp}`;
+      const other = `TEST-${b.name}-other-${stamp}`;
+      // Exactly at limit: all succeed.
+      for (let i = 0; i < b.cap; i++) {
+        expect(b.check(key)).toBe(true);
+      }
+      // Limit + 1: rejected.
+      expect(b.check(key)).toBe(false);
+      // A different key is unaffected.
+      expect(b.check(other)).toBe(true);
+      // Window expiry reopens deterministically (no sleeping).
+      const t0 = Date.now();
+      const expKey = `TEST-${b.name}-exp-${stamp}`;
+      for (let i = 0; i < b.cap; i++) {
+        expect(b.check(expKey, t0)).toBe(true);
+      }
+      expect(b.check(expKey, t0)).toBe(false);
+      expect(b.check(expKey, t0 + b.windowMs + 1)).toBe(true);
+      // Reset seam reopens the tripped bucket.
+      b.reset(key);
+      expect(b.check(key)).toBe(true);
+      b.reset(other);
+      b.reset(expKey);
+    });
+  }
+
+  it("B7b buckets never share quota with each other", () => {
+    const stamp = Date.now();
+    const shared = `TEST-shared-${stamp}`;
+    for (let i = 0; i < 10; i++) {
+      expect(checkPwChangeLimit(shared)).toBe(true);
+      expect(checkBillingIntentLimit(shared)).toBe(true);
+    }
+    expect(checkPwChangeLimit(shared)).toBe(false);
+    expect(checkBillingIntentLimit(shared)).toBe(false);
+    // Exhausted pw-change says nothing about the other B7b buckets.
+    expect(checkEmailChangeLimit(shared)).toBe(true);
+    expect(checkUploadProductLimit(shared)).toBe(true);
+    expect(checkUploadAvatarLimit(shared)).toBe(true);
+    resetPwChangeLimit(shared);
+    resetBillingIntentLimit(shared);
+    resetEmailChangeLimit(shared);
+    resetUploadProductLimit(shared);
+    resetUploadAvatarLimit(shared);
   });
 });

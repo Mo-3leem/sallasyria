@@ -221,6 +221,64 @@ export function resetDocsLimit(ip: string): void {
   docsHits.reset(`docs:${ip}`);
 }
 
+// B7b authenticated-mutation guards (roadmap B7b): per-actor buckets for
+// expensive authenticated writes that previously had no limiter at all.
+// Unlike the B7a per-IP buckets, these key on the resource owner (user or
+// store id), because the scarce resource here is identity, not source IP:
+// NAT-shared offices must not cross-throttle, and attackers rotate IPs
+// freely. Each has a distinct namespace so operations never share quota:
+//   - pw-change (10/10min per user): 2x scrypt + session-revoke batch.
+//   - email-change (5/hour per user): 2 mails + token churn per change.
+//   - billing-intent (10/hour per store): external provider call + row.
+//   - upload-product (60/hour per store): 5MB buffer + sanitize + R2 PUT.
+//   - upload-avatar (20/hour per user): same cost class, own slot.
+const pwChange = createRateLimiter({ maxAttempts: 10, windowMs: 10 * 60_000 });
+const emailChange = createRateLimiter({ maxAttempts: 5, windowMs: 60 * 60_000 });
+const billingIntent = createRateLimiter({ maxAttempts: 10, windowMs: 60 * 60_000 });
+const uploadProduct = createRateLimiter({ maxAttempts: 60, windowMs: 60 * 60_000 });
+const uploadAvatar = createRateLimiter({ maxAttempts: 20, windowMs: 60 * 60_000 });
+
+export function checkPwChangeLimit(userId: string, nowMs?: number): boolean {
+  return pwChange.check(`pw-change:${userId}`, nowMs);
+}
+
+export function checkEmailChangeLimit(userId: string, nowMs?: number): boolean {
+  return emailChange.check(`email-change:${userId}`, nowMs);
+}
+
+export function checkBillingIntentLimit(storeId: string, nowMs?: number): boolean {
+  return billingIntent.check(`billing-intent:${storeId}`, nowMs);
+}
+
+export function checkUploadProductLimit(storeId: string, nowMs?: number): boolean {
+  return uploadProduct.check(`upload-product:${storeId}`, nowMs);
+}
+
+export function checkUploadAvatarLimit(userId: string, nowMs?: number): boolean {
+  return uploadAvatar.check(`upload-avatar:${userId}`, nowMs);
+}
+
+// Test seams (mirrors the existing seams; never exposed via HTTP).
+export function resetPwChangeLimit(userId: string): void {
+  pwChange.reset(`pw-change:${userId}`);
+}
+
+export function resetEmailChangeLimit(userId: string): void {
+  emailChange.reset(`email-change:${userId}`);
+}
+
+export function resetBillingIntentLimit(storeId: string): void {
+  billingIntent.reset(`billing-intent:${storeId}`);
+}
+
+export function resetUploadProductLimit(storeId: string): void {
+  uploadProduct.reset(`upload-product:${storeId}`);
+}
+
+export function resetUploadAvatarLimit(userId: string): void {
+  uploadAvatar.reset(`upload-avatar:${userId}`);
+}
+
 // Test seam for the registration bucket (mirrors the login seam).
 export function resetRegisterRateLimit(key: string): void {
   registerHits.delete(key);
