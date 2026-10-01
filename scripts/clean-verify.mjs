@@ -165,6 +165,16 @@ export function assertCleanVerify(contextLabel = "cleanup") {
 
 function tryCleanVerify() {
   const failures = [];
+  // login_throttle (roadmap B4) is parentless — no FKs in or out — so its
+  // reset position is dependency-free. A full-table reset (not prefix-scoped
+  // like the tables below) is required: phone-identity keys (+963...) carry
+  // no test marker, so LIKE-scoping would leave rows behind and poison
+  // re-runs with stale challenge/lockout state. This tool only ever runs
+  // against --local (see run()), and production purges these rows after 7d
+  // anyway, so no durable state is lost. A missing table fails loudly here
+  // (apply the D1 migrations) — the login flow itself requires it.
+  const throttleReset = run("DELETE FROM login_throttle;");
+  if (!throttleReset.ok) failures.push(`login_throttle: ${throttleReset.error}`);
   for (const [table, column] of DELETE_ORDER) {
     // "categories:children" is a pseudo-entry (see DELETE_ORDER comment):
     // same table, leaf-first predicate.
@@ -206,6 +216,19 @@ function tryCleanVerify() {
           `leftover check (${label}): ${rows.length} test row(s) still present, e.g. ${rows[0].id}`
         );
       }
+    }
+  }
+  // login_throttle must be fully empty (see reset above): any row left means
+  // a suite leaked brute-force state that will challenge/lock the next run.
+  const leftoverThrottle = run("SELECT identity FROM login_throttle LIMIT 1;");
+  if (!leftoverThrottle.ok) {
+    failures.push(`leftover check (login_throttle): ${leftoverThrottle.error}`);
+  } else {
+    const rows = leftoverThrottle.result?.[0]?.results ?? [];
+    if (rows.length > 0) {
+      failures.push(
+        `leftover check (login_throttle): ${rows.length} throttle row(s) still present, e.g. ${rows[0].identity}`
+      );
     }
   }
   return failures;

@@ -100,21 +100,6 @@ export function requireTurnstile(fetchImpl: typeof fetch = fetch) {
     }
     const verdict = await verifyTurnstileToken(secret, token, fetchImpl);
     if (!verdict.ok) {
-      // TEMPORARY-DEBUG — REMOVE SAME DAY (buyer-Turnstile end-to-end hunt).
-      // Logs the siteverify failure signature ONLY: error codes, responder
-      // hostname echo, token-age bucket. NEVER token/secret/key values,
-      // NEVER identity: the three fields below are the complete allow-list,
-      // do not extend this object. Follow-up commit removes this block and
-      // keeps a code-only counter.
-      try {
-        console.warn("[turnstile-debug] siteverify rejected", {
-          codes: verdict.codes,
-          hostname: verdict.hostname,
-          token_age_bucket: tokenAgeBucket(verdict.challengeTs),
-        });
-      } catch {
-        // Logging must never break authentication.
-      }
       throw new AppError("turnstile_failed", 403, "Bot verification failed.");
     }
     await next();
