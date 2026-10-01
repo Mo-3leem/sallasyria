@@ -20,6 +20,8 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
         <Link href="/app/admin/plans">الخطط</Link>
         <span aria-hidden="true">·</span>
         <Link href="/app/admin/users">المستخدمون</Link>
+        <span aria-hidden="true">·</span>
+        <Link href="/app/admin/audit">سجل التدقيق</Link>
       </nav>
       {children}
     </RequireAdmin>

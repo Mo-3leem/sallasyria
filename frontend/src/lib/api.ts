@@ -1,6 +1,7 @@
 import type {
   ApiResponse,
   ApiError,
+  AuditEvent,
   Category,
   Customer,
   CustomerAddress,
@@ -757,6 +758,42 @@ export const adminApi = {
       `/admin/users/${encodeURIComponent(id)}/password`,
       { new_password }
     ),
+  /** Role-inclusive user directory (admins and merchants; read-only). */
+  users: {
+    list: (q?: string, paging?: PageParams, role?: "admin" | "merchant") =>
+      api.get<{ users: MerchantAccount[]; pagination: PageMeta }>(
+        withQuery("/admin/users", {
+          q: q !== undefined && q !== "" ? q : undefined,
+          role,
+          page: paging?.page,
+          page_size: paging?.page_size,
+        })
+      ),
+  },
+  /** Persistent audit trail (admin-only). */
+  auditLog: {
+    list: (
+      filters?: {
+        action?: string;
+        actor?: string;
+        store?: string;
+        since?: string;
+        until?: string;
+      },
+      paging?: PageParams
+    ) =>
+      api.get<{ events: AuditEvent[]; pagination: PageMeta }>(
+        withQuery("/admin/audit-log", {
+          action: filters?.action !== "" ? filters?.action : undefined,
+          actor: filters?.actor !== "" ? filters?.actor : undefined,
+          store: filters?.store !== "" ? filters?.store : undefined,
+          since: filters?.since !== "" ? filters?.since : undefined,
+          until: filters?.until !== "" ? filters?.until : undefined,
+          page: paging?.page,
+          page_size: paging?.page_size,
+        })
+      ),
+  },
   /** Merchant account management (audited; merchants only, never admins). */
   merchants: {
     list: (q?: string) =>

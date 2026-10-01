@@ -19,6 +19,16 @@ export interface MerchantAccount {
   is_active?: number;
 }
 
+/** Persistent audit-trail row (ids and outcomes only, never secrets). */
+export interface AuditEvent {
+  id: string;
+  created_at: string;
+  action: string;
+  actor_id: string;
+  store_id: string | null;
+  result: string;
+}
+
 /** Own live session (safe metadata only — never token material). */
 export interface SessionEntry {
   id: string;

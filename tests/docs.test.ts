@@ -126,6 +126,8 @@ describe("OpenAPI docs", () => {
       "PATCH /admin/plans/{id}",
       "DELETE /admin/plans/{id}",
       "POST /admin/users/{id}/password",
+      "GET /admin/users",
+      "GET /admin/audit-log",
       "GET /admin/merchants",
       "GET /admin/merchants/{id}",
       "PATCH /admin/merchants/{id}",

@@ -167,6 +167,69 @@ export async function searchMerchants(
   return res.results ?? [];
 }
 
+
+export interface UserDirectoryPage {
+  users: UserPublic[];
+  total: number;
+}
+
+// Admin users directory (roadmap B12): role-inclusive counterpart to
+// searchMerchants for the admin console. Same prefix matching on
+// email/phone; optional role filter (no role = both admin and merchant
+// rows). Read-only: lifecycle stays merchant-scoped (see deleteMerchant)
+// and admin accounts remain untouchable here by route design.
+export async function searchUsers(
+  db: D1Database,
+  q: string | null,
+  role: "admin" | "merchant" | null,
+  opts: { page: number; pageSize: number }
+): Promise<UserDirectoryPage> {
+  const needle = (q ?? "").trim();
+  const offset = (opts.page - 1) * opts.pageSize;
+  const roleWhere = role === null ? "" : "AND role = ?";
+  const roleArgs: unknown[] = role === null ? [] : [role];
+  if (needle === "") {
+    const res = await db
+      .prepare(
+        `SELECT id, phone, email, name, role, email_verified, avatar_url FROM users WHERE 1 = 1 ${roleWhere} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`
+      )
+      .bind(...roleArgs, opts.pageSize, offset)
+      .all<UserPublic>();
+    const counted = await db
+      .prepare(`SELECT COUNT(*) AS n FROM users WHERE 1 = 1 ${roleWhere}`)
+      .bind(...roleArgs)
+      .first<{ n: number }>();
+    return { users: res.results ?? [], total: counted?.n ?? 0 };
+  }
+  const emailLike = `${escapeLike(needle.toLowerCase())}%`;
+  const rawLike = `${escapeLike(needle)}%`;
+  let canonicalLike = rawLike;
+  try {
+    canonicalLike = `${escapeLike(normalizePhone(needle))}%`;
+  } catch {
+    // Fragment does not normalize (e.g. too short): raw matching still applies.
+  }
+  const res = await db
+    .prepare(
+      `SELECT id, phone, email, name, role, email_verified, avatar_url FROM users
+       WHERE (email LIKE ? ESCAPE '\\' OR phone LIKE ? ESCAPE '\\'
+              OR phone LIKE ? ESCAPE '\\')
+         ${roleWhere}
+       ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`
+    )
+    .bind(emailLike, rawLike, canonicalLike, ...roleArgs, opts.pageSize, offset)
+    .all<UserPublic>();
+  const counted = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM users
+       WHERE (email LIKE ? ESCAPE '\\' OR phone LIKE ? ESCAPE '\\'
+              OR phone LIKE ? ESCAPE '\\')
+         ${roleWhere}`
+    )
+    .bind(emailLike, rawLike, canonicalLike, ...roleArgs)
+    .first<{ n: number }>();
+  return { users: res.results ?? [], total: counted?.n ?? 0 };
+}
 export async function getMerchantPublic(
   db: D1Database,
   id: string

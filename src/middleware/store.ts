@@ -2,7 +2,7 @@ import type { Context, Next } from "hono";
 import { getDb } from "../db.js";
 import type { AppEnv } from "../env.js";
 import { AppError } from "../http/errors.js";
-import { auditLog } from "../lib/audit.js";
+import { auditEvent } from "../services/audit.js";
 import { currentUser } from "./auth.js";
 
 export interface StoreRow {
@@ -104,7 +104,7 @@ export async function requireStoreAccess(
     throw new AppError("store_not_found", 404, "Store not found.");
   }
   if (row.owner_id !== user.id) {
-    auditLog("admin.store.read", { actor: user.id, store: row.id, result: "ok" });
+    await auditEvent(c, getDb(c),"admin.store.read", { actor: user.id, store: row.id, result: "ok" });
   }
   await next();
 }

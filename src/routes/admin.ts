@@ -9,7 +9,7 @@ import { ok } from "../http/respond.js";
 import { assertNoImmutableFields, z, validationHook } from "../http/validate.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { idParam, storeIdParam } from "../openapi/params.js";
-import { auditLog } from "../lib/audit.js";
+import { auditEvent } from "../services/audit.js";
 import { hashPassword, PASSWORD_RULES } from "../lib/password.js";
 import { touch } from "../lib/time.js";
 import { currentUser, requireAuth, requireRole } from "../middleware/auth.js";
@@ -35,9 +35,11 @@ import {
   getUserPublic,
   resetUserPassword,
   searchMerchants,
+  searchUsers,
   updateMerchantByAdmin,
 } from "../services/users.js";
 import { deleteStoreByAdmin, getStoreById, listStoresForOwner } from "../services/stores.js";
+import { listAuditLog } from "../services/audit.js";
 import {
   deleteCustomer,
   getCustomer,
@@ -123,6 +125,7 @@ const listSubscriptionsRoute = createRoute({
 admin.openapi(listSubscriptionsRoute, async (c) => {
   // No store filter: admin counts are small at MVP and every query-param
   // filter is a future tenant-confusion surface. Client filters instead.
+  await auditEvent(c, getDb(c), "admin.subscriptions.read", { actor: currentUser(c).id, result: "ok" });
   return ok(c, { subscriptions: await listSubscriptions(getDb(c)) });
 }, validationHook);
 
@@ -160,7 +163,7 @@ admin.openapi(activateRoute, async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   assertNoImmutableFields(raw, ["id", "status", "cancelled_at"]);
   const sub = await activateSubscription(getDb(c), c.req.valid("json"));
-  auditLog("admin.subscription.activate", { actor: currentUser(c).id, store: sub.store_id, result: sub.id });
+  await auditEvent(c, getDb(c),"admin.subscription.activate", { actor: currentUser(c).id, store: sub.store_id, result: sub.id });
   await notifySubOwner(getDb(c), c.env, c, sub, "activated", `Plan ${sub.plan_id}, ${sub.starts_at} to ${sub.ends_at ?? "open"}.`);
   return ok(c, { subscription: sub }, 201);
 }, validationHook);
@@ -195,7 +198,7 @@ admin.openapi(cancelRoute, async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   assertNoImmutableFields(raw, ["id", "status", "store_id", "plan_id"]);
   const sub = await cancelSubscription(getDb(c), resourceId(c), c.req.valid("json").cancelled_at);
-  auditLog("admin.subscription.cancel", { actor: currentUser(c).id, store: sub.store_id, result: sub.id });
+  await auditEvent(c, getDb(c),"admin.subscription.cancel", { actor: currentUser(c).id, store: sub.store_id, result: sub.id });
   await notifySubOwner(getDb(c), c.env, c, sub, "cancelled", `Cancelled at ${sub.cancelled_at ?? "now"}.`);
   return ok(c, { subscription: sub });
 }, validationHook);
@@ -237,7 +240,7 @@ admin.openapi(renewRoute, async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   assertNoImmutableFields(raw, ["id", "status", "cancelled_at", "store_id", "plan_id"]);
   const sub = await renewSubscription(getDb(c), resourceId(c), c.req.valid("json"));
-  auditLog("admin.subscription.renew", { actor: currentUser(c).id, store: sub.store_id, result: sub.id });
+  await auditEvent(c, getDb(c),"admin.subscription.renew", { actor: currentUser(c).id, store: sub.store_id, result: sub.id });
   await notifySubOwner(getDb(c), c.env, c, sub, "renewed", `Plan ${sub.plan_id}, ${sub.starts_at} to ${sub.ends_at ?? "open"}.`);
   return ok(c, { subscription: sub }, 201);
 }, validationHook);
@@ -263,6 +266,7 @@ const getSubscriptionRoute = createRoute({
 admin.openapi(getSubscriptionRoute, async (c) => {
   const sub = await getSubscription(getDb(c), resourceId(c));
   if (!sub) throw new AppError("subscription_not_found", 404, "Subscription not found.");
+  await auditEvent(c, getDb(c), "admin.subscription.read", { actor: currentUser(c).id, store: sub.store_id, result: sub.id });
   return ok(c, { subscription: sub });
 }, validationHook);
 
@@ -325,7 +329,9 @@ const listPlansRoute = createRoute({
 });
 
 admin.openapi(listPlansRoute, async (c) => {
-  return ok(c, { plans: await listPlans(getDb(c)) });
+  const plans = await listPlans(getDb(c));
+  await auditEvent(c, getDb(c), "admin.plans.read", { actor: currentUser(c).id, result: "ok" });
+  return ok(c, { plans });
 }, validationHook);
 
 const getPlanRoute = createRoute({
@@ -349,6 +355,7 @@ const getPlanRoute = createRoute({
 admin.openapi(getPlanRoute, async (c) => {
   const plan = await getPlan(getDb(c), resourceId(c));
   if (!plan) throw new AppError("plan_not_found", 404, "Plan not found.");
+  await auditEvent(c, getDb(c), "admin.plan.read", { actor: currentUser(c).id, result: plan.id });
   return ok(c, { plan });
 }, validationHook);
 
@@ -379,7 +386,7 @@ admin.openapi(createPlanRoute, async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   assertNoImmutableFields(raw, CREATE_PLAN_FORBIDDEN);
   const plan = await createPlan(getDb(c), c.req.valid("json"));
-  auditLog("admin.plan.create", { actor: currentUser(c).id, result: plan.id });
+  await auditEvent(c, getDb(c),"admin.plan.create", { actor: currentUser(c).id, result: plan.id });
   return ok(c, { plan }, 201);
 }, validationHook);
 
@@ -412,7 +419,7 @@ admin.openapi(updatePlanRoute, async (c) => {
   assertNoImmutableFields(raw, UPDATE_PLAN_FORBIDDEN);
   const plan = await updatePlan(getDb(c), resourceId(c), c.req.valid("json"));
   if (!plan) throw new AppError("plan_not_found", 404, "Plan not found.");
-  auditLog("admin.plan.update", { actor: currentUser(c).id, result: plan.id });
+  await auditEvent(c, getDb(c),"admin.plan.update", { actor: currentUser(c).id, result: plan.id });
   return ok(c, { plan });
 }, validationHook);
 
@@ -440,7 +447,7 @@ admin.openapi(deletePlanRoute, async (c) => {
   const targetId = resourceId(c);
   const result = await deletePlan(getDb(c), targetId);
   if (!result) throw new AppError("plan_not_found", 404, "Plan not found.");
-  auditLog("admin.plan.delete", { actor: currentUser(c).id, result: targetId });
+  await auditEvent(c, getDb(c),"admin.plan.delete", { actor: currentUser(c).id, result: targetId });
   return ok(c, result);
 }, validationHook);
 
@@ -493,7 +500,7 @@ admin.openapi(resetPasswordRoute, async (c) => {
   }
   const now = touch();
   await resetUserPassword(getDb(c), targetId, hashPassword(c.req.valid("json").new_password), now);
-  auditLog("admin.user.password_reset", { actor: currentUser(c).id, result: targetId });
+  await auditEvent(c, getDb(c),"admin.user.password_reset", { actor: currentUser(c).id, result: targetId });
   return ok(c, { reset: true });
 }, validationHook);
 
@@ -565,6 +572,7 @@ const listMerchantsRoute = createRoute({
 
 admin.openapi(listMerchantsRoute, async (c) => {
   const q = c.req.valid("query").q ?? null;
+  await auditEvent(c, getDb(c), "admin.merchants.read", { actor: currentUser(c).id, result: "ok" });
   return ok(c, { merchants: await searchMerchants(getDb(c), q) });
 }, validationHook);
 
@@ -594,6 +602,7 @@ admin.openapi(getMerchantRoute, async (c) => {
   const targetId = resourceId(c);
   const merchant = await getMerchantPublic(getDb(c), targetId);
   if (!merchant) throw new AppError("user_not_found", 404, "User not found.");
+  await auditEvent(c, getDb(c), "admin.merchant.read", { actor: currentUser(c).id, result: targetId });
   return ok(c, {
     merchant,
     stores: await listStoresForOwner(getDb(c), targetId),
@@ -632,7 +641,7 @@ admin.openapi(updateMerchantRoute, async (c) => {
   const targetId = resourceId(c);
   const merchant = await updateMerchantByAdmin(getDb(c), targetId, c.req.valid("json"));
   if (!merchant) throw new AppError("user_not_found", 404, "User not found.");
-  auditLog("admin.merchant.update", { actor: currentUser(c).id, result: targetId });
+  await auditEvent(c, getDb(c),"admin.merchant.update", { actor: currentUser(c).id, result: targetId });
   return ok(c, { merchant });
 }, validationHook);
 
@@ -666,7 +675,7 @@ admin.openapi(deleteMerchantRoute, async (c) => {
   const target = await getMerchantPublic(getDb(c), targetId);
   if (!target) throw new AppError("user_not_found", 404, "User not found.");
   const result = await deleteMerchant(getDb(c), targetId);
-  auditLog("admin.merchant.delete", { actor: me.id, result: targetId });
+  await auditEvent(c, getDb(c),"admin.merchant.delete", { actor: me.id, result: targetId });
   return ok(c, result);
 }, validationHook);
 
@@ -700,8 +709,55 @@ admin.openapi(deleteMerchantStoreRoute, async (c) => {
   const merchant = await getMerchantPublic(getDb(c), targetId);
   if (!merchant) throw new AppError("user_not_found", 404, "User not found.");
   const result = await deleteStoreByAdmin(getDb(c), targetId, storeId);
-  auditLog("admin.store.delete", { actor: currentUser(c).id, store: storeId, result: targetId });
+  await auditEvent(c, getDb(c),"admin.store.delete", { actor: currentUser(c).id, store: storeId, result: targetId });
   return ok(c, result);
+}, validationHook);
+
+// --- admin users directory (platform admins only, audited reads) ---
+//
+// Role-inclusive counterpart to the merchant directory above: lists admin
+// AND merchant rows for the admin console. Read-only — lifecycle stays
+// merchant-scoped (deleteMerchant) and admin accounts remain untouchable
+// here by route design (no create/toggle/delete endpoints).
+
+const listUsersRoute = createRoute({
+  method: "get",
+  path: "/users",
+  summary: "List/search all user accounts",
+  description:
+    "Platform admin only. Both admin and merchant rows (unlike the merchant directory); " +
+    "optional ?q= prefix-matches email (case-insensitive) or phone; optional ?role= filters by role. Paginated.",
+  middleware: [...authedAdmin],
+  request: {
+    query: pageQuerySchema.extend({
+      q: z.string().max(254).optional(),
+      role: z.enum(["admin", "merchant"]).optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: okOf(z.object({ users: z.array(merchantDocSchema), pagination: pageMetaSchema })) },
+      },
+      description: "Matching user accounts, newest first, with pagination metadata",
+    },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid page, page size, or role" },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
+  },
+});
+
+admin.openapi(listUsersRoute, async (c) => {
+  const query = c.req.valid("query");
+  const { users, total } = await searchUsers(getDb(c), query.q ?? null, query.role ?? null, {
+    page: query.page,
+    pageSize: query.page_size,
+  });
+  await auditEvent(c, getDb(c), "admin.users.read", { actor: currentUser(c).id, result: "ok" });
+  return ok(c, {
+    users,
+    pagination: pageMeta(total, query.page, query.page_size),
+  });
 }, validationHook);
 
 // --- admin customer management (scoped through the merchant's stores) ---
@@ -770,6 +826,7 @@ const listStoreCustomersRoute = createRoute({
 admin.openapi(listStoreCustomersRoute, async (c) => {
   const { storeId } = await storeScopeAdmin(c);
   const q = c.req.valid("query").q ?? null;
+  await auditEvent(c, getDb(c), "admin.customers.read", { actor: currentUser(c).id, store: storeId, result: "ok" });
   return ok(c, { customers: await searchCustomers(getDb(c), storeId, q) });
 }, validationHook);
 
@@ -795,6 +852,7 @@ admin.openapi(getStoreCustomerRoute, async (c) => {
   const { storeId } = await storeScopeAdmin(c);
   const row = await getCustomer(getDb(c), storeId, resourceId(c));
   if (!row) throw new AppError("customer_not_found", 404, "Customer not found.");
+  await auditEvent(c, getDb(c), "admin.customer.read", { actor: currentUser(c).id, store: storeId, result: row.id });
   return ok(c, { customer: row });
 }, validationHook);
 
@@ -829,7 +887,7 @@ admin.openapi(updateStoreCustomerRoute, async (c) => {
   const { storeId } = await storeScopeAdmin(c);
   const row = await updateCustomer(getDb(c), storeId, resourceId(c), c.req.valid("json"));
   if (!row) throw new AppError("customer_not_found", 404, "Customer not found.");
-  auditLog("admin.customer.update", { actor: currentUser(c).id, store: storeId, result: row.id });
+  await auditEvent(c, getDb(c),"admin.customer.update", { actor: currentUser(c).id, store: storeId, result: row.id });
   return ok(c, { customer: row });
 }, validationHook);
 
@@ -856,6 +914,84 @@ const deleteStoreCustomerRoute = createRoute({
 admin.openapi(deleteStoreCustomerRoute, async (c) => {
   const { storeId } = await storeScopeAdmin(c);
   const result = await deleteCustomer(getDb(c), storeId, resourceId(c));
-  auditLog("admin.customer.delete", { actor: currentUser(c).id, store: storeId, result: result.deleted });
+  await auditEvent(c, getDb(c),"admin.customer.delete", { actor: currentUser(c).id, store: storeId, result: result.deleted })
   return ok(c, result);
+}, validationHook);
+
+// --- audit-log viewer (platform admins only, audited reads) ---
+//
+// Reads the persistent audit trail written by auditEvent() (console lines
+// are the alert path; this table is the query path). Rows carry ids only,
+// never PII beyond what the action already logs.
+
+const auditEventDocSchema = z
+  .object({
+    id: z.string(),
+    created_at: z.string(),
+    action: z.string(),
+    actor_id: z.string(),
+    store_id: z.string().nullable(),
+    result: z.string(),
+  })
+  .openapi("AuditEvent");
+
+// Calendar-validated YYYY-MM-DD (the viewer sends <input type="date">
+// values). Shared by the query schema below and expandBound: both must
+// agree, otherwise valid viewer input 400s or garbage slips through.
+const DATE_ONLY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/;
+
+const listAuditLogRoute = createRoute({
+  method: "get",
+  path: "/audit-log",
+  summary: "List audit events",
+  description:
+    "Platform admin only. Newest first. Optional filters: ?action= exact action, " +
+    "?actor= actor id, ?store= store id, ?since= / ?until= ISO-8601 datetime or YYYY-MM-DD date bounds. Paginated.",
+  middleware: [...authedAdmin],
+  request: {
+    query: pageQuerySchema.extend({
+      action: z.string().max(100).optional(),
+      actor: z.string().max(200).optional(),
+      store: z.string().max(200).optional(),
+      since: z.union([isoDateTime, z.string().regex(DATE_ONLY_PATTERN)]).optional(),
+      until: z.union([isoDateTime, z.string().regex(DATE_ONLY_PATTERN)]).optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: okOf(z.object({ events: z.array(auditEventDocSchema), pagination: pageMetaSchema })) },
+      },
+      description: "Audit events, newest first, with pagination metadata",
+    },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid page, page size, or filter" },
+    401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
+    403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
+  },
+});
+
+admin.openapi(listAuditLogRoute, async (c) => {
+  const query = c.req.valid("query");
+  // Date-only bounds (the viewer sends <input type="date"> values) expand
+  // to full-day UTC ranges; anything else already passed ISO validation.
+  const expandBound = (v: string | undefined, endOfDay: boolean): string | null => {
+    if (v === undefined) return null;
+    return DATE_ONLY_PATTERN.test(v) ? `${v}T${endOfDay ? "23:59:59" : "00:00:00"}Z` : v;
+  };
+  const { events, total } = await listAuditLog(
+    getDb(c),
+    {
+      action: query.action ?? null,
+      actor: query.actor ?? null,
+      store: query.store ?? null,
+      since: expandBound(query.since, false),
+      until: expandBound(query.until, true),
+    },
+    { page: query.page, pageSize: query.page_size }
+  );
+  await auditEvent(c, getDb(c), "admin.audit.read", { actor: currentUser(c).id, result: "ok" });
+  return ok(c, {
+    events,
+    pagination: pageMeta(total, query.page, query.page_size),
+  });
 }, validationHook);

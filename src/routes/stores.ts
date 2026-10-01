@@ -6,7 +6,7 @@ import { ok } from "../http/respond.js";
 import { assertNoImmutableFields, z, validationHook } from "../http/validate.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { storeIdParam } from "../openapi/params.js";
-import { auditLog } from "../lib/audit.js";
+import { auditEvent } from "../services/audit.js";
 import { currentUser, requireAuth } from "../middleware/auth.js";
 import { requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
@@ -56,7 +56,7 @@ const listStoresRoute = createRoute({
 stores.openapi(listStoresRoute, async (c) => {
   const user = currentUser(c);
   if (user.role === "admin") {
-    auditLog("admin.store.read", { actor: user.id, result: "list-all" });
+    await auditEvent(c, getDb(c),"admin.store.read", { actor: user.id, result: "list-all" });
     return ok(c, { stores: await listAllStores(getDb(c)) });
   }
   return ok(c, { stores: await listStoresForOwner(getDb(c), user.id) });
@@ -137,7 +137,7 @@ stores.openapi(createStoreRoute, async (c) => {
   const ownerId = currentUser(c).id;
   const input = c.req.valid("json");
   const store = await createStore(getDb(c), ownerId, input);
-  auditLog("store.create", { actor: ownerId, store: store.id, result: "ok" });
+  await auditEvent(c, getDb(c),"store.create", { actor: ownerId, store: store.id, result: "ok" });
   // Trial is best-effort and never fails creation: grantTrial swallows its
   // own race/skip cases; anything unexpected here still 500s loudly below
   // (fail-closed beats a silent untrialed store).
@@ -266,9 +266,9 @@ stores.openapi(renameRoute, async (c) => {
   const updated = await updateStore(getDb(c), storeId, input);
   const ownerId = await getStoreOwner(getDb(c), storeId);
   if (user.role === "admin" && ownerId !== user.id) {
-    auditLog("admin.store.update", { actor: user.id, store: storeId, result: "ok" });
+    await auditEvent(c, getDb(c),"admin.store.update", { actor: user.id, store: storeId, result: "ok" });
   } else {
-    auditLog("store.update", { actor: user.id, store: storeId, result: "ok" });
+    await auditEvent(c, getDb(c),"store.update", { actor: user.id, store: storeId, result: "ok" });
   }
   return ok(c, { store: updated });
 }, validationHook);
@@ -334,6 +334,6 @@ stores.openapi(publishRoute, async (c) => {
     // means deletion raced the middlewares — still 404, never unscoped data.
     return ok(c, { store: null });
   }
-  auditLog("store.publish", { actor: user.id, store: storeId, result: is_published === 1 ? "published" : "unpublished" });
+  await auditEvent(c, getDb(c),"store.publish", { actor: user.id, store: storeId, result: is_published === 1 ? "published" : "unpublished" });
   return ok(c, { store: updated });
 }, validationHook);

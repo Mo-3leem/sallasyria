@@ -1,7 +1,7 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import { AppError } from "../http/errors.js";
 import { appUrl, type Env } from "../env.js";
-import { auditLog } from "../lib/audit.js";
+import { auditEvent } from "./audit.js";
 import { uuidv7 } from "../lib/ids.js";
 import { touch } from "../lib/time.js";
 import { configuredProvider } from "../lib/billing/registry.js";
@@ -253,7 +253,7 @@ export async function settleWebhook(
       )
       .bind(result.eventId, result.providerRef ?? null, nowIso, intent.id)
       .run();
-    auditLog("billing.webhook.failed", { actor: "billing:webhook", store: intent.store_id, result: intent.id });
+    await auditEvent(null, db,"billing.webhook.failed", { actor: "billing:webhook", store: intent.store_id, result: intent.id });
     return { processed: true, activated: false, duplicate: false, subscription: null };
   }
   // Amount integrity: a reported mismatch can never activate a period.
@@ -264,7 +264,7 @@ export async function settleWebhook(
       )
       .bind(result.eventId, result.providerRef ?? null, nowIso, intent.id)
       .run();
-    auditLog("billing.webhook.amount_mismatch", { actor: "billing:webhook", store: intent.store_id, result: intent.id });
+    await auditEvent(null, db,"billing.webhook.amount_mismatch", { actor: "billing:webhook", store: intent.store_id, result: intent.id });
     return { processed: true, activated: false, duplicate: false, subscription: null };
   }
   if (result.currency !== undefined && result.currency !== intent.currency) {
@@ -274,7 +274,7 @@ export async function settleWebhook(
       )
       .bind(result.eventId, result.providerRef ?? null, nowIso, intent.id)
       .run();
-    auditLog("billing.webhook.amount_mismatch", { actor: "billing:webhook", store: intent.store_id, result: intent.id });
+    await auditEvent(null, db,"billing.webhook.amount_mismatch", { actor: "billing:webhook", store: intent.store_id, result: intent.id });
     return { processed: true, activated: false, duplicate: false, subscription: null };
   }
   try {
@@ -315,7 +315,7 @@ export async function settleWebhook(
         )
         .bind(intent.store_id)
         .first<SubscriptionRow>();
-      auditLog("billing.webhook.duplicate", { actor: "billing:webhook", store: intent.store_id, result: intent.id });
+      await auditEvent(null, db,"billing.webhook.duplicate", { actor: "billing:webhook", store: intent.store_id, result: intent.id });
       return { processed: true, activated: true, duplicate: true, subscription: covering };
     }
     throw err;
@@ -327,7 +327,7 @@ export async function settleWebhook(
     )
     .bind(intent.store_id)
     .first<SubscriptionRow>();
-  auditLog("billing.webhook.success", { actor: "billing:webhook", store: intent.store_id, result: intent.id });
+  await auditEvent(null, db,"billing.webhook.success", { actor: "billing:webhook", store: intent.store_id, result: intent.id });
   return { processed: true, activated: true, duplicate: false, subscription: activated };
 }
 
@@ -396,6 +396,6 @@ export async function grantTrial(
     // constructed one — a mismatch here means the flip did not persist.
     throw new AppError("internal", 500, "Something went wrong.");
   }
-  auditLog("store.trial.grant", { actor: actorId, store: storeId, result: trial.id });
+  await auditEvent(null, db,"store.trial.grant", { actor: actorId, store: storeId, result: trial.id });
   return { trial: row, skipped: false };
 }

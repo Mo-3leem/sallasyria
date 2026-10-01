@@ -30,7 +30,7 @@ import { normalizeEmail } from "../lib/email.js";
 import { normalizePhone } from "../lib/phone.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { idParam, turnstileTokenHeader } from "../openapi/params.js";
-import { auditLog } from "../lib/audit.js";
+import { auditEvent } from "../services/audit.js";
 import { resourceId } from "../db/tenant.js";
 import { uuidv7 } from "../lib/ids.js";
 import {
@@ -1107,7 +1107,7 @@ auth.openapi(patchMeRoute, async (c) => {
       .bind(now, now, user.id, currentSessionId(c))
       .run();
   }
-  auditLog("user.profile.update", { actor: user.id, result: user.id });
+  await auditEvent(c, getDb(c),"user.profile.update", { actor: user.id, result: user.id });
   return ok(c, { user: await userWithAvatar(c, profile), reauth_required: false });
 }, validationHook);
 
@@ -1187,7 +1187,7 @@ auth.openapi(avatarUploadRoute, async (c) => {
       // Best-effort only.
     }
   }
-  auditLog("user.profile.update", { actor: user.id, result: user.id });
+  await auditEvent(c, getDb(c),"user.profile.update", { actor: user.id, result: user.id });
   return ok(c, { user: await userWithAvatar(c, updated) });
 }, validationHook);
 
@@ -1221,7 +1221,7 @@ auth.openapi(avatarDeleteRoute, async (c) => {
       // Best-effort only.
     }
   }
-  auditLog("user.profile.update", { actor: user.id, result: user.id });
+  await auditEvent(c, getDb(c),"user.profile.update", { actor: user.id, result: user.id });
   return ok(c, { user: await userWithAvatar(c, updated) });
 }, validationHook);
 

@@ -7,7 +7,7 @@ import { ok } from "../http/respond.js";
 import { assertNoImmutableFields, z, validationHook } from "../http/validate.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { idParam, storeIdParam } from "../openapi/params.js";
-import { auditLog } from "../lib/audit.js";
+import { auditEvent } from "../services/audit.js";
 import { checkBillingIntentLimit, checkWebhookIpLimit, clientIp } from "../lib/rate-limit.js";
 import { configuredProvider, selectProvider } from "../lib/billing/registry.js";
 import { currentUser, requireAuth, requireRole } from "../middleware/auth.js";
@@ -149,7 +149,7 @@ storeBilling.openapi(checkoutRoute, async (c) => {
       idempotencyKey: key,
     }
   );
-  auditLog("billing.checkout.start", {
+  await auditEvent(c, getDb(c),"billing.checkout.start", {
     actor: currentUser(c).id,
     store: storeId,
     result: intent.id,

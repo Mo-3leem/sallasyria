@@ -8,7 +8,7 @@ import { z, validationHook } from "../http/validate.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { idParam, storeIdParam } from "../openapi/params.js";
 import { checkPreviewLimit, clientIp } from "../lib/rate-limit.js";
-import { auditLog } from "../lib/audit.js";
+import { auditEvent } from "../services/audit.js";
 import { currentUser, requireAuth } from "../middleware/auth.js";
 import { requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
@@ -199,7 +199,7 @@ const publishRoute = createRoute({
 theme.openapi(publishRoute, async (c) => {
   const { storeId } = storeScope(c);
   const themed = await publishTheme(getDb(c), storeId);
-  auditLog("store.theme.publish", { actor: currentUser(c).id, store: storeId, result: themed.published_at ?? "ok" });
+  await auditEvent(c, getDb(c),"store.theme.publish", { actor: currentUser(c).id, store: storeId, result: themed.published_at ?? "ok" });
   return ok(c, { theme: themed });
 }, validationHook);
 

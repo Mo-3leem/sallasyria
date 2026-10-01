@@ -3,14 +3,19 @@ import type { Env } from "../env.js";
 import { dispatchMail, sendMail } from "./mail.js";
 import { buildSubscriptionEmail, enqueueMail } from "./mail-outbox.js";
 
-// Scheduled hygiene (roadmap B7). Two bounded purges keep tables that would
+// Scheduled hygiene (roadmap B7). Three bounded purges keep tables that would
 // otherwise grow forever (revoked/expired sessions; consumed idempotency
-// keys) within D1 limits. Both are pure DELETEs by age — no business logic,
-// no FK risk (sessions reference users with CASCADE; keys cascade from
-// orders/stores, so orphans cannot exist to block either delete).
+// keys; aged audit rows) within D1 limits. All are pure DELETEs by age — no
+// business logic, no FK risk (sessions reference users with CASCADE; keys
+// cascade from orders/stores, so orphans cannot exist to block either
+// delete; audit rows reference nothing and are never referenced).
 
 export const SESSION_RETENTION_MS = 30 * 24 * 3600 * 1000; // 30 days past end-of-life
 export const IDEMPOTENCY_RETENTION_MS = 72 * 3600 * 1000; // 72 hours
+// Audit trail retention (roadmap B12): 180 days. Long enough for security
+// review and incident response, bounded so the table cannot grow forever.
+// Anything older is console history only (Workers Logs retention applies).
+export const AUDIT_RETENTION_MS = 180 * 24 * 3600 * 1000;
 
 export function cutoffIso(nowMs: number, retentionMs: number): string {
   return new Date(nowMs - retentionMs).toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -36,9 +41,18 @@ export async function purgeIdempotencyKeys(db: D1Database, cutoffIsoValue: strin
   return res.meta.changes ?? 0;
 }
 
+export async function purgeAuditLog(db: D1Database, cutoffIsoValue: string): Promise<number> {
+  const res = await db
+    .prepare("DELETE FROM audit_logs WHERE created_at < ?")
+    .bind(cutoffIsoValue)
+    .run();
+  return res.meta.changes ?? 0;
+}
+
 export interface MaintenanceSummary {
   sessionsPurged: number;
   idempotencyKeysPurged: number;
+  auditPurged: number;
   trialNoticesQueued: number;
 }
 
@@ -79,6 +93,7 @@ export async function scanTrialExpiries(db: D1Database, nowMs: number = Date.now
 export async function runScheduledMaintenance(env: Env, nowMs: number = Date.now()): Promise<MaintenanceSummary> {
   const sessionsPurged = await purgeSessions(env.DB, cutoffIso(nowMs, SESSION_RETENTION_MS));
   const idempotencyKeysPurged = await purgeIdempotencyKeys(env.DB, cutoffIso(nowMs, IDEMPOTENCY_RETENTION_MS));
+  const auditPurged = await purgeAuditLog(env.DB, cutoffIso(nowMs, AUDIT_RETENTION_MS));
   let trialNoticesQueued = 0;
   try {
     const trials = await scanTrialExpiries(env.DB, nowMs);
@@ -108,7 +123,7 @@ export async function runScheduledMaintenance(env: Env, nowMs: number = Date.now
     // Trial notices never fail maintenance.
   }
   console.log(
-    `maintenance sessions_purged=${sessionsPurged} idempotency_purged=${idempotencyKeysPurged} trial_notices=${trialNoticesQueued}`
+    `maintenance sessions_purged=${sessionsPurged} idempotency_purged=${idempotencyKeysPurged} audit_purged=${auditPurged} trial_notices=${trialNoticesQueued}`
   );
-  return { sessionsPurged, idempotencyKeysPurged, trialNoticesQueued };
+  return { sessionsPurged, idempotencyKeysPurged, auditPurged, trialNoticesQueued };
 }
