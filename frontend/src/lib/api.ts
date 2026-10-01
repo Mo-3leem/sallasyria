@@ -166,6 +166,12 @@ export const authApi = {
   }) => api.post<{ reset: boolean }>("/auth/reset-password", data),
 };
 
+export interface PageMeta {
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+}
 export const storesApi = {
   /** Own stores (all stores for admins). */
   list: () => api.get<{ stores: Store[] }>("/stores"),
