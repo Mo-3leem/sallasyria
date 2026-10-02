@@ -131,6 +131,7 @@ beforeAll(async () => {
     `INSERT INTO subscriptions (id, store_id, plan_id, status, billing_period, starts_at, ends_at) VALUES ('sub_verify_b6c_e', 'store_verify_b6c_expired', 'plan_verify_b6c', 'expired', 'monthly', '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z');`,
     `INSERT INTO subscriptions (id, store_id, plan_id, status, billing_period, starts_at, ends_at) VALUES ('sub_verify_b6c_b', 'store_verify_b6c_b', 'plan_verify_b6c', 'active', 'monthly', '2026-01-01T00:00:00Z', '2099-01-01T00:00:00Z');`,
     `INSERT INTO products (id, store_id, name, slug, price, stock_quantity) VALUES ('prod_verify_b6c_tracked', 'store_verify_b6c_a', 'Tracked', 'b6-tracked', 100000, 100);`,
+    `INSERT INTO products (id, store_id, name, slug, price, stock_quantity) VALUES ('prod_verify_b6c_exact', 'store_verify_b6c_a', 'Exact', 'b6-exact', 100000, 3);`,
     `INSERT INTO products (id, store_id, name, slug, price, stock_quantity) VALUES ('prod_verify_b6c_untracked', 'store_verify_b6c_a', 'Untracked', 'b6-untracked', 50000, NULL);`,
     `INSERT INTO products (id, store_id, name, slug, price, deleted_at) VALUES ('prod_verify_b6c_deleted', 'store_verify_b6c_a', 'Deleted', 'b6-deleted', 1000, '2026-09-15T00:00:00Z');`,
     `INSERT INTO products (id, store_id, name, slug, price, is_active) VALUES ('prod_verify_b6c_inactive', 'store_verify_b6c_a', 'Inactive', 'b6-inactive', 1000, 0);`,
@@ -317,6 +318,45 @@ describe("B6 failure atomicity + stock", () => {
       body: JSON.stringify(validBody({ items: [{ product_id: "prod_verify_b6c_untracked", quantity: 100 }] })),
     }, "", freshKey());
     expect(bulk.status).toBe(201);
+  }, 60_000);
+
+  it("exact stock boundary succeeds and leaves zero; next unit shortfalls", async () => {
+    const exact = await api(`${A}/checkout`, {
+      method: "POST",
+      body: JSON.stringify(validBody({ items: [{ product_id: "prod_verify_b6c_exact", quantity: 3 }] })),
+    }, "", freshKey());
+    expect(exact.status).toBe(201);
+    expect(
+      qrows(d1(`SELECT stock_quantity FROM products WHERE id = 'prod_verify_b6c_exact';`))[0]?.["stock_quantity"]
+    ).toBe(0);
+    // Stock is now exactly 0: the atomic predicate matches zero rows, so the
+    // backstop compensates instead of overselling — 409 and no surviving order.
+    const shortPhone = "+963911600099";
+    const shortBody = () =>
+      JSON.stringify(
+        validBody({
+          customer: { name: "Short", phone: shortPhone },
+          items: [{ product_id: "prod_verify_b6c_exact", quantity: 1 }],
+        })
+      );
+    const retryKey = freshKey();
+    const short = await api(`${A}/checkout`, { method: "POST", body: shortBody() }, "", retryKey);
+    expect(short.status).toBe(409);
+    expect(short.body).toEqual({
+      ok: false,
+      error: { code: "insufficient_stock", message: expect.any(String) },
+    });
+    expect(
+      qrows(d1(`SELECT COUNT(*) AS n FROM orders WHERE store_id = 'store_verify_b6c_a' AND customer_phone = '${shortPhone}';`))[0]?.["n"]
+    ).toBe(0);
+    // Same-key retry re-attempts deterministically (409 again, never a
+    // dangling-order 500): compensation removed the attempt's key row too.
+    const retry = await api(`${A}/checkout`, { method: "POST", body: shortBody() }, "", retryKey);
+    expect(retry.status).toBe(409);
+    expect(retry.body).toEqual({
+      ok: false,
+      error: { code: "insufficient_stock", message: expect.any(String) },
+    });
   }, 60_000);
 
   it("deleted, inactive, and cross-store products are all 409 product_unavailable", async () => {

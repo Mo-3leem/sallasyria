@@ -297,8 +297,10 @@ export async function checkout(
       .filter((l) => l.tracked)
       .map((l) =>
         db
-          .prepare("UPDATE products SET stock_quantity = stock_quantity - ? WHERE store_id = ? AND id = ? AND stock_quantity IS NOT NULL")
-          .bind(l.quantity, storeId, l.product_id)
+          .prepare(
+            "UPDATE products SET stock_quantity = stock_quantity - ? WHERE store_id = ? AND id = ? AND stock_quantity IS NOT NULL AND stock_quantity >= ?"
+          )
+          .bind(l.quantity, storeId, l.product_id, l.quantity)
       ),
     db
       .prepare("UPDATE stores SET order_counter = order_counter + 1 WHERE id = ? RETURNING order_counter")
@@ -378,6 +380,25 @@ export async function checkout(
       }
     }
     throw err;
+  }
+
+  // Atomic-predicate backstop (roadmap B13-L12): each decrement above carries
+  // `AND stock_quantity >= ?`, so a shortfall that raced in after resolve
+  // updates zero rows instead of overselling. Overall batch success does not
+  // imply every row moved, so verify per-statement changes here; on a miss,
+  // compensate exactly like the retired-mid-flight guard below (the order row
+  // already exists) and keep the existing insufficient_stock 409. The
+  // idempotency row goes too — otherwise a same-key retry would hit a
+  // dangling order_id and 500 instead of re-attempting deterministically.
+  const decrements = results.slice(0, trackedCount) as unknown as {
+    meta?: { changes?: number | null };
+  }[];
+  if (decrements.some((d) => (d.meta?.changes ?? 0) < 1)) {
+    await db.batch([
+      db.prepare("DELETE FROM orders WHERE store_id = ? AND id = ?").bind(storeId, orderId),
+      db.prepare("DELETE FROM idempotency_keys WHERE store_id = ? AND key = ? AND order_id = ?").bind(storeId, key, orderId),
+    ]);
+    throw new AppError("insufficient_stock", 409, "Insufficient stock for an item in the order.");
   }
 
   // Wire-proof: the RETURNING counter must equal the stored order number.
