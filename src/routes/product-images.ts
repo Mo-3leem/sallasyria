@@ -15,6 +15,7 @@ import { requireActiveSubscription } from "../middleware/subscription.js";
 import {
   createImage,
   getImage,
+  getImageByUrl,
   listImages,
   restoreImage,
   softDeleteImage,
@@ -31,6 +32,7 @@ import {
   sanitizeImage,
   signingSecretOrThrow,
   sniffImageMime,
+  tombstoneImageR2,
   verifyImageUrl,
   type AllowedImageMime,
 } from "../lib/uploads.js";
@@ -193,6 +195,14 @@ productImages.openapi(fileRoute, async (c) => {
   if (!(await verifyImageUrl(secret, storeId, key, exp, sig))) {
     throw new AppError("image_not_found", 404, "Image not found.");
   }
+  // Liveness gate (roadmap B13-L2): retired rows must not serve bytes even
+  // with a valid signature (tokens outlive retirement). Exact-match on the
+  // managed URL keeps external-URL behavior unchanged; tombstoned objects
+  // 404 naturally on the R2 read below.
+  const live = await getImageByUrl(getDb(c), storeId, r2UrlFor(`${storeId}/${key}`));
+  if (live !== null && live.deleted_at !== null) {
+    throw new AppError("image_not_found", 404, "Image not found.");
+  }
   // No-R2 production demo: fail closed with 503 (see upload route note).
   const r2 = c.env.R2;
   if (!r2) {
@@ -233,7 +243,8 @@ const getImageRoute = createRoute({
 productImages.openapi(getImageRoute, async (c) => {
   const { storeId } = storeScope(c);
   const row = await getImage(getDb(c), storeId, resourceId(c));
-  if (!row) throw new AppError("image_not_found", 404, "Image not found.");
+  // Retired rows resolve only through restore (roadmap B13-L2).
+  if (!row || row.deleted_at !== null) throw new AppError("image_not_found", 404, "Image not found.");
   return ok(c, { image: await presentImage(c, row) });
 }, validationHook);
 
@@ -320,6 +331,10 @@ productImages.openapi(softDeleteImageRoute, async (c) => {
   const { storeId } = storeScope(c);
   const row = await softDeleteImage(getDb(c), storeId, resourceId(c));
   if (!row) throw new AppError("image_not_found", 404, "Image not found.");
+  // Tombstone best-effort (roadmap B13-L2): R2 reads fail closed on missing
+  // objects, so deleting the bytes revokes outstanding signed links. Never
+  // fails the retirement itself; skipped for non-R2 URLs and R2-less envs.
+  await tombstoneImageR2(c.env.R2, storeId, row.url);
   return ok(c, { image: row });
 }, validationHook);
 

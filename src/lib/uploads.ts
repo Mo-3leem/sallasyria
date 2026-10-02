@@ -248,6 +248,30 @@ export function r2KeyFromUrl(url: string): string | null {
   return key;
 }
 
+// Best-effort R2 tombstone for retired images (roadmap B13-L2). Deletes the
+// managed object so outstanding signed links stop resolving (the file route
+// fails closed on missing objects). Returns whether a delete was issued.
+// Never throws: tombstoning must not fail the retirement itself. Skipped
+// for non-R2 URLs (external rows have no object) and R2-less environments.
+// The derived key must live under the calling store's prefix: a row whose
+// embedded store disagrees with the path store is never deleted (defense
+// against mislabeled rows deleting a foreign store's bytes).
+export async function tombstoneImageR2(
+  r2: { delete(key: string): Promise<unknown> } | undefined | null,
+  storeId: string,
+  url: string
+): Promise<boolean> {
+  if (r2 === undefined || r2 === null) return false;
+  const key = r2KeyFromUrl(url);
+  if (key === null || !key.startsWith(`${storeId}/`)) return false;
+  try {
+    await r2.delete(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const FILE_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}$/;
 
 export function r2FileFromUrl(url: string): { storeId: string; file: string } | null {

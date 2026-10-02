@@ -553,7 +553,9 @@ export async function listImages(
     throw new AppError("product_not_found", 404, "Product not found.");
   }
   const res = await db
-    .prepare("SELECT * FROM product_images WHERE store_id = ? AND product_id = ? ORDER BY sort_order, created_at")
+    .prepare(
+      "SELECT * FROM product_images WHERE store_id = ? AND product_id = ? AND deleted_at IS NULL ORDER BY sort_order, created_at"
+    )
     .bind(storeId, productId)
     .all<ProductImageRow>();
   return res.results ?? [];
@@ -567,6 +569,20 @@ export async function getImage(
   return db
     .prepare("SELECT * FROM product_images WHERE store_id = ? AND id = ?")
     .bind(storeId, id)
+    .first<ProductImageRow>();
+}
+
+/** Managed-URL lookup for the file route's liveness gate: exact match on
+ *  the stored row (no deleted filter here — the route decides per path so
+ *  restore keeps resolving retired rows). */
+export async function getImageByUrl(
+  db: D1Database,
+  storeId: string,
+  url: string
+): Promise<ProductImageRow | null> {
+  return db
+    .prepare("SELECT * FROM product_images WHERE store_id = ? AND url = ?")
+    .bind(storeId, url)
     .first<ProductImageRow>();
 }
 
@@ -585,6 +601,9 @@ export async function updateImage(
 ): Promise<ProductImageRow | null> {
   const current = await getImage(db, storeId, id);
   if (!current) return null;
+  // Retired rows are read-only except through restore (roadmap B13-L2):
+  // the route answers its usual 404 for the null below.
+  if (current.deleted_at !== null) return null;
   const next = {
     url: patch.url ?? current.url,
     alt_text: patch.alt_text === undefined ? current.alt_text : patch.alt_text,

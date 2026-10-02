@@ -13,6 +13,7 @@ import {
   signImageUrl,
   signingSecretOrThrow,
   sniffImageMime,
+  tombstoneImageR2,
   verifyAvatarUrl,
   verifyImageUrl,
 } from "../src/lib/uploads.js";
@@ -198,5 +199,63 @@ describe("avatar references and links", () => {
     await expect(resolveAvatarUrl(avatarRefFor("user_01Jother", FILE), UID, SECRET)).resolves.toBeNull();
     await expect(resolveAvatarUrl(ref, UID, undefined)).resolves.toBeNull();
     await expect(resolveAvatarUrl(null, UID, SECRET)).resolves.toBeNull();
+  });
+});
+
+describe("tombstoneImageR2", () => {
+  it("deletes the managed object and reports true", async () => {
+    const deleted: string[] = [];
+    const fakeR2 = {
+      delete: async (key: string) => {
+        deleted.push(key);
+      },
+    };
+    const url = r2UrlFor("store_01JABC/0192abcd.png");
+    await expect(tombstoneImageR2(fakeR2, "store_01JABC", url)).resolves.toBe(true);
+    expect(deleted).toEqual(["store_01JABC/0192abcd.png"]);
+  });
+
+  it("skips non-R2 URLs without touching storage", async () => {
+    const deleted: string[] = [];
+    const fakeR2 = {
+      delete: async (key: string) => {
+        deleted.push(key);
+      },
+    };
+    await expect(tombstoneImageR2(fakeR2, "store_01JABC", "https://cdn.example.com/a.jpg")).resolves.toBe(
+      false
+    );
+    expect(deleted).toEqual([]);
+  });
+
+  it("skips missing R2 bindings", async () => {
+    const url = r2UrlFor("store_01JABC/0192abcd.png");
+    await expect(tombstoneImageR2(undefined, "store_01JABC", url)).resolves.toBe(false);
+    await expect(tombstoneImageR2(null, "store_01JABC", url)).resolves.toBe(false);
+  });
+
+  it("never throws when the delete fails", async () => {
+    const fakeR2 = {
+      delete: async (_key: string) => {
+        throw new Error("boom");
+      },
+    };
+    await expect(
+      tombstoneImageR2(fakeR2, "store_01JABC", r2UrlFor("store_01JABC/0192abcd.png"))
+    ).resolves.toBe(false);
+  });
+
+  it("never deletes a foreign store prefix", async () => {
+    const deleted: string[] = [];
+    const fakeR2 = {
+      delete: async (key: string) => {
+        deleted.push(key);
+      },
+    };
+    // Mislabeled row: embedded store disagrees with the calling store.
+    await expect(
+      tombstoneImageR2(fakeR2, "store_01JABC", r2UrlFor("store_01Jother/0192abcd.png"))
+    ).resolves.toBe(false);
+    expect(deleted).toEqual([]);
   });
 });
