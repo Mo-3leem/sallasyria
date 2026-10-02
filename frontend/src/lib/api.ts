@@ -166,6 +166,23 @@ export const authApi = {
   }) => api.post<{ reset: boolean }>("/auth/reset-password", data),
 };
 
+export interface PageMeta {
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+}
+export interface PageParams {
+  page?: number;
+  page_size?: number;
+}
+function withQuery(path: string, params: Record<string, string | number | undefined>): string {
+  const qs = Object.entries(params)
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+    .join("&");
+  return qs === "" ? path : `${path}?${qs}`;
+}
 export const storesApi = {
   /** Own stores (all stores for admins). */
   list: () => api.get<{ stores: Store[] }>("/stores"),
