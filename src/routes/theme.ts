@@ -61,7 +61,7 @@ const themeDraftSchema = z
       })
       .optional(),
     font: z.enum(["cairo", "system"]).optional(),
-    logo: z.string().max(2048).nullable().optional(),
+    logo: httpsUrl.nullable().optional(),
     header: z
       .object({
         show_name: flag.optional(),

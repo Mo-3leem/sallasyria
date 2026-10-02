@@ -176,6 +176,31 @@ describe("theme draft extended keys", () => {
     }, jarA);
     expect(bad.status).toBe(400);
   });
+
+  it("logo accepts https and null; rejects http and javascript: URLs", async () => {
+    const good = await api(`/stores/${A}/theme`, {
+      method: "PATCH",
+      body: JSON.stringify({ logo: "https://cdn.example.com/logo.png" }),
+    }, jarA);
+    expect(good.status).toBe(200);
+    expect((good.body as ThemeBody).data.theme.draft.logo).toBe("https://cdn.example.com/logo.png");
+
+    for (const badLogo of ["http://cdn.example.com/logo.png", "javascript:alert(1)"]) {
+      const bad = await api(`/stores/${A}/theme`, {
+        method: "PATCH",
+        body: JSON.stringify({ logo: badLogo }),
+      }, jarA);
+      expect(bad.status, badLogo).toBe(400);
+      expect((bad.body as { error: { code: string } }).error.code).toBe("validation_failed");
+    }
+
+    const cleared = await api(`/stores/${A}/theme`, {
+      method: "PATCH",
+      body: JSON.stringify({ logo: null }),
+    }, jarA);
+    expect(cleared.status).toBe(200);
+    expect((cleared.body as ThemeBody).data.theme.draft.logo).toBeNull();
+  });
 });
 
 describe("theme publish + public exposure", () => {
