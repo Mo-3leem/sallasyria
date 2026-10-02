@@ -21,6 +21,11 @@ export type ShopState =
 /**
  * Storefront bootstrap: slug → published store + catalog. Unknown and
  * draft slugs share the missing state (backend answers both 404).
+ *
+ * Products arrive through the cursor API: the hook walks every page so
+ * downstream consumers (category filter, checkout lookup, home sections)
+ * keep the full-catalog contract. Per-response size stays bounded by the
+ * API limit; true per-page storefront browsing is B15 discovery work.
  */
 export function useStorefront(slug: string): {
   state: ShopState;
@@ -41,28 +46,44 @@ export function useStorefront(slug: string): {
           return;
         }
         const store = resolved.data.store;
-        const [cats, prods, prof] = await Promise.all([
+        const [cats, prof] = await Promise.all([
           storefrontApi.categories(store.id),
-          storefrontApi.products(store.id),
           storefrontApi.store(store.id),
         ]);
         if (cancelled) return;
-        if (!cats.ok || !prods.ok) {
-          if (
-            (!cats.ok && getErrorCode(cats) === "store_not_found") ||
-            (!prods.ok && getErrorCode(prods) === "store_not_found")
-          ) {
+        if (!cats.ok) {
+          if (getErrorCode(cats) === "store_not_found") {
             setState({ kind: "missing" });
             return;
           }
           setState({ kind: "error", message: "تعذّر تحميل المتجر." });
           return;
         }
+        // Walk every cursor page (bounded: catalogs are small; the API
+        // caps each response regardless of total size).
+        const products: PublicProduct[] = [];
+        let cursor: string | undefined = undefined;
+        for (let page = 0; page < 50; page++) {
+          const prods = await storefrontApi.products(store.id, { cursor });
+          if (cancelled) return;
+          if (!prods.ok) {
+            if (getErrorCode(prods) === "store_not_found") {
+              setState({ kind: "missing" });
+              return;
+            }
+            setState({ kind: "error", message: "تعذّر تحميل المتجر." });
+            return;
+          }
+          products.push(...prods.data.products);
+          const next = prods.data.pagination.next_cursor;
+          if (next === null) break;
+          cursor = next;
+        }
         setState({
           kind: "ready",
           store,
           categories: cats.data.categories,
-          products: prods.data.products,
+          products,
           theme: prof.ok ? prof.data.theme : null,
         });
       } catch {

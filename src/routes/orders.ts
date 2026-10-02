@@ -8,6 +8,7 @@ import { assertNoImmutableFields, z, validationHook } from "../http/validate.js"
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { orderDocSchema, orderItemDocSchema } from "../openapi/orders.js";
 import { idParam, storeIdParam, storeIdParams } from "../openapi/params.js";
+import { pageMeta, pageMetaSchema, pageQuerySchema } from "../lib/pagination.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireActiveStore, requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
@@ -44,16 +45,22 @@ const listOrdersRoute = createRoute({
   method: "get",
   path: "/",
   summary: "List orders",
-  description: "All orders of the store, newest first.",
+  description: "Orders of the store, newest first. Paginated; optional server-side ?status= filter.",
   middleware: [...authed],
-  request: { params: storeIdParams },
+  request: {
+    params: storeIdParams,
+    query: pageQuerySchema.extend({
+      status: z.enum(["pending", "confirmed", "processing", "shipped", "delivered", "cancelled"]).optional(),
+    }),
+  },
   responses: {
     200: {
       content: {
-        "application/json": { schema: okOf(z.object({ orders: z.array(orderDocSchema) })) },
+        "application/json": { schema: okOf(z.object({ orders: z.array(orderDocSchema), pagination: pageMetaSchema })) },
       },
-      description: "Orders of the store, newest first",
+      description: "Orders of the store, newest first, with pagination metadata",
     },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid page, page size, or status" },
     401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
     404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store" },
   },
@@ -61,7 +68,16 @@ const listOrdersRoute = createRoute({
 
 orders.openapi(listOrdersRoute, async (c) => {
   const { storeId } = storeScope(c);
-  return ok(c, { orders: await listOrders(getDb(c), storeId) });
+  const query = c.req.valid("query");
+  const { orders, total } = await listOrders(getDb(c), storeId, {
+    status: query.status ?? null,
+    page: query.page,
+    pageSize: query.page_size,
+  });
+  return ok(c, {
+    orders,
+    pagination: pageMeta(total, query.page, query.page_size),
+  });
 }, validationHook);
 
 const getOrderRoute = createRoute({

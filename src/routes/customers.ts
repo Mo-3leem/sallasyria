@@ -7,6 +7,7 @@ import { ok } from "../http/respond.js";
 import { assertNoImmutableFields, z, validationHook } from "../http/validate.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { idParam, storeIdParam, storeIdParams, turnstileTokenHeader } from "../openapi/params.js";
+import { pageMeta, pageMetaSchema, pageQuerySchema } from "../lib/pagination.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireTurnstile } from "../middleware/turnstile.js";
 import { limitPublicMutations } from "../middleware/public.js";
@@ -108,16 +109,20 @@ const listCustomersRoute = createRoute({
   method: "get",
   path: "/",
   summary: "List customers",
-  description: "All customers of the store.",
+  description: "Customers of the store. Paginated.",
   middleware: [...authed],
-  request: { params: storeIdParams },
+  request: {
+    params: storeIdParams,
+    query: pageQuerySchema,
+  },
   responses: {
     200: {
       content: {
-        "application/json": { schema: okOf(z.object({ customers: z.array(customerDocSchema) })) },
+        "application/json": { schema: okOf(z.object({ customers: z.array(customerDocSchema), pagination: pageMetaSchema })) },
       },
-      description: "Customers of the store",
+      description: "Customers of the store, with pagination metadata",
     },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid page or page size" },
     401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
     404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store" },
   },
@@ -125,7 +130,15 @@ const listCustomersRoute = createRoute({
 
 customers.openapi(listCustomersRoute, async (c) => {
   const { storeId } = storeScope(c);
-  return ok(c, { customers: await listCustomers(getDb(c), storeId) });
+  const query = c.req.valid("query");
+  const { customers, total } = await listCustomers(getDb(c), storeId, {
+    page: query.page,
+    pageSize: query.page_size,
+  });
+  return ok(c, {
+    customers,
+    pagination: pageMeta(total, query.page, query.page_size),
+  });
 }, validationHook);
 
 const getCustomerRoute = createRoute({

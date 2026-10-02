@@ -176,16 +176,33 @@ export const authApi = {
 
 export type StoreStatus = "active" | "paused" | "archived";
 
+/** Merchant product lifecycle filter (mirrors the server buckets). */
+export type ProductStatusFilter = "active" | "archived" | "deleted";
+
+/** Pagination metadata for offset-paged lists (sibling of the array in `data`). */
 export interface PageMeta {
   page: number;
   page_size: number;
   total: number;
   total_pages: number;
 }
+
+/** Pagination metadata for cursor-paged lists. */
+export interface CursorMeta {
+  next_cursor: string | null;
+}
+
 export interface PageParams {
   page?: number;
   page_size?: number;
 }
+
+export interface CursorParams {
+  cursor?: string;
+  limit?: number;
+}
+
+/** Append defined query params to a path (stable key order for tests/logs). */
 function withQuery(path: string, params: Record<string, string | number | undefined>): string {
   const qs = Object.entries(params)
     .filter(([, v]) => v !== undefined)
@@ -193,6 +210,7 @@ function withQuery(path: string, params: Record<string, string | number | undefi
     .join("&");
   return qs === "" ? path : `${path}?${qs}`;
 }
+
 export const storesApi = {
   /** Own stores (all stores for admins). */
   list: () => api.get<{ stores: Store[] }>("/stores"),
@@ -296,8 +314,15 @@ export const categoriesApi = {
 };
 
 export const productsApi = {
-  list: (storeId: string) =>
-    api.get<{ products: Product[] }>(storePath(storeId, "/products")),
+  list: (storeId: string, paging?: PageParams & { q?: string; status?: ProductStatusFilter }) =>
+    api.get<{ products: Product[]; pagination: PageMeta }>(
+      withQuery(storePath(storeId, "/products"), {
+        q: paging?.q !== undefined && paging.q !== "" ? paging.q : undefined,
+        status: paging?.status,
+        page: paging?.page,
+        page_size: paging?.page_size,
+      })
+    ),
   get: (storeId: string, id: string) =>
     api.get<{ product: Product }>(
       storePath(storeId, `/products/${encodeURIComponent(id)}`)
@@ -392,8 +417,13 @@ export const productImagesApi = {
 };
 
 export const customersApi = {
-  list: (storeId: string) =>
-    api.get<{ customers: Customer[] }>(storePath(storeId, "/customers")),
+  list: (storeId: string, paging?: PageParams) =>
+    api.get<{ customers: Customer[]; pagination: PageMeta }>(
+      withQuery(storePath(storeId, "/customers"), {
+        page: paging?.page,
+        page_size: paging?.page_size,
+      })
+    ),
   get: (storeId: string, id: string) =>
     api.get<{ customer: Customer }>(
       storePath(storeId, `/customers/${encodeURIComponent(id)}`)
@@ -501,9 +531,20 @@ export const shippingRatesApi = {
 };
 
 export const ordersApi = {
-  /** All orders of the store, newest first (reads need no subscription). */
-  list: (storeId: string) =>
-    api.get<{ orders: Order[] }>(storePath(storeId, "/orders")),
+  /** Orders of the store, newest first (reads need no subscription). Paginated; optional status filter. */
+  list: (
+    storeId: string,
+    opts?: PageParams & {
+      status?: "pending" | "confirmed" | "processing" | "shipped" | "delivered" | "cancelled";
+    }
+  ) =>
+    api.get<{ orders: Order[]; pagination: PageMeta }>(
+      withQuery(storePath(storeId, "/orders"), {
+        page: opts?.page,
+        page_size: opts?.page_size,
+        status: opts?.status,
+      })
+    ),
   /** Full order with frozen item snapshots + server-computed totals. */
   get: (storeId: string, id: string) =>
     api.get<{ order: Order; items: OrderItem[] }>(
@@ -658,9 +699,12 @@ export const storefrontApi = {
     api.get<{ categories: PublicCategory[] }>(
       storePath(storeId, "/catalog/categories")
     ),
-  products: (storeId: string) =>
-    api.get<{ products: PublicProduct[] }>(
-      storePath(storeId, "/catalog/products")
+  products: (storeId: string, paging?: CursorParams) =>
+    api.get<{ products: PublicProduct[]; pagination: CursorMeta }>(
+      withQuery(storePath(storeId, "/catalog/products"), {
+        cursor: paging?.cursor,
+        limit: paging?.limit,
+      })
     ),
   checkout: (
     storeId: string,
@@ -729,7 +773,18 @@ export const billingApi = {
  */
 export const adminApi = {
   subscriptions: {
-    list: () => api.get<{ subscriptions: Subscription[] }>("/admin/subscriptions"),
+    list: (
+      opts?: PageParams & {
+        status?: "active" | "cancelled" | "expired" | "trialing";
+      }
+    ) =>
+      api.get<{ subscriptions: Subscription[]; pagination: PageMeta }>(
+        withQuery("/admin/subscriptions", {
+          page: opts?.page,
+          page_size: opts?.page_size,
+          status: opts?.status,
+        })
+      ),
     get: (id: string) =>
       api.get<{ subscription: Subscription }>(
         `/admin/subscriptions/${encodeURIComponent(id)}`
@@ -836,9 +891,13 @@ export const adminApi = {
   },
   /** Merchant account management (audited; merchants only, never admins). */
   merchants: {
-    list: (q?: string) =>
-      api.get<{ merchants: MerchantAccount[] }>(
-        `/admin/merchants${q !== undefined && q !== "" ? `?q=${encodeURIComponent(q)}` : ""}`
+    list: (q?: string, paging?: PageParams) =>
+      api.get<{ merchants: MerchantAccount[]; pagination: PageMeta }>(
+        withQuery("/admin/merchants", {
+          q: q !== undefined && q !== "" ? q : undefined,
+          page: paging?.page,
+          page_size: paging?.page_size,
+        })
       ),
     get: (id: string) =>
       api.get<{ merchant: MerchantAccount; stores: Store[] }>(
@@ -866,9 +925,13 @@ export const adminApi = {
   },
   /** Customer account management scoped to one store (audited). */
   storeCustomers: {
-    list: (storeId: string, q?: string) =>
-      api.get<{ customers: Customer[] }>(
-        `/admin/stores/${encodeURIComponent(storeId)}/customers${q !== undefined && q !== "" ? `?q=${encodeURIComponent(q)}` : ""}`
+    list: (storeId: string, q?: string, paging?: PageParams) =>
+      api.get<{ customers: Customer[]; pagination: PageMeta }>(
+        withQuery(`/admin/stores/${encodeURIComponent(storeId)}/customers`, {
+          q: q !== undefined && q !== "" ? q : undefined,
+          page: paging?.page,
+          page_size: paging?.page_size,
+        })
       ),
     get: (storeId: string, id: string) =>
       api.get<{ customer: Customer }>(
@@ -961,7 +1024,13 @@ export const buyerApi = {
     api.post<{ accepted: boolean }>(buyerPath(slug, "/forgot-password"), { identity }),
   resetPassword: (slug: string, data: { token: string; password: string }) =>
     api.post<{ reset: boolean }>(buyerPath(slug, "/reset-password"), data),
-  orders: (slug: string) => api.get<{ orders: BuyerOrderSummary[] }>(buyerPath(slug, "/orders")),
+  orders: (slug: string, paging?: CursorParams) =>
+    api.get<{ orders: BuyerOrderSummary[]; pagination: CursorMeta }>(
+      withQuery(buyerPath(slug, "/orders"), {
+        cursor: paging?.cursor,
+        limit: paging?.limit,
+      })
+    ),
   addresses: {
     list: (slug: string) => api.get<{ addresses: BuyerAddress[] }>(buyerPath(slug, "/addresses")),
     create: (slug: string, data: { recipient_name: string; phone: string; governorate: string; city?: string | null; address_line: string }) =>

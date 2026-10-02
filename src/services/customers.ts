@@ -81,12 +81,26 @@ export async function upsertCustomer(
   return row;
 }
 
-export async function listCustomers(db: D1Database, storeId: string): Promise<CustomerRow[]> {
+export interface CustomerPage {
+  customers: CustomerRow[];
+  total: number;
+}
+
+export async function listCustomers(
+  db: D1Database,
+  storeId: string,
+  opts: { page: number; pageSize: number }
+): Promise<CustomerPage> {
+  const offset = (opts.page - 1) * opts.pageSize;
   const res = await db
-    .prepare("SELECT * FROM customers WHERE store_id = ? ORDER BY created_at")
-    .bind(storeId)
+    .prepare("SELECT * FROM customers WHERE store_id = ? ORDER BY created_at, id LIMIT ? OFFSET ?")
+    .bind(storeId, opts.pageSize, offset)
     .all<CustomerRow>();
-  return res.results ?? [];
+  const counted = await db
+    .prepare("SELECT COUNT(*) AS n FROM customers WHERE store_id = ?")
+    .bind(storeId)
+    .first<{ n: number }>();
+  return { customers: res.results ?? [], total: counted?.n ?? 0 };
 }
 
 export async function getCustomer(
@@ -100,24 +114,35 @@ export async function getCustomer(
     .first<CustomerRow>();
 }
 
+export interface CustomerSearchPage {
+  customers: CustomerRow[];
+  total: number;
+}
+
 /**
  * Server-side customer search for admin tooling, strictly store-scoped.
  * Matches email (lowercased exact) or phone (canonical first, then the
- * exact typed value for legacy rows — same resolution as login). Capped
- * LIMIT: admin tooling, not a public API.
+ * exact typed value for legacy rows — same resolution as login).
+ * Offset page + filtered total from the same predicates (roadmap B11).
  */
 export async function searchCustomers(
   db: D1Database,
   storeId: string,
-  q: string | null
-): Promise<CustomerRow[]> {
+  q: string | null,
+  opts: { page: number; pageSize: number }
+): Promise<CustomerSearchPage> {
   const needle = (q ?? "").trim();
+  const offset = (opts.page - 1) * opts.pageSize;
   if (needle === "") {
     const res = await db
-      .prepare("SELECT * FROM customers WHERE store_id = ? ORDER BY created_at LIMIT 100")
-      .bind(storeId)
+      .prepare("SELECT * FROM customers WHERE store_id = ? ORDER BY created_at, id LIMIT ? OFFSET ?")
+      .bind(storeId, opts.pageSize, offset)
       .all<CustomerRow>();
-    return res.results ?? [];
+    const counted = await db
+      .prepare("SELECT COUNT(*) AS n FROM customers WHERE store_id = ?")
+      .bind(storeId)
+      .first<{ n: number }>();
+    return { customers: res.results ?? [], total: counted?.n ?? 0 };
   }
   const emailForm = needle.toLowerCase();
   let phoneForm: string | null = null;
@@ -129,11 +154,17 @@ export async function searchCustomers(
   const res = await db
     .prepare(
       `SELECT * FROM customers WHERE store_id = ? AND (email = ? OR phone = ? OR phone = ?)
-       ORDER BY created_at LIMIT 100`
+       ORDER BY created_at, id LIMIT ? OFFSET ?`
+    )
+    .bind(storeId, emailForm, phoneForm ?? needle, needle, opts.pageSize, offset)
+    .all<CustomerRow>();
+  const counted = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM customers WHERE store_id = ? AND (email = ? OR phone = ? OR phone = ?)`
     )
     .bind(storeId, emailForm, phoneForm ?? needle, needle)
-    .all<CustomerRow>();
-  return res.results ?? [];
+    .first<{ n: number }>();
+  return { customers: res.results ?? [], total: counted?.n ?? 0 };
 }
 
 export interface CustomerPatch {

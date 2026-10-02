@@ -2,6 +2,7 @@ import type { D1Database } from "@cloudflare/workers-types";
 import { AppError } from "../http/errors.js";
 import { uuidv7 } from "../lib/ids.js";
 import { touch } from "../lib/time.js";
+import { escapeLike } from "./users.js";
 
 // Catalog data access (roadmap B4). Type-level tenant boundary, same as
 // stores service: every function takes explicit (db, storeId, ...) — never a
@@ -337,12 +338,49 @@ export async function createProduct(
   return row;
 }
 
-export async function listProducts(db: D1Database, storeId: string): Promise<ProductRow[]> {
+export interface ProductPage {
+  products: ProductRow[];
+  total: number;
+}
+
+// Merchant product list (roadmap B11): store-scoped offset page with
+// filtered total from the same predicate. Ordering preserves the existing
+// oldest-first semantics with an id tie-break for page stability.
+// Optional filters: case-insensitive name substring (q) and lifecycle
+// status — active (live row), archived (retired, not business-removed),
+// deleted (business-removed). Same predicates feed the page query and the
+// COUNT, so totals always describe the filtered dataset.
+export type ProductStatusFilter = "active" | "archived" | "deleted";
+
+export async function listProducts(
+  db: D1Database,
+  storeId: string,
+  opts: { q?: string | null; status?: ProductStatusFilter | null; page: number; pageSize: number }
+): Promise<ProductPage> {
+  const args: unknown[] = [storeId];
+  let where = "WHERE store_id = ?";
+  const needle = (opts.q ?? "").trim();
+  if (needle !== "") {
+    where += " AND name LIKE ? ESCAPE '\\'";
+    args.push(`%${escapeLike(needle)}%`);
+  }
+  if (opts.status === "active") {
+    where += " AND deleted_at IS NULL AND removed_at IS NULL";
+  } else if (opts.status === "archived") {
+    where += " AND deleted_at IS NOT NULL AND removed_at IS NULL";
+  } else if (opts.status === "deleted") {
+    where += " AND removed_at IS NOT NULL";
+  }
+  const offset = (opts.page - 1) * opts.pageSize;
   const res = await db
-    .prepare("SELECT * FROM products WHERE store_id = ? ORDER BY created_at")
-    .bind(storeId)
+    .prepare(`SELECT * FROM products ${where} ORDER BY created_at, id LIMIT ? OFFSET ?`)
+    .bind(...args, opts.pageSize, offset)
     .all<ProductRow>();
-  return res.results ?? [];
+  const counted = await db
+    .prepare(`SELECT COUNT(*) AS n FROM products ${where}`)
+    .bind(...args)
+    .first<{ n: number }>();
+  return { products: res.results ?? [], total: counted?.n ?? 0 };
 }
 
 export async function getProduct(

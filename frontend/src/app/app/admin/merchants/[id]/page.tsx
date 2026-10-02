@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
-import { adminApi } from "@/lib/api";
+import { adminApi, type PageMeta } from "@/lib/api";
 import type { Customer, MerchantAccount, Store, Subscription } from "@/types/api";
 import {
   authErrorMessage,
@@ -12,8 +12,10 @@ import {
   NETWORK_ERROR_MESSAGE,
 } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
+import { usePaging } from "@/hooks/usePaging";
 import { BackButton } from "@/components/common/BackButton";
 import { EmptyState } from "@/components/common/EmptyState";
+import { Pagination } from "@/components/common/Pagination";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { TextField } from "@/components/auth/TextField";
 import { PasswordInput } from "@/components/auth/PasswordInput";
@@ -96,7 +98,9 @@ function AdminMerchantDetail({ id }: { id: string }) {
   // Customers
   const [storeId, setStoreId] = useState("");
   const [customerQuery, setCustomerQuery] = useState("");
+  const { page: customerPage, setPage: setCustomerPage } = usePaging(`${storeId}:${customerQuery}`);
   const [customers, setCustomers] = useState<Customer[] | null>(null);
+  const [customersPagination, setCustomersPagination] = useState<PageMeta | null>(null);
   const [customersLoading, setCustomersLoading] = useState(false);
 
   async function load(): Promise<{ merchant: MerchantAccount; stores: Store[] } | null> {
@@ -127,25 +131,29 @@ function AdminMerchantDetail({ id }: { id: string }) {
     }
   }
 
-  async function loadCustomers(sid: string, q: string) {
+  async function loadCustomers(sid: string, q: string, targetPage: number) {
     if (sid === "") {
       setCustomers(null);
+      setCustomersPagination(null);
       return;
     }
     setCustomersLoading(true);
     try {
-      const res = await adminApi.storeCustomers.list(sid, q.trim() === "" ? undefined : q.trim());
+      const res = await adminApi.storeCustomers.list(sid, q.trim() === "" ? undefined : q.trim(), { page: targetPage });
       if (!res.ok) {
         if (getErrorCode(res) === "unauthorized") {
           await refreshAuth();
           return;
         }
         setCustomers([]);
+        setCustomersPagination(null);
         return;
       }
       setCustomers(res.data.customers);
+      setCustomersPagination(res.data.pagination);
     } catch {
       setCustomers([]);
+      setCustomersPagination(null);
     } finally {
       setCustomersLoading(false);
     }
@@ -158,11 +166,11 @@ function AdminMerchantDetail({ id }: { id: string }) {
 
   useEffect(() => {
     const t = setTimeout(() => {
-      void loadCustomers(storeId, customerQuery);
+      void loadCustomers(storeId, customerQuery, customerPage);
     }, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeId, customerQuery]);
+  }, [storeId, customerQuery, customerPage]);
 
   useEffect(() => {
     if (blockedStores !== null) {
@@ -661,6 +669,13 @@ function AdminMerchantDetail({ id }: { id: string }) {
                   </Link>
                 ))}
               </div>
+            )}
+            {customersPagination !== null && !customersLoading && (
+              <Pagination
+                page={customersPagination.page}
+                totalPages={customersPagination.total_pages}
+                onPage={(p) => setCustomerPage(p)}
+              />
             )}
           </>
         )}

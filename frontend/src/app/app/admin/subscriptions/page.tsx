@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { adminApi, billingApi, plansApi, storesApi } from "@/lib/api";
+import { adminApi, billingApi, plansApi, storesApi, type PageMeta } from "@/lib/api";
 import {
   authErrorMessage,
   getErrorCode,
@@ -9,8 +9,10 @@ import {
 } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
 import { useStores } from "@/hooks/useStores";
+import { usePaging } from "@/hooks/usePaging";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { Pagination } from "@/components/common/Pagination";
 import { TextField } from "@/components/auth/TextField";
 import { FormError } from "@/components/auth/FormError";
 import type { Plan, Store, Subscription } from "@/types/api";
@@ -25,7 +27,7 @@ const FILTER_LABELS: Record<Filter, string> = {
 };
 
 /**
- * Admin subscriptions: list (client-side status filter), activate, cancel
+ * Admin subscriptions: list (server-side status filter), activate, cancel
  * (idempotent), renew (append-only new period). Billing is manual — price
  * and payment reference are recorded as given.
  */
@@ -33,10 +35,12 @@ export default function AdminSubscriptionsPage() {
   const { refresh: refreshAuth } = useAuth();
   const { stores } = useStores();
   const [subs, setSubs] = useState<Subscription[]>([]);
+  const [pagination, setPagination] = useState<PageMeta | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
+  const { page, setPage } = usePaging(filter);
   const [pendingCancel, setPendingCancel] = useState<Subscription | null>(null);
   const [working, setWorking] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -50,12 +54,15 @@ export default function AdminSubscriptionsPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  async function load() {
+  async function load(targetPage: number, targetFilter: Filter) {
     setLoading(true);
     setError(null);
     try {
       const [s, p] = await Promise.all([
-        adminApi.subscriptions.list(),
+        adminApi.subscriptions.list({
+          page: targetPage,
+          ...(targetFilter === "all" ? {} : { status: targetFilter }),
+        }),
         plansApi.list(),
       ]);
       for (const res of [s, p]) {
@@ -69,6 +76,7 @@ export default function AdminSubscriptionsPage() {
         return;
       }
       setSubs(s.data.subscriptions);
+      setPagination(s.data.pagination);
       if (p.ok) setPlans(p.data.plans);
     } catch {
       setError(NETWORK_ERROR_MESSAGE);
@@ -78,9 +86,9 @@ export default function AdminSubscriptionsPage() {
   }
 
   useEffect(() => {
-    load();
+    load(page, filter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [page, filter]);
 
   async function onActivate() {
     if (submitting) return;
@@ -118,7 +126,7 @@ export default function AdminSubscriptionsPage() {
       }
       setNotice(`تم التفعيل: ${res.data.subscription.id} (${res.data.subscription.status}).`);
       setReference("");
-      await load();
+      await load(page, filter);
     } catch {
       setFormError(NETWORK_ERROR_MESSAGE);
     } finally {
@@ -143,7 +151,7 @@ export default function AdminSubscriptionsPage() {
       }
       setPendingCancel(null);
       setNotice(`تم إلغاء الفترة ${sub.id}.`);
-      await load();
+      await load(page, filter);
     } catch {
       setError(NETWORK_ERROR_MESSAGE);
     } finally {
@@ -170,7 +178,7 @@ export default function AdminSubscriptionsPage() {
         return;
       }
       setNotice(`فترة جديدة: ${res.data.subscription.id}.`);
-      await load();
+      await load(page, filter);
     } catch {
       setError(NETWORK_ERROR_MESSAGE);
     } finally {
@@ -178,8 +186,9 @@ export default function AdminSubscriptionsPage() {
     }
   }
 
-  const visible =
-    filter === "all" ? subs : subs.filter((s) => s.status === filter);
+  // Server-side status filter (backend ?status=): the list below is the
+  // current page as returned, no client re-filtering.
+  const visible = subs;
   const storeName = (store: Store) => `${store.name} (${store.slug})`;
 
   return (
@@ -338,6 +347,13 @@ export default function AdminSubscriptionsPage() {
               </div>
             ))}
           </div>
+        )}
+        {pagination !== null && !loading && !error && (
+          <Pagination
+            page={pagination.page}
+            totalPages={pagination.total_pages}
+            onPage={(p) => setPage(p)}
+          />
         )}
       </div>
 

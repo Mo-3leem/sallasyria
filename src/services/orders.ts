@@ -1,4 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import { encodeCursor, type PageCursor } from "../lib/pagination.js";
 import { AppError } from "../http/errors.js";
 import { touch } from "../lib/time.js";
 import type { CheckoutItemRow, CheckoutOrderRow } from "./checkout.js";
@@ -50,18 +51,50 @@ export async function getOrder(
   return { order, items: items.results ?? [] };
 }
 
-export async function listOrders(db: D1Database, storeId: string): Promise<CheckoutOrderRow[]> {
-  const res = await db
-    .prepare(
-      `SELECT id, store_id, order_number, status, subtotal, discount, total,
+export type OrderStatusFilter =
+  | "pending"
+  | "confirmed"
+  | "processing"
+  | "shipped"
+  | "delivered"
+  | "cancelled";
+
+export interface OrderPage {
+  orders: CheckoutOrderRow[];
+  total: number;
+}
+
+const ORDER_LIST_COLUMNS = `id, store_id, order_number, status, subtotal, discount, total,
               payment_method, payment_status, payment_reference, tracking_number,
               customer_name, customer_phone, shipping_method, shipping_cost,
-              shipping_governorate, shipping_address
-         FROM orders WHERE store_id = ? ORDER BY created_at DESC`
+              shipping_governorate, shipping_address`;
+
+// Merchant order list (roadmap B11): store-scoped, optional server-side
+// status filter, deterministic newest-first ordering with id tie-break,
+// offset page + filtered total from the same predicates.
+export async function listOrders(
+  db: D1Database,
+  storeId: string,
+  opts: { status?: OrderStatusFilter | null; page: number; pageSize: number }
+): Promise<OrderPage> {
+  const args: unknown[] = [storeId];
+  let where = "WHERE store_id = ?";
+  if (opts.status != null) {
+    where += " AND status = ?";
+    args.push(opts.status);
+  }
+  const offset = (opts.page - 1) * opts.pageSize;
+  const res = await db
+    .prepare(
+      `SELECT ${ORDER_LIST_COLUMNS} FROM orders ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`
     )
-    .bind(storeId)
+    .bind(...args, opts.pageSize, offset)
     .all<CheckoutOrderRow>();
-  return res.results ?? [];
+  const counted = await db
+    .prepare(`SELECT COUNT(*) AS n FROM orders ${where}`)
+    .bind(...args)
+    .first<{ n: number }>();
+  return { orders: res.results ?? [], total: counted?.n ?? 0 };
 }
 
 export async function transitionOrderStatus(
@@ -145,22 +178,41 @@ export async function orderNotifyTarget(
   return row ?? null;
 }
 
-// Buyer order history: rows for one account only, newest first, bounded.
+export interface CustomerOrderPage {
+  orders: CheckoutOrderRow[];
+  nextCursor: string | null;
+}
+
+// Buyer order history (roadmap B11): one account only, newest first with id
+// tie-break, opaque keyset cursor. The store+customer predicates always
+// apply — the cursor positions, never authorizes.
 export async function listCustomerOrders(
   db: D1Database,
   storeId: string,
   customerId: string,
-  limit: number = 50
-): Promise<CheckoutOrderRow[]> {
+  opts: { cursor: PageCursor | null; limit: number }
+): Promise<CustomerOrderPage> {
+  const args: unknown[] = [storeId, customerId];
+  let keyset = "";
+  if (opts.cursor !== null) {
+    keyset = " AND (created_at < ? OR (created_at = ? AND id < ?))";
+    args.push(opts.cursor.c, opts.cursor.c, opts.cursor.id);
+  }
   const res = await db
     .prepare(
       `SELECT id, store_id, order_number, status, subtotal, discount, total,
               payment_method, payment_status, payment_reference, tracking_number,
               customer_name, customer_phone, shipping_method, shipping_cost,
-              shipping_governorate, shipping_address
-         FROM orders WHERE store_id = ? AND customer_id = ? ORDER BY created_at DESC LIMIT ?`
+              shipping_governorate, shipping_address, created_at
+         FROM orders WHERE store_id = ? AND customer_id = ?${keyset} ORDER BY created_at DESC, id DESC LIMIT ?`
     )
-    .bind(storeId, customerId, Math.min(Math.max(limit, 1), 100))
-    .all<CheckoutOrderRow>();
-  return res.results ?? [];
+    .bind(...args, opts.limit + 1)
+    .all<CheckoutOrderRow & { created_at: string }>();
+  const rows = res.results ?? [];
+  const page = rows.slice(0, opts.limit);
+  const nextCursor =
+    rows.length > opts.limit
+      ? encodeCursor(page[page.length - 1]!.created_at, page[page.length - 1]!.id)
+      : null;
+  return { orders: page, nextCursor };
 }

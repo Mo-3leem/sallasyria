@@ -14,6 +14,9 @@ export default function AdminOverviewPage() {
   const { refresh: refreshAuth } = useAuth();
   const [stores, setStores] = useState<Store[]>([]);
   const [subs, setSubs] = useState<Subscription[]>([]);
+  // Server-side totals (the subscriptions list is paginated; counts must
+  // come from pagination metadata, never from the loaded page length).
+  const [totals, setTotals] = useState<{ periods: number; active: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,23 +24,28 @@ export default function AdminOverviewPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [s, u] = await Promise.all([
+        const [s, u, a] = await Promise.all([
           storesApi.list(),
           adminApi.subscriptions.list(),
+          adminApi.subscriptions.list({ status: "active" }),
         ]);
         if (cancelled) return;
-        for (const res of [s, u]) {
+        for (const res of [s, u, a]) {
           if (!res.ok && isApiError(res) && res.error.code === "unauthorized") {
             await refreshAuth();
             return;
           }
         }
-        if (!s.ok || !u.ok) {
+        if (!s.ok || !u.ok || !a.ok) {
           setError("تعذّر تحميل بيانات المنصة.");
           return;
         }
         setStores(s.data.stores);
         setSubs(u.data.subscriptions);
+        setTotals({
+          periods: u.data.pagination.total,
+          active: a.data.pagination.total,
+        });
       } catch {
         if (!cancelled) setError("تعذّر الاتصال بالخادم.");
       } finally {
@@ -70,7 +78,8 @@ export default function AdminOverviewPage() {
     );
   }
 
-  const active = subs.filter((s) => s.status === "active").length;
+  const active = totals?.active ?? 0;
+  const periods = totals?.periods ?? 0;
 
   return (
     <>
@@ -84,11 +93,11 @@ export default function AdminOverviewPage() {
           title="اشتراكات نشطة"
           value={active.toLocaleString("ar-SY")}
           icon="fas fa-badge-check"
-          hint={`من أصل ${subs.length.toLocaleString("ar-SY")} فترة مسجلة`}
+          hint={`من أصل ${periods.toLocaleString("ar-SY")} فترة مسجلة`}
         />
         <StatCard
           title="فترات الاشتراك الكلية"
-          value={subs.length.toLocaleString("ar-SY")}
+          value={periods.toLocaleString("ar-SY")}
           icon="fas fa-history"
           hint="السجل تراكمي لا يُحذف"
         />

@@ -106,11 +106,54 @@ export default function DesignPage({
 
   const loadCatalog = useCallback(async () => {
     try {
-      const [cats, prods] = await Promise.all([
-        categoriesApi.list(storeId),
-        productsApi.list(storeId),
-      ]);
-      if (!cats.ok || !prods.ok) {
+      const cats = await categoriesApi.list(storeId);
+      // Products are offset-paginated: walk every page so the picker sees
+      // the complete live catalog. Termination comes from the server echo
+      // (total_pages); ids are deduplicated defensively against concurrent
+      // inserts shifting page boundaries mid-walk.
+      const seen = new Map<
+        string,
+        {
+          id: string;
+          name: string;
+          slug: string;
+          price: number;
+          stock_quantity: number | null;
+          is_active: number;
+          deleted_at: string | null;
+          removed_at: string | null;
+        }
+      >();
+      let page = 1;
+      let totalPages = 1;
+      do {
+        const prods = await productsApi.list(storeId, { page });
+        if (!prods.ok) {
+          if (getErrorCode(prods) === "unauthorized") {
+            await refreshAuth();
+            return;
+          }
+          setCatalog((c) => ({ ...c, error: true }));
+          return;
+        }
+        for (const p of prods.data.products) {
+          if (!seen.has(p.id)) {
+            seen.set(p.id, {
+              id: p.id,
+              name: p.name,
+              slug: p.slug,
+              price: p.price,
+              stock_quantity: p.stock_quantity,
+              is_active: p.is_active,
+              deleted_at: p.deleted_at,
+              removed_at: p.removed_at,
+            });
+          }
+        }
+        totalPages = prods.data.pagination.total_pages;
+        page += 1;
+      } while (page <= totalPages);
+      if (!cats.ok) {
         setCatalog((c) => ({ ...c, error: true }));
         return;
       }
@@ -118,7 +161,7 @@ export default function DesignPage({
         categories: cats.data.categories
           .filter((c) => c.is_active === 1)
           .map((c) => ({ id: c.id, name: c.name, slug: c.slug })),
-        products: prods.data.products
+        products: [...seen.values()]
           .filter((p) => p.is_active === 1 && p.deleted_at === null && p.removed_at === null)
           .map((p) => ({
             id: p.id,

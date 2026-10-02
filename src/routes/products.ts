@@ -7,6 +7,7 @@ import { ok } from "../http/respond.js";
 import { assertNoImmutableFields, z, validationHook } from "../http/validate.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { idParam, storeIdParam } from "../openapi/params.js";
+import { pageMeta, pageMetaSchema, pageQuerySchema } from "../lib/pagination.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireActiveStore, requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
@@ -82,16 +83,23 @@ const listProductsRoute = createRoute({
   method: "get",
   path: "/",
   summary: "List products",
-  description: "All products of the store, including retired ones.",
+  description: "Products of the store, including retired ones. Paginated. Optional server-side ?q= name search and ?status= lifecycle filter.",
   middleware: [...authed],
-  request: { params: z.object({ storeId: storeIdParam }) },
+  request: {
+    params: z.object({ storeId: storeIdParam }),
+    query: pageQuerySchema.extend({
+      q: z.string().max(254).optional(),
+      status: z.enum(["active", "archived", "deleted"]).optional(),
+    }),
+  },
   responses: {
     200: {
       content: {
-        "application/json": { schema: okOf(z.object({ products: z.array(productDocSchema) })) },
+        "application/json": { schema: okOf(z.object({ products: z.array(productDocSchema), pagination: pageMetaSchema })) },
       },
-      description: "Products of the store",
+      description: "Products of the store, with pagination metadata",
     },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid page, page size, search, or status" },
     401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
     404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store" },
   },
@@ -99,7 +107,17 @@ const listProductsRoute = createRoute({
 
 products.openapi(listProductsRoute, async (c) => {
   const { storeId } = storeScope(c);
-  return ok(c, { products: await listProducts(getDb(c), storeId) });
+  const query = c.req.valid("query");
+  const { products, total } = await listProducts(getDb(c), storeId, {
+    q: query.q ?? null,
+    status: query.status ?? null,
+    page: query.page,
+    pageSize: query.page_size,
+  });
+  return ok(c, {
+    products,
+    pagination: pageMeta(total, query.page, query.page_size),
+  });
 }, validationHook);
 
 const getProductRoute = createRoute({

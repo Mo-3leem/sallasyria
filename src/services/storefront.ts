@@ -1,8 +1,10 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import { encodeCursor, type PageCursor } from "../lib/pagination.js";
 
 // Public storefront reads (P2, path scheme). Iron rules:
-// - Published stores only: every query carries is_published = 1, so drafts
-//   are invisible without a separate code path that could drift.
+// - Active published stores only: every query carries is_published = 1 AND
+//   status = 'active', so drafts AND paused/archived stores are invisible
+//   without a separate code path that could drift.
 // - Published rows only: live products (deleted_at IS NULL, is_active = 1),
 //   active categories. Retired/hidden rows never leave the server.
 // - No PII, no prices beyond the published row itself, no auth required.
@@ -47,7 +49,7 @@ export async function getPublicStore(
 ): Promise<PublicStore | null> {
   return db
     .prepare(
-      "SELECT id, slug, name, currency FROM stores WHERE id = ? AND is_published = 1"
+      "SELECT id, slug, name, currency FROM stores WHERE id = ? AND is_published = 1 AND status = 'active'"
     )
     .bind(storeId)
     .first<PublicStore>();
@@ -79,20 +81,64 @@ export async function listPublishedProducts(
     )
     .bind(storeId)
     .all<Omit<PublicProduct, "images">>();
-  const products = res.results ?? [];
+  return attachImages(db, storeId, res.results ?? []);
+}
+export interface PublishedProductPage {
+  products: PublicProduct[];
+  nextCursor: string | null;
+}
+
+// Cursor page over the published catalog (roadmap B11): deterministic
+// (name, id) ordering with id tie-break, opaque keyset cursor. The store
+// predicate always applies — the cursor positions, never authorizes.
+// Images attach per page exactly like the full listing above.
+export async function listPublishedProductsPage(
+  db: D1Database,
+  storeId: string,
+  opts: { cursor: PageCursor | null; limit: number }
+): Promise<PublishedProductPage> {
+  const args: unknown[] = [storeId];
+  let keyset = "";
+  if (opts.cursor !== null) {
+    keyset = " AND (name > ? OR (name = ? AND id > ?))";
+    args.push(opts.cursor.c, opts.cursor.c, opts.cursor.id);
+  }
+  const res = await db
+    .prepare(
+      `SELECT id, category_id, name, slug, price, stock_quantity FROM products
+        WHERE store_id = ? AND deleted_at IS NULL AND is_active = 1${keyset}
+        ORDER BY name, id LIMIT ?`
+    )
+    .bind(...args, opts.limit + 1)
+    .all<Omit<PublicProduct, "images">>();
+  const rows = res.results ?? [];
+  const page = rows.slice(0, opts.limit);
+  const nextCursor =
+    rows.length > opts.limit
+      ? encodeCursor(page[page.length - 1]!.name, page[page.length - 1]!.id)
+      : null;
+  return { products: await attachImages(db, storeId, page), nextCursor };
+}
+
+async function attachImages(
+  db: D1Database,
+  storeId: string,
+  products: Omit<PublicProduct, "images">[]
+): Promise<PublicProduct[]> {
   if (products.length === 0) return [];
   // Live gallery rows only (retired images stay merchant-private), ordered
   // with the same sort_order/created_at rule as the merchant image list.
   // Attached strictly to the published products above, so images of
   // retired/hidden products can never leak through this payload.
   const liveIds = new Set(products.map((p) => p.id));
+  const placeholders = products.map(() => "?").join(",");
   const imgs = await db
     .prepare(
       `SELECT id, product_id, url, alt_text, sort_order FROM product_images
-        WHERE store_id = ? AND deleted_at IS NULL
+        WHERE store_id = ? AND deleted_at IS NULL AND product_id IN (${placeholders})
         ORDER BY sort_order, created_at`
     )
-    .bind(storeId)
+    .bind(storeId, ...products.map((p) => p.id))
     .all<PublicProductImage & { product_id: string }>();
   const byProduct = new Map<string, PublicProductImage[]>();
   for (const img of imgs.results ?? []) {

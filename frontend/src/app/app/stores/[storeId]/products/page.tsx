@@ -2,23 +2,25 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { categoriesApi, productsApi } from "@/lib/api";
+import { categoriesApi, productsApi, type PageMeta } from "@/lib/api";
 import {
   authErrorMessage,
   getErrorCode,
   NETWORK_ERROR_MESSAGE,
 } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
+import { usePaging } from "@/hooks/usePaging";
 import { EmptyState } from "@/components/common/EmptyState";
 import { BackButton } from "@/components/common/BackButton";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { Pagination } from "@/components/common/Pagination";
 import type { Category, Product } from "@/types/api";
 
 type LoadState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
   | { kind: "missing" }
-  | { kind: "ready"; products: Product[]; categories: Category[] };
+  | { kind: "ready"; products: Product[]; categories: Category[]; pagination: PageMeta };
 
 /** Store products (live + retired), retire/restore inline. */
 export default function ProductsPage({
@@ -36,16 +38,24 @@ export default function ProductsPage({
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "archived" | "deleted">("all");
   const [pendingDelete, setPendingDelete] = useState<Product | null>(null);
+  // Search/filter reset paging via resetKey below; both are applied
+  // server-side, so the loaded items are used directly (no client filter).
+  const { page, setPage } = usePaging(`${storeId}:${query}:${statusFilter}`);
 
   const base = `/app/stores/${encodeURIComponent(storeId)}`;
 
-  async function load() {
+  async function load(targetPage: number) {
     setState({ kind: "loading" });
     setActionError(null);
     setActionNotice(null);
+    const trimmed = query.trim();
     try {
       const [prods, cats] = await Promise.all([
-        productsApi.list(storeId),
+        productsApi.list(storeId, {
+          page: targetPage,
+          ...(trimmed === "" ? {} : { q: trimmed }),
+          ...(statusFilter === "all" ? {} : { status: statusFilter }),
+        }),
         categoriesApi.list(storeId),
       ]);
       for (const res of [prods, cats]) {
@@ -69,6 +79,7 @@ export default function ProductsPage({
         kind: "ready",
         products: prods.data.products,
         categories: cats.ok ? cats.data.categories : [],
+        pagination: prods.data.pagination,
       });
     } catch {
       setState({ kind: "error", message: NETWORK_ERROR_MESSAGE });
@@ -76,9 +87,9 @@ export default function ProductsPage({
   }
 
   useEffect(() => {
-    load();
+    load(page);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeId]);
+  }, [storeId, page, query, statusFilter]);
 
   function subGate(): boolean {
     setActionError(
@@ -100,7 +111,7 @@ export default function ProductsPage({
           return;
         }
         if (code === "store_not_found" || code === "product_not_found") {
-          await load();
+          await load(page);
           return;
         }
         if (code === "subscription_inactive") {
@@ -112,7 +123,7 @@ export default function ProductsPage({
       }
       setPendingRetire(null);
       setActionNotice(`تمت أرشفة «${product.name}» — رابطه أصبح متاحاً لمنتج آخر.`);
-      await load();
+      await load(page);
     } catch {
       setActionError(NETWORK_ERROR_MESSAGE);
     } finally {
@@ -133,7 +144,7 @@ export default function ProductsPage({
           return;
         }
         if (code === "store_not_found" || code === "product_not_found") {
-          await load();
+          await load(page);
           return;
         }
         if (code === "subscription_inactive") {
@@ -151,7 +162,7 @@ export default function ProductsPage({
         return;
       }
       setActionNotice(`تمت استعادة «${product.name}».`);
-      await load();
+      await load(page);
     } catch {
       setActionError(NETWORK_ERROR_MESSAGE);
     } finally {
@@ -172,7 +183,7 @@ export default function ProductsPage({
           return;
         }
         if (code === "store_not_found" || code === "product_not_found") {
-          await load();
+          await load(page);
           return;
         }
         if (code === "subscription_inactive") {
@@ -184,7 +195,7 @@ export default function ProductsPage({
       }
       setPendingDelete(null);
       setActionNotice(`تم حذف «${product.name}» من الكتالوج — بيانات الطلبات السابقة محفوظة.`);
-      await load();
+      await load(page);
     } catch {
       setActionError(NETWORK_ERROR_MESSAGE);
     } finally {
@@ -195,24 +206,14 @@ export default function ProductsPage({
   const categoryName = (categories: Category[], id: string | null) =>
     id === null ? "بدون تصنيف" : (categories.find((c) => c.id === id)?.name ?? "—");
 
-  // Client-side search + status filter over the already-loaded list (no extra
-  // API calls). Active = live row; archived = retired (deleted_at set,
+  // Search + status arrive already filtered from the server (see load).
+  // The subdivisions below only group the server response for section
+  // display: active = live row; archived = retired (deleted_at set,
   // removed_at unset); deleted = business-removed (removed_at set).
   const readyProducts = state.kind === "ready" ? state.products : [];
-  const needle = query.trim().toLowerCase();
-  const matched = readyProducts.filter(
-    (p) =>
-      (statusFilter === "all" ||
-        (statusFilter === "active"
-          ? p.deleted_at === null && p.removed_at === null
-          : statusFilter === "archived"
-            ? p.deleted_at !== null && p.removed_at === null
-            : p.removed_at !== null)) &&
-      (needle === "" || p.name.toLowerCase().includes(needle))
-  );
-  const activeVisible = matched.filter((p) => p.deleted_at === null && p.removed_at === null);
-  const archivedVisible = matched.filter((p) => p.deleted_at !== null && p.removed_at === null);
-  const deletedVisible = matched.filter((p) => p.removed_at !== null);
+  const activeVisible = readyProducts.filter((p) => p.deleted_at === null && p.removed_at === null);
+  const archivedVisible = readyProducts.filter((p) => p.deleted_at !== null && p.removed_at === null);
+  const deletedVisible = readyProducts.filter((p) => p.removed_at !== null);
   const showActiveSection = statusFilter !== "archived" && statusFilter !== "deleted" && activeVisible.length > 0;
   const showArchivedSection =
     statusFilter !== "active" && statusFilter !== "deleted" && archivedVisible.length > 0;
@@ -359,7 +360,7 @@ export default function ProductsPage({
             title="تعذّر تحميل المنتجات"
             description={state.message}
             action={
-              <button type="button" className="btn btn-outline" onClick={load}>
+              <button type="button" className="btn btn-outline" onClick={() => load(page)}>
                 إعادة المحاولة
               </button>
             }
@@ -420,7 +421,7 @@ export default function ProductsPage({
                 إضافة منتج
               </Link>
             </div>
-            {matched.length === 0 ? (
+            {readyProducts.length === 0 ? (
               <EmptyState
                 icon="fas fa-search"
                 title="لا توجد منتجات مطابقة للفلاتر الحالية."
@@ -492,6 +493,13 @@ export default function ProductsPage({
               </>
             )}
               </>
+            )}
+            {state.kind === "ready" && (
+              <Pagination
+                page={state.pagination.page}
+                totalPages={state.pagination.total_pages}
+                onPage={(p) => setPage(p)}
+              />
             )}
           </>
         )}

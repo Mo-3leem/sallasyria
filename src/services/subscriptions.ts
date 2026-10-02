@@ -87,6 +87,43 @@ export async function getSubscription(
     .first<SubscriptionRow>();
 }
 
+export type SubscriptionStatusFilter = "active" | "cancelled" | "expired" | "trialing";
+
+export interface SubscriptionPage {
+  subscriptions: SubscriptionRow[];
+  total: number;
+}
+
+// Admin subscription directory (roadmap B11): optional store scope and
+// server-side status filter, deterministic newest-first ordering with id
+// tie-break, offset page + filtered total from the same predicates.
+export async function listSubscriptionsPage(
+  db: D1Database,
+  opts: { storeId?: string | null; status?: SubscriptionStatusFilter | null; page: number; pageSize: number }
+): Promise<SubscriptionPage> {
+  const args: unknown[] = [];
+  const clauses: string[] = [];
+  if (opts.storeId != null) {
+    clauses.push("store_id = ?");
+    args.push(opts.storeId);
+  }
+  if (opts.status != null) {
+    clauses.push("status = ?");
+    args.push(opts.status);
+  }
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  const offset = (opts.page - 1) * opts.pageSize;
+  const res = await db
+    .prepare(`SELECT * FROM subscriptions ${where} ORDER BY starts_at DESC, id DESC LIMIT ? OFFSET ?`)
+    .bind(...args, opts.pageSize, offset)
+    .all<SubscriptionRow>();
+  const counted = await db
+    .prepare(`SELECT COUNT(*) AS n FROM subscriptions ${where}`)
+    .bind(...args)
+    .first<{ n: number }>();
+  return { subscriptions: res.results ?? [], total: counted?.n ?? 0 };
+}
+
 export async function listSubscriptions(
   db: D1Database,
   storeId?: string

@@ -8,6 +8,7 @@ import { ok } from "../http/respond.js";
 import { assertNoImmutableFields, z, validationHook } from "../http/validate.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { idParam, turnstileTokenHeader } from "../openapi/params.js";
+import { cursorMetaSchema, cursorQuerySchema, decodeCursor } from "../lib/pagination.js";
 import { GOVERNORATES } from "../lib/governorates.js";
 import { PASSWORD_RULES } from "../lib/password.js";
 import {
@@ -467,18 +468,34 @@ const historyRoute = createRoute({
   method: "get",
   path: "/:slug/account/orders",
   summary: "Buyer order history",
-  description: "Orders for this account only, newest first, bounded.",
+  description: "Orders for this account only, newest first. Cursor pages; pass the returned next_cursor for the next page.",
   middleware: [...authed],
-  request: { params: slugParams },
+  request: {
+    params: slugParams,
+    query: cursorQuerySchema,
+  },
   responses: {
-    200: { content: { "application/json": { schema: okOf(z.object({ orders: z.array(z.object({ id: z.string(), order_number: z.number(), status: z.string(), payment_status: z.string(), total: z.number() })) })) } }, description: "History" },
+    200: { content: { "application/json": { schema: okOf(z.object({ orders: z.array(z.object({ id: z.string(), order_number: z.number(), status: z.string(), payment_status: z.string(), total: z.number() })), pagination: cursorMetaSchema })) } }, description: "History with cursor metadata" },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid cursor or limit" },
     401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
   },
 });
 
 buyer.openapi(historyRoute, async (c) => {
   const { storeId } = storeScope(c);
-  const orders = await listCustomerOrders(getDb(c), storeId, currentBuyer(c).id);
+  const query = c.req.valid("query");
+  let cursor = null;
+  if (query.cursor !== undefined) {
+    const decoded = decodeCursor(query.cursor);
+    if (decoded === null) {
+      throw new AppError("invalid_cursor", 400, "Cursor is not valid.");
+    }
+    cursor = decoded;
+  }
+  const { orders, nextCursor } = await listCustomerOrders(getDb(c), storeId, currentBuyer(c).id, {
+    cursor,
+    limit: query.limit,
+  });
   return ok(c, {
     orders: orders.map((o) => ({
       id: o.id,
@@ -487,6 +504,7 @@ buyer.openapi(historyRoute, async (c) => {
       payment_status: o.payment_status,
       total: o.total,
     })),
+    pagination: { next_cursor: nextCursor },
   });
 }, validationHook);
 

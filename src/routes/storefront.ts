@@ -7,6 +7,7 @@ import { ok } from "../http/respond.js";
 import { z, validationHook } from "../http/validate.js";
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { storeIdParam } from "../openapi/params.js";
+import { cursorMetaSchema, cursorQuerySchema, decodeCursor } from "../lib/pagination.js";
 import { limitPublicMutations } from "../middleware/public.js";
 import {
   resolvePublishedStore,
@@ -15,7 +16,7 @@ import {
 import {
   getPublicStore,
   listPublishedCategories,
-  listPublishedProducts,
+  listPublishedProductsPage,
 } from "../services/storefront.js";
 import { getTheme } from "../services/theme.js";
 
@@ -169,16 +170,21 @@ const productsRoute = createRoute({
   path: "/:storeId/catalog/products",
   summary: "Published products",
   description:
-    "Live, active products only (retired and hidden rows never serialize). Drafts 404.",
+    "Live, active products only (retired and hidden rows never serialize). Drafts 404. " +
+    "Cursor pages in name order with id tie-break; pass the returned next_cursor for the next page.",
   middleware: [resolvePublishedStore, limitPublicMutations],
-  request: { params: z.object({ storeId: storeIdParam }) },
+  request: {
+    params: z.object({ storeId: storeIdParam }),
+    query: cursorQuerySchema,
+  },
   responses: {
     200: {
       content: {
-        "application/json": { schema: okOf(z.object({ products: z.array(publicProductSchema) })) },
+        "application/json": { schema: okOf(z.object({ products: z.array(publicProductSchema), pagination: cursorMetaSchema })) },
       },
-      description: "Published products",
+      description: "Published products with cursor metadata",
     },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid cursor or limit" },
     404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown or draft store" },
     429: { content: { "application/json": { schema: failEnvelope } }, description: "Rate limited" },
   },
@@ -186,5 +192,21 @@ const productsRoute = createRoute({
 
 storefront.openapi(productsRoute, async (c) => {
   const { storeId } = storeScope(c);
-  return ok(c, { products: await listPublishedProducts(getDb(c), storeId) });
+  const query = c.req.valid("query");
+  let cursor = null;
+  if (query.cursor !== undefined) {
+    const decoded = decodeCursor(query.cursor);
+    if (decoded === null) {
+      throw new AppError("invalid_cursor", 400, "Cursor is not valid.");
+    }
+    cursor = decoded;
+  }
+  const { products, nextCursor } = await listPublishedProductsPage(getDb(c), storeId, {
+    cursor,
+    limit: query.limit,
+  });
+  return ok(c, {
+    products,
+    pagination: { next_cursor: nextCursor },
+  });
 }, validationHook);

@@ -2,23 +2,25 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { customersApi } from "@/lib/api";
+import { customersApi, type PageMeta } from "@/lib/api";
 import {
   authErrorMessage,
   getErrorCode,
   NETWORK_ERROR_MESSAGE,
 } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
+import { usePaging } from "@/hooks/usePaging";
 import { EmptyState } from "@/components/common/EmptyState";
 import { BackButton } from "@/components/common/BackButton";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { Pagination } from "@/components/common/Pagination";
 import type { Customer } from "@/types/api";
 
 type LoadState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
   | { kind: "missing" }
-  | { kind: "ready"; customers: Customer[] };
+  | { kind: "ready"; customers: Customer[]; pagination: PageMeta };
 
 /**
  * Store customers (merchant-private reads; creation is a public buyer
@@ -32,6 +34,7 @@ export default function CustomersPage({
 }) {
   const { storeId } = params;
   const { refresh: refreshAuth } = useAuth();
+  const { page, setPage } = usePaging(storeId);
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [pendingDelete, setPendingDelete] = useState<Customer | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -40,12 +43,12 @@ export default function CustomersPage({
 
   const base = `/app/stores/${encodeURIComponent(storeId)}`;
 
-  async function load() {
+  async function load(targetPage: number) {
     setState({ kind: "loading" });
     setActionError(null);
     setActionNotice(null);
     try {
-      const res = await customersApi.list(storeId);
+      const res = await customersApi.list(storeId, { page: targetPage });
       if (!res.ok) {
         if (getErrorCode(res) === "unauthorized") {
           await refreshAuth();
@@ -61,16 +64,16 @@ export default function CustomersPage({
         });
         return;
       }
-      setState({ kind: "ready", customers: res.data.customers });
+      setState({ kind: "ready", customers: res.data.customers, pagination: res.data.pagination });
     } catch {
       setState({ kind: "error", message: NETWORK_ERROR_MESSAGE });
     }
   }
 
   useEffect(() => {
-    load();
+    load(page);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeId]);
+  }, [storeId, page]);
 
   async function doDelete(customer: Customer) {
     setDeleting(true);
@@ -85,7 +88,7 @@ export default function CustomersPage({
           return;
         }
         if (code === "store_not_found" || code === "customer_not_found") {
-          await load();
+          await load(page);
           return;
         }
         if (code === "subscription_inactive") {
@@ -104,7 +107,7 @@ export default function CustomersPage({
       }
       setPendingDelete(null);
       setActionNotice(`تم حذف «${customer.name}».`);
-      await load();
+      await load(page);
     } catch {
       setActionError(NETWORK_ERROR_MESSAGE);
     } finally {
@@ -154,7 +157,7 @@ export default function CustomersPage({
             title="تعذّر تحميل العملاء"
             description={state.message}
             action={
-              <button type="button" className="btn btn-outline" onClick={load}>
+              <button type="button" className="btn btn-outline" onClick={() => load(page)}>
                 إعادة المحاولة
               </button>
             }
@@ -210,6 +213,13 @@ export default function CustomersPage({
               </div>
             ))}
           </div>
+        )}
+        {state.kind === "ready" && (
+          <Pagination
+            page={state.pagination.page}
+            totalPages={state.pagination.total_pages}
+            onPage={(p) => setPage(p)}
+          />
         )}
       </div>
 

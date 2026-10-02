@@ -19,6 +19,7 @@ import {
   cancelSubscription,
   getSubscription,
   listSubscriptions,
+  listSubscriptionsPage,
   renewSubscription,
   subscriptionNotifyTarget,
 } from "../services/subscriptions.js";
@@ -109,25 +110,38 @@ const listSubscriptionsRoute = createRoute({
   method: "get",
   path: "/subscriptions",
   summary: "List all subscriptions",
-  description: "Platform admin only, audited. Filter by ?status=active|expired|cancelled.",
+  description: "Platform admin only, audited. Optional server-side ?status= filter. Paginated.",
   middleware: [...authedAdmin],
+  request: {
+    query: pageQuerySchema.extend({
+      status: z.enum(["active", "cancelled", "expired", "trialing"]).optional(),
+    }),
+  },
   responses: {
     200: {
       content: {
-        "application/json": { schema: okOf(z.object({ subscriptions: z.array(subscriptionDocSchema) })) },
+        "application/json": { schema: okOf(z.object({ subscriptions: z.array(subscriptionDocSchema), pagination: pageMetaSchema })) },
       },
-      description: "All subscriptions, newest first (admin)",
+      description: "Subscriptions, newest first, with pagination metadata",
     },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid page, page size, or status" },
     401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
     403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
   },
 });
 
 admin.openapi(listSubscriptionsRoute, async (c) => {
-  // No store filter: admin counts are small at MVP and every query-param
-  // filter is a future tenant-confusion surface. Client filters instead.
+  const query = c.req.valid("query");
+  const { subscriptions, total } = await listSubscriptionsPage(getDb(c), {
+    status: query.status ?? null,
+    page: query.page,
+    pageSize: query.page_size,
+  });
   await auditEvent(c, getDb(c), "admin.subscriptions.read", { actor: currentUser(c).id, result: "ok" });
-  return ok(c, { subscriptions: await listSubscriptions(getDb(c)) });
+  return ok(c, {
+    subscriptions,
+    pagination: pageMeta(total, query.page, query.page_size),
+  });
 }, validationHook);
 
 const activateSchema = z.object({
@@ -554,27 +568,37 @@ const listMerchantsRoute = createRoute({
   summary: "List/search merchants",
   description:
     "Platform admin only. Merchants only (admin accounts never list). " +
-    "Optional ?q= prefix-matches email (case-insensitive) or phone (any common formatting); capped result set.",
+    "Optional ?q= prefix-matches email (case-insensitive) or phone (any common formatting). Paginated.",
   middleware: [...authedAdmin],
   request: {
-    query: z.object({ q: z.string().max(254).optional() }),
+    query: pageQuerySchema.extend({
+      q: z.string().max(254).optional(),
+    }),
   },
   responses: {
     200: {
       content: {
-        "application/json": { schema: okOf(z.object({ merchants: z.array(merchantDocSchema) })) },
+        "application/json": { schema: okOf(z.object({ merchants: z.array(merchantDocSchema), pagination: pageMetaSchema })) },
       },
-      description: "Matching merchants, newest first",
+      description: "Matching merchants, newest first, with pagination metadata",
     },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid page or page size" },
     401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
     403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
   },
 });
 
 admin.openapi(listMerchantsRoute, async (c) => {
-  const q = c.req.valid("query").q ?? null;
+  const query = c.req.valid("query");
+  const { merchants, total } = await searchMerchants(getDb(c), query.q ?? null, {
+    page: query.page,
+    pageSize: query.page_size,
+  });
   await auditEvent(c, getDb(c), "admin.merchants.read", { actor: currentUser(c).id, result: "ok" });
-  return ok(c, { merchants: await searchMerchants(getDb(c), q) });
+  return ok(c, {
+    merchants,
+    pagination: pageMeta(total, query.page, query.page_size),
+  });
 }, validationHook);
 
 const getMerchantRoute = createRoute({
@@ -805,19 +829,22 @@ const listStoreCustomersRoute = createRoute({
   path: "/stores/:storeId/customers",
   summary: "List/search a store's customers",
   description:
-    "Platform admin only. Store-scoped; optional ?q= matches email or phone. Capped result set.",
+    "Platform admin only. Store-scoped; optional ?q= matches email or phone. Paginated.",
   middleware: [...authedAdmin],
   request: {
     params: z.object({ storeId: storeIdParam }),
-    query: z.object({ q: z.string().max(254).optional() }),
+    query: pageQuerySchema.extend({
+      q: z.string().max(254).optional(),
+    }),
   },
   responses: {
     200: {
       content: {
-        "application/json": { schema: okOf(z.object({ customers: z.array(customerDocSchema) })) },
+        "application/json": { schema: okOf(z.object({ customers: z.array(customerDocSchema), pagination: pageMetaSchema })) },
       },
-      description: "Matching customers",
+      description: "Matching customers, with pagination metadata",
     },
+    400: { content: { "application/json": { schema: failEnvelope } }, description: "Invalid page or page size" },
     401: { content: { "application/json": { schema: failEnvelope } }, description: "Unauthenticated" },
     403: { content: { "application/json": { schema: failEnvelope } }, description: "Admin only" },
     404: { content: { "application/json": { schema: failEnvelope } }, description: "Unknown store" },
@@ -826,9 +853,16 @@ const listStoreCustomersRoute = createRoute({
 
 admin.openapi(listStoreCustomersRoute, async (c) => {
   const { storeId } = await storeScopeAdmin(c);
-  const q = c.req.valid("query").q ?? null;
+  const query = c.req.valid("query");
+  const { customers, total } = await searchCustomers(getDb(c), storeId, query.q ?? null, {
+    page: query.page,
+    pageSize: query.page_size,
+  });
   await auditEvent(c, getDb(c), "admin.customers.read", { actor: currentUser(c).id, store: storeId, result: "ok" });
-  return ok(c, { customers: await searchCustomers(getDb(c), storeId, q) });
+  return ok(c, {
+    customers,
+    pagination: pageMeta(total, query.page, query.page_size),
+  });
 }, validationHook);
 
 const getStoreCustomerRoute = createRoute({

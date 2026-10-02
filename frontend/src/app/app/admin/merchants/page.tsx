@@ -3,27 +3,34 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import { adminApi } from "@/lib/api";
+import { adminApi, type PageMeta } from "@/lib/api";
 import type { MerchantAccount } from "@/types/api";
 import { authErrorMessage, getErrorCode } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
+import { usePaging } from "@/hooks/usePaging";
 import { EmptyState } from "@/components/common/EmptyState";
+import { Pagination } from "@/components/common/Pagination";
 
 /** Admin merchants: search by email or phone, open merchant details. */
 function AdminMerchantsBody({ initialQuery }: { initialQuery: string }) {
   const { refresh: refreshAuth } = useAuth();
   const [query, setQuery] = useState(initialQuery);
+  const { page, setPage } = usePaging(query);
   const [merchants, setMerchants] = useState<MerchantAccount[] | null>(null);
+  const [pagination, setPagination] = useState<PageMeta | null>(null);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function load(q: string, initial: boolean) {
+  async function load(q: string, targetPage: number, initial: boolean) {
     if (initial) setLoading(true);
     else setSearching(true);
     setError(null);
     try {
-      const res = await adminApi.merchants.list(q.trim() === "" ? undefined : q.trim());
+      const res = await adminApi.merchants.list(
+        q.trim() === "" ? undefined : q.trim(),
+        { page: targetPage }
+      );
       if (!res.ok) {
         if (getErrorCode(res) === "unauthorized") {
           await refreshAuth();
@@ -31,12 +38,15 @@ function AdminMerchantsBody({ initialQuery }: { initialQuery: string }) {
         }
         setError(authErrorMessage(res, 400));
         setMerchants([]);
+        setPagination(null);
         return;
       }
       setMerchants(res.data.merchants);
+      setPagination(res.data.pagination);
     } catch {
       setError("تعذّر الاتصال بالخادم.");
       setMerchants([]);
+      setPagination(null);
     } finally {
       setLoading(false);
       setSearching(false);
@@ -45,11 +55,11 @@ function AdminMerchantsBody({ initialQuery }: { initialQuery: string }) {
 
   useEffect(() => {
     const t = setTimeout(() => {
-      void load(query, merchants === null);
+      void load(query, page, merchants === null);
     }, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
+  }, [query, page]);
 
   const detailHref = (m: MerchantAccount) =>
     query.trim() === ""
@@ -61,9 +71,9 @@ function AdminMerchantsBody({ initialQuery }: { initialQuery: string }) {
       <div className="shell-page-head">
         <h1>
           التجار
-          {merchants !== null && !loading && (
+          {pagination !== null && !loading && (
             <span className="sub-badge sub-badge-unknown" style={{ marginInlineStart: 10 }}>
-              {merchants.length.toLocaleString("ar-SY")}
+              {pagination.total.toLocaleString("ar-SY")}
             </span>
           )}
         </h1>
@@ -104,8 +114,8 @@ function AdminMerchantsBody({ initialQuery }: { initialQuery: string }) {
             ? "جاري التحميل..."
             : searching
               ? "جاري البحث..."
-              : merchants !== null
-                ? `عدد النتائج: ${merchants.length.toLocaleString("ar-SY")}`
+              : pagination !== null
+                ? `عدد النتائج: ${pagination.total.toLocaleString("ar-SY")}`
                 : ""}
         </p>
 
@@ -120,7 +130,7 @@ function AdminMerchantsBody({ initialQuery }: { initialQuery: string }) {
             title="تعذّر تحميل التجار"
             description={error}
             action={
-              <button type="button" className="btn btn-outline" onClick={() => void load(query, true)}>
+              <button type="button" className="btn btn-outline" onClick={() => void load(query, page, true)}>
                 إعادة المحاولة
               </button>
             }
@@ -146,8 +156,7 @@ function AdminMerchantsBody({ initialQuery }: { initialQuery: string }) {
           )
         ) : (
           <div className="shell-stack">
-            {(merchants ?? []).map((m) => {
-              const active = (m.is_active ?? 1) === 1;
+            {(merchants ?? []).map((m) => {              const active = (m.is_active ?? 1) === 1;
               return (
                 <Link
                   key={m.id}
@@ -180,6 +189,13 @@ function AdminMerchantsBody({ initialQuery }: { initialQuery: string }) {
               );
             })}
           </div>
+        )}
+        {pagination !== null && !loading && !error && (
+          <Pagination
+            page={pagination.page}
+            totalPages={pagination.total_pages}
+            onPage={(p) => setPage(p)}
+          />
         )}
       </div>
     </>

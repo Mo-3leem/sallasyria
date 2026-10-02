@@ -2,22 +2,34 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ordersApi } from "@/lib/api";
+import { ordersApi, type PageMeta } from "@/lib/api";
 import { getErrorCode, NETWORK_ERROR_MESSAGE } from "@/lib/auth-errors";
 import { useAuth } from "@/hooks/useAuth";
+import { usePaging } from "@/hooks/usePaging";
 import {
+  ORDER_STATUS_LABELS,
   orderStatusLabel,
   paymentStatusLabel,
 } from "@/lib/orders";
 import { EmptyState } from "@/components/common/EmptyState";
 import { BackButton } from "@/components/common/BackButton";
+import { Pagination } from "@/components/common/Pagination";
 import type { Order } from "@/types/api";
+
+type OrderStatusFilter =
+  | ""
+  | "pending"
+  | "confirmed"
+  | "processing"
+  | "shipped"
+  | "delivered"
+  | "cancelled";
 
 type LoadState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
   | { kind: "missing" }
-  | { kind: "ready"; orders: Order[] };
+  | { kind: "ready"; orders: Order[]; pagination: PageMeta };
 
 /** Store orders, newest first (read-only list; transitions live on detail). */
 export default function OrdersPage({
@@ -27,14 +39,19 @@ export default function OrdersPage({
 }) {
   const { storeId } = params;
   const { refresh: refreshAuth } = useAuth();
+  const [status, setStatus] = useState<OrderStatusFilter>("");
+  const { page, setPage } = usePaging(`${storeId}:${status}`);
   const [state, setState] = useState<LoadState>({ kind: "loading" });
 
   const base = `/app/stores/${encodeURIComponent(storeId)}`;
 
-  async function load() {
+  async function load(targetPage: number) {
     setState({ kind: "loading" });
     try {
-      const res = await ordersApi.list(storeId);
+      const res = await ordersApi.list(storeId, {
+        page: targetPage,
+        ...(status === "" ? {} : { status }),
+      });
       if (!res.ok) {
         if (getErrorCode(res) === "unauthorized") {
           await refreshAuth();
@@ -50,16 +67,16 @@ export default function OrdersPage({
         });
         return;
       }
-      setState({ kind: "ready", orders: res.data.orders });
+      setState({ kind: "ready", orders: res.data.orders, pagination: res.data.pagination });
     } catch {
       setState({ kind: "error", message: NETWORK_ERROR_MESSAGE });
     }
   }
 
   useEffect(() => {
-    load();
+    load(page);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeId]);
+  }, [storeId, status, page]);
 
   return (
     <>
@@ -67,6 +84,23 @@ export default function OrdersPage({
       <div className="shell-page-head">
         <h1>الطلبات</h1>
         <p>طلبات متجرك من الأحدث — التفاصيل والتحويلات من صفحة الطلب.</p>
+      </div>
+
+      <div className="shell-card" style={{ marginBottom: 16 }}>
+        <label className="auth-field" style={{ marginBottom: 0 }}>
+          <span>تصفية حسب الحالة</span>
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value as OrderStatusFilter)}
+          >
+            <option value="">الكل</option>
+            {(Object.keys(ORDER_STATUS_LABELS) as Exclude<OrderStatusFilter, "">[]).map((s) => (
+              <option key={s} value={s}>
+                {ORDER_STATUS_LABELS[s]}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       <div className="shell-card">
@@ -91,7 +125,7 @@ export default function OrdersPage({
             title="تعذّر تحميل الطلبات"
             description={state.message}
             action={
-              <button type="button" className="btn btn-outline" onClick={load}>
+              <button type="button" className="btn btn-outline" onClick={() => load(page)}>
                 إعادة المحاولة
               </button>
             }
@@ -129,6 +163,15 @@ export default function OrdersPage({
               </Link>
             ))}
           </div>
+        )}
+        {state.kind === "ready" && (
+          <Pagination
+            page={state.pagination.page}
+            totalPages={state.pagination.total_pages}
+            onPage={(p) => {
+              setPage(p);
+            }}
+          />
         )}
       </div>
     </>

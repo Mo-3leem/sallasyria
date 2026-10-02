@@ -121,7 +121,7 @@ export interface MerchantPatch {
 }
 
 /** Escape user input for a LIKE pattern (wildcards match literally). */
-function escapeLike(value: string): string {
+export function escapeLike(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
 
@@ -133,18 +133,29 @@ function escapeLike(value: string): string {
  * prefixes also hit canonical rows. Empty query lists everything (newest
  * first). Capped LIMIT: admin tooling, not a public API.
  */
+export interface MerchantPage {
+  merchants: UserPublic[];
+  total: number;
+}
+
 export async function searchMerchants(
   db: D1Database,
-  q: string | null
-): Promise<UserPublic[]> {
+  q: string | null,
+  opts: { page: number; pageSize: number }
+): Promise<MerchantPage> {
   const needle = (q ?? "").trim();
+  const offset = (opts.page - 1) * opts.pageSize;
   if (needle === "") {
     const res = await db
       .prepare(
-        "SELECT id, phone, email, name, role, email_verified, avatar_url FROM users WHERE role = 'merchant' ORDER BY created_at DESC LIMIT 100"
+        "SELECT id, phone, email, name, role, email_verified, avatar_url FROM users WHERE role = 'merchant' ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
       )
+      .bind(opts.pageSize, offset)
       .all<UserPublic>();
-    return res.results ?? [];
+    const counted = await db
+      .prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'merchant'")
+      .first<{ n: number }>();
+    return { merchants: res.results ?? [], total: counted?.n ?? 0 };
   }
   const emailLike = `${escapeLike(needle.toLowerCase())}%`;
   const rawLike = `${escapeLike(needle)}%`;
@@ -160,13 +171,21 @@ export async function searchMerchants(
        WHERE role = 'merchant'
          AND (email LIKE ? ESCAPE '\\' OR phone LIKE ? ESCAPE '\\'
               OR phone LIKE ? ESCAPE '\\')
-       ORDER BY created_at DESC LIMIT 100`
+       ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`
+    )
+    .bind(emailLike, rawLike, canonicalLike, opts.pageSize, offset)
+    .all<UserPublic>();
+  const counted = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM users
+       WHERE role = 'merchant'
+         AND (email LIKE ? ESCAPE '\\' OR phone LIKE ? ESCAPE '\\'
+              OR phone LIKE ? ESCAPE '\\')`
     )
     .bind(emailLike, rawLike, canonicalLike)
-    .all<UserPublic>();
-  return res.results ?? [];
+    .first<{ n: number }>();
+  return { merchants: res.results ?? [], total: counted?.n ?? 0 };
 }
-
 
 export interface UserDirectoryPage {
   users: UserPublic[];
@@ -230,6 +249,7 @@ export async function searchUsers(
     .first<{ n: number }>();
   return { users: res.results ?? [], total: counted?.n ?? 0 };
 }
+
 export async function getMerchantPublic(
   db: D1Database,
   id: string

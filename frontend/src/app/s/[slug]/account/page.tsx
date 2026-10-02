@@ -64,6 +64,9 @@ function AccountBody({ slug }: { slug: string }) {
   const { buyerFor, refresh, logout, updateName } = useBuyer();
   const buyer = buyerFor(slug);
   const [orders, setOrders] = useState<BuyerOrderSummary[] | null>(null);
+  const [ordersCursor, setOrdersCursor] = useState<string | null>(null);
+  const [ordersMore, setOrdersMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [addresses, setAddresses] = useState<BuyerAddress[] | null>(null);
   const [ordersError, setOrdersError] = useState(false);
   const [addressesError, setAddressesError] = useState(false);
@@ -86,15 +89,21 @@ function AccountBody({ slug }: { slug: string }) {
     }
     setName(buyer.name);
     setOrders(null);
+    setOrdersCursor(null);
+    setOrdersMore(false);
     setAddresses(null);
     setOrdersError(false);
     setAddressesError(false);
     let live = true;
+    // Cursor pages accumulate: first page on load, older pages on demand.
     buyerApi.orders(slug).then(
       (res) => {
         if (!live) return;
-        if (res.ok) setOrders(res.data.orders);
-        else setOrdersError(true);
+        if (res.ok) {
+          setOrders(res.data.orders);
+          setOrdersCursor(res.data.pagination.next_cursor);
+          setOrdersMore(res.data.pagination.next_cursor !== null);
+        } else setOrdersError(true);
       },
       () => {
         if (live) setOrdersError(true);
@@ -156,6 +165,25 @@ function AccountBody({ slug }: { slug: string }) {
   async function onLogout() {
     await logout(slug);
     router.replace(`/s/${encodeURIComponent(slug)}`);
+  }
+
+  async function onLoadMoreOrders() {
+    if (loadingMore || ordersCursor === null || orders === null) return;
+    setLoadingMore(true);
+    try {
+      const res = await buyerApi.orders(slug, { cursor: ordersCursor });
+      if (!res.ok) {
+        setOrdersError(true);
+        return;
+      }
+      setOrders([...orders, ...res.data.orders]);
+      setOrdersCursor(res.data.pagination.next_cursor);
+      setOrdersMore(res.data.pagination.next_cursor !== null);
+    } catch {
+      setOrdersError(true);
+    } finally {
+      setLoadingMore(false);
+    }
   }
 
   function onRetry() {
@@ -381,6 +409,18 @@ function AccountBody({ slug }: { slug: string }) {
                     </div>
                   </article>
                 ))}
+              </div>
+            )}
+            {ordersMore && orders !== null && orders.length > 0 && (
+              <div style={{ marginTop: 12, textAlign: "center" }}>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  disabled={loadingMore}
+                  onClick={onLoadMoreOrders}
+                >
+                  {loadingMore ? "جاري التحميل..." : "عرض طلبات أقدم"}
+                </button>
               </div>
             )}
           </section>
