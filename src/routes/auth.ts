@@ -25,6 +25,13 @@ import {
   issueEmailToken,
   redeemEmailToken,
 } from "../services/email-tokens.js";
+import {
+  clearLoginThrottle,
+  clearLoginThrottleForUser,
+  getLoginThrottle,
+  isLoginLocked,
+  recordLoginFailure,
+} from "../services/login-throttle.js";
 import { buildEmailChangeNotice, buildResetEmail, buildResetSuccessEmail, buildVerificationEmail, dispatchMail, sendMail } from "../services/mail.js";
 import { normalizeEmail } from "../lib/email.js";
 import { normalizePhone } from "../lib/phone.js";
@@ -57,7 +64,7 @@ import {
 import { touch } from "../lib/time.js";
 import { requireTurnstile } from "../middleware/turnstile.js";
 import { appUrl } from "../env.js";
-import { checkEmailChangeLimit, checkLoginRateLimit, checkPublicFileLimit, checkPwChangeLimit, checkRegisterRateLimit, checkResendPubAccountLimit, checkUploadAvatarLimit, clientIp, loginFailCount, loginFailKey, LOGIN_FAIL_CHALLENGE_AFTER, loginRateLimitKey, recordLoginFailure, registerRateLimitKey, resetLoginFailures } from "../lib/rate-limit.js";
+import { checkEmailChangeLimit, checkLoginRateLimit, checkPublicFileLimit, checkPwChangeLimit, checkRegisterRateLimit, checkResendPubAccountLimit, checkUploadAvatarLimit, clientIp, loginFailKey, LOGIN_FAIL_CHALLENGE_AFTER, loginRateLimitKey, registerRateLimitKey } from "../lib/rate-limit.js";
 import {
   currentSessionId,
   currentUser,
@@ -526,6 +533,17 @@ auth.openapi(resetPasswordRoute, async (c) => {
   } else {
     await setPasswordHash(getDb(c), claimed.userId, hashPassword(input.new_password), now);
   }
+  // Fresh credential, fresh slate: a rotation proves account control, so any
+  // brute-force throttle on this account's identities is cleared. Best
+  // effort — hygiene must never fail a completed reset.
+  try {
+    const rotated = await getUserPublic(getDb(c), claimed.userId);
+    if (rotated) {
+      await clearLoginThrottleForUser(getDb(c), rotated);
+    }
+  } catch {
+    // Throttle hygiene never fails a password reset.
+  }
   // Confirmation notice, best-effort like every other send in this file.
   try {
     const account = await getUserPublic(getDb(c), claimed.userId);
@@ -614,7 +632,8 @@ const loginRoute = createRoute({
     "Verifies credentials and mints one opaque server-side session returned as an HttpOnly cookie. " +
     "The identity is an email (contains @) or a phone number (Syrian shapes, any common formatting). " +
     "Unknown identity, inactive account, and wrong password all return an identical 401. " +
-    "After repeated failed passwords for one identity, a Turnstile challenge is required first. " +
+    "After repeated failed passwords for one identity, a Turnstile challenge is required first; " +
+    "after 10 consecutive failures the account locks for 15 minutes (generic 429 while locked, even with a valid challenge token). " +
     "Correct credentials on an unverified email return 403 email_not_verified — verify first, then log in.",
   request: {
     body: { content: { "application/json": { schema: loginSchema } } },
@@ -654,8 +673,8 @@ auth.openapi(loginRoute, async (c) => {
   const isEmail = trimmed.includes("@");
   // Canonical identity for the rate-limit bucket (pure functions only, so
   // this runs before any database read, exactly like the old email key).
-  // Un-normalizable phones share one "invalid-phone" bucket per IP rather
-  // than 400ing, so malformed input reveals nothing about any account.
+  // Un-normalizable phones never 400 here, so malformed input reveals
+  // nothing about any account.
   let canonical: string | null = null;
   if (isEmail) {
     canonical = normalizeEmail(trimmed);
@@ -671,19 +690,39 @@ auth.openapi(loginRoute, async (c) => {
     throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
   }
 
-  // Brute-force escalation (B4): after LOGIN_FAIL_CHALLENGE_AFTER consecutive
-  // wrong passwords for one canonical identity, require a Turnstile challenge
-  // BEFORE checking credentials, so the challenge reveals nothing about
-  // account existence (unknown identities accumulate identically). Reuses the
-  // standard middleware verbatim: missing token 400s, bad token 403s,
-  // misconfigured production 503s, dev without secret passes through.
-  // Never a lockout — the base 10/10min limiter above still applies.
-  const failKey = loginFailKey(canonical ?? "invalid-phone");
-  if (loginFailCount(failKey) >= LOGIN_FAIL_CHALLENGE_AFTER) {
+  // Brute-force escalation (B4): the failure count below is persistent
+  // (D1-backed, survives restarts and isolates). After
+  // LOGIN_FAIL_CHALLENGE_AFTER consecutive wrong passwords for one canonical
+  // identity, require a Turnstile challenge BEFORE checking credentials, so
+  // the challenge reveals nothing about account existence (unknown identities
+  // accumulate identically). Reuses the standard middleware verbatim: missing
+  // token 400s, bad token 403s, misconfigured production 503s, dev without
+  // secret passes through. At LOGIN_LOCKOUT_AFTER the same counter
+  // establishes a 15-minute lockout (generic 429 while locked).
+  // Malformed identities are throttled per client IP, not globally: the
+  // persisted key carries only a SHA-256 of the IP (same "hash at rest"
+  // convention as the resend/forgot account buckets — the raw IP is never
+  // stored or logged; clientIp() is the trusted representation already used
+  // by the login rate limiter above). Real identities keep their canonical
+  // key. Enumeration behavior is unchanged: every malformed shape lands in
+  // its IP's bucket before any account lookup, exactly like unknown
+  // accounts accumulate under their own keys.
+  const failKey =
+    canonical !== null
+      ? loginFailKey(canonical)
+      : loginFailKey(`invalid-phone:${await hashEmailToken(clientIp(c))}`);
+  const db = getDb(c);
+  // Locked identities stop here: same generic 429 as the IP limiter above,
+  // no credential check (correct passwords included), no Turnstile bypass,
+  // and the lock is never extended — nothing is recorded on this path.
+  if (await isLoginLocked(db, failKey)) {
+    throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
+  }
+  const throttle = await getLoginThrottle(db, failKey);
+  if (throttle.fails >= LOGIN_FAIL_CHALLENGE_AFTER) {
     await requireTurnstile()(c, async () => {});
   }
 
-  const db = getDb(c);
   let user: UserRow | null = null;
   if (canonical !== null) {
     user =
@@ -704,14 +743,27 @@ auth.openapi(loginRoute, async (c) => {
   const passwordOk = verifyPassword(password, hashToCheck);
   if (user === null || user.is_active !== 1 || !passwordOk) {
     // Wrong password (unknown, inactive, and mismatched accounts share this
-    // path by design): count the failure toward challenge escalation, then
-    // answer the identical 401. Successes reset below.
-    recordLoginFailure(failKey);
+    // path by design): persist the failure toward challenge escalation and
+    // lockout, then answer the identical 401. The 10th consecutive failure
+    // establishes the lockout as a side effect; this response stays 401.
+    // Successes reset below.
+    await recordLoginFailure(db, failKey);
     throw new AppError("invalid_credentials", 401, "Invalid email/phone or password.");
   }
   // Password proven (even when the verified-gate 403s below): the account is
-  // not being guessed, so clear its failure count.
-  resetLoginFailures(failKey);
+  // not being guessed, so clear its throttle row entirely.
+  await clearLoginThrottle(db, failKey);
+  // Legacy fallback logins resolve under the shared per-IP invalid-phone
+  // bucket (no canonical key exists for them), so also clear this account's
+  // own rows: hygiene must not depend on which spelling proved the
+  // password. Best effort — throttle hygiene never fails a login.
+  if (canonical === null) {
+    try {
+      await clearLoginThrottleForUser(db, user);
+    } catch {
+      // Throttle hygiene never fails a login.
+    }
+  }
   // Verification gate (policy): correct credentials alone do not authenticate
   // until the email is verified. Ordered AFTER the password check so wrong
   // passwords keep the identical 401 (no verified-state oracle); a correct
@@ -1376,5 +1428,12 @@ auth.openapi(changePasswordRoute, async (c) => {
     );
   }
   await getDb(c).batch(statements);
+  // Rotation proves account control: clear any brute-force throttle on this
+  // account's identities. Best effort — hygiene never fails a rotation.
+  try {
+    await clearLoginThrottleForUser(getDb(c), user);
+  } catch {
+    // Throttle hygiene never fails a password change.
+  }
   return ok(c, { changed: true });
 }, validationHook);

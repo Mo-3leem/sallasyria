@@ -13,17 +13,14 @@ import {
   checkUploadAvatarLimit,
   checkUploadProductLimit,
   checkWebhookIpLimit,
-  loginFailCount,
   loginFailKey,
   LOGIN_FAIL_CHALLENGE_AFTER,
   loginRateLimitKey,
   LOGIN_RATE_LIMIT,
-  recordLoginFailure,
   registerRateLimitKey,
   resetBillingIntentLimit,
   resetDocsLimit,
   resetEmailChangeLimit,
-  resetLoginFailures,
   resetLoginRateLimit,
   resetPreviewLimit,
   resetPublicFileLimit,
@@ -113,35 +110,22 @@ describe("public resend account limiting", () => {
   });
 });
 
-describe("login failure counter (brute-force escalation)", () => {
-  it("starts at zero and thresholds at five", () => {
+describe("login failure key and challenge threshold (brute-force escalation)", () => {
+  it("threshold is five and keys stay namespaced per identity", () => {
     expect(LOGIN_FAIL_CHALLENGE_AFTER).toBe(5);
-    const key = loginFailKey(`counter-user-${Date.now()}@example.com`);
-    expect(loginFailCount(key)).toBe(0);
-  });
-
-  it("increments per failure and resets on success", () => {
-    const key = loginFailKey(`counter-reset-${Date.now()}@example.com`);
-    recordLoginFailure(key);
-    recordLoginFailure(key);
-    expect(loginFailCount(key)).toBe(2);
-    resetLoginFailures(key);
-    expect(loginFailCount(key)).toBe(0);
+    // Key format is stable: the persistent throttle (login-throttle
+    // service) and any log readers share this exact namespace.
+    expect(loginFailKey("user@example.com")).toBe("login-fail:user@example.com");
+    expect(loginFailKey("invalid-phone")).toBe("login-fail:invalid-phone");
   });
 
   it("isolates identities and never touches the login bucket", () => {
     const stamp = Date.now();
     const a = loginFailKey(`counter-iso-a-${stamp}@example.com`);
     const b = loginFailKey(`counter-iso-b-${stamp}@example.com`);
-    for (let i = 0; i < LOGIN_FAIL_CHALLENGE_AFTER; i++) {
-      recordLoginFailure(a);
-    }
-    expect(loginFailCount(a)).toBe(LOGIN_FAIL_CHALLENGE_AFTER);
-    expect(loginFailCount(b)).toBe(0);
+    expect(a).not.toBe(b);
     // Same identity string in the login bucket is a different namespace.
     expect(checkLoginRateLimit(`login:127.0.0.1:counter-iso-a-${stamp}@example.com`, 4_000_000)).toBe(true);
-    resetLoginFailures(a);
-    expect(loginFailCount(a)).toBe(0);
   });
 });
 

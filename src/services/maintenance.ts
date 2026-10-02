@@ -1,6 +1,7 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import type { Env } from "../env.js";
 import { dispatchMail, sendMail } from "./mail.js";
+import { LOGIN_THROTTLE_RETENTION_MS } from "./login-throttle.js";
 import { buildSubscriptionEmail, enqueueMail } from "./mail-outbox.js";
 
 // Scheduled hygiene (roadmap B7). Three bounded purges keep tables that would
@@ -49,10 +50,23 @@ export async function purgeAuditLog(db: D1Database, cutoffIsoValue: string): Pro
   return res.meta.changes ?? 0;
 }
 
+// Stale login-throttle rows (roadmap B4). Any row untouched this long is
+// necessarily past its lockout window, so purging can never lift an active
+// lock or hide an ongoing attack — it only bounds table growth from ghost
+// identities and abandoned counters.
+export async function purgeLoginThrottle(db: D1Database, cutoffIsoValue: string): Promise<number> {
+  const res = await db
+    .prepare("DELETE FROM login_throttle WHERE updated_at < ?")
+    .bind(cutoffIsoValue)
+    .run();
+  return res.meta.changes ?? 0;
+}
+
 export interface MaintenanceSummary {
   sessionsPurged: number;
   idempotencyKeysPurged: number;
   auditPurged: number;
+  loginThrottlePurged: number;
   trialNoticesQueued: number;
 }
 
@@ -94,6 +108,7 @@ export async function runScheduledMaintenance(env: Env, nowMs: number = Date.now
   const sessionsPurged = await purgeSessions(env.DB, cutoffIso(nowMs, SESSION_RETENTION_MS));
   const idempotencyKeysPurged = await purgeIdempotencyKeys(env.DB, cutoffIso(nowMs, IDEMPOTENCY_RETENTION_MS));
   const auditPurged = await purgeAuditLog(env.DB, cutoffIso(nowMs, AUDIT_RETENTION_MS));
+  const loginThrottlePurged = await purgeLoginThrottle(env.DB, cutoffIso(nowMs, LOGIN_THROTTLE_RETENTION_MS));
   let trialNoticesQueued = 0;
   try {
     const trials = await scanTrialExpiries(env.DB, nowMs);
@@ -123,7 +138,7 @@ export async function runScheduledMaintenance(env: Env, nowMs: number = Date.now
     // Trial notices never fail maintenance.
   }
   console.log(
-    `maintenance sessions_purged=${sessionsPurged} idempotency_purged=${idempotencyKeysPurged} audit_purged=${auditPurged} trial_notices=${trialNoticesQueued}`
+    `maintenance sessions_purged=${sessionsPurged} idempotency_purged=${idempotencyKeysPurged} audit_purged=${auditPurged} login_throttle_purged=${loginThrottlePurged} trial_notices=${trialNoticesQueued}`
   );
-  return { sessionsPurged, idempotencyKeysPurged, auditPurged, trialNoticesQueued };
+  return { sessionsPurged, idempotencyKeysPurged, auditPurged, loginThrottlePurged, trialNoticesQueued };
 }
