@@ -424,6 +424,36 @@ export async function getRate(
     .first<ShippingRateRow>();
 }
 
+// Public storefront reads (roadmap B13-L4): only active rates of published
+// stores. Both predicates live in the query so the helpers are safe even
+// where middleware scoping differs; routes additionally mount
+// resolvePublishedStore (identical 404s either way).
+export async function listPublicRates(db: D1Database, storeId: string): Promise<ShippingRateRow[]> {
+  const res = await db
+    .prepare(
+      `SELECT * FROM shipping_rates WHERE store_id = ? AND is_active = 1
+       AND EXISTS (SELECT 1 FROM stores WHERE id = ? AND is_published = 1)
+       ORDER BY governorate`
+    )
+    .bind(storeId, storeId)
+    .all<ShippingRateRow>();
+  return res.results ?? [];
+}
+
+export async function getPublicRate(
+  db: D1Database,
+  storeId: string,
+  id: string
+): Promise<ShippingRateRow | null> {
+  return db
+    .prepare(
+      `SELECT * FROM shipping_rates WHERE store_id = ? AND id = ? AND is_active = 1
+       AND EXISTS (SELECT 1 FROM stores WHERE id = ? AND is_published = 1)`
+    )
+    .bind(storeId, id, storeId)
+    .first<ShippingRateRow>();
+}
+
 export interface ShippingRatePatch {
   shipping_method?: string;
   cost?: number;

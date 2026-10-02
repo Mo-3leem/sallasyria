@@ -168,9 +168,9 @@ function CheckoutBody(props: {
   }, [signature]);
 
   // Public delivery rates for quoting shipping in the order summary.
-  // Reads are public by design (backend: scopedRead); mutations stay
-  // merchant-private. Rates are cached; governorate switches recompute
-  // locally without refetching.
+  // Reads are public by design (backend: published/active-only reads);
+  // mutations stay merchant-private. Rates are cached; governorate switches
+  // recompute locally without refetching.
   const [rates, setRates] = useState<ShippingRate[] | null>(null);
   const [ratesError, setRatesError] = useState(false);
   const [ratesKey, setRatesKey] = useState(0);
@@ -179,7 +179,7 @@ function CheckoutBody(props: {
     let live = true;
     setRates(null);
     setRatesError(false);
-    shippingRatesApi.list(storeId).then(
+    shippingRatesApi.published(storeId).then(
       (res) => {
         if (!live) return;
         if (res.ok) setRates(res.data.rates);

@@ -501,6 +501,13 @@ export const shippingRatesApi = {
     api.get<{ rate: ShippingRate }>(
       storePath(storeId, `/shipping-rates/${encodeURIComponent(id)}`)
     ),
+  /** Public storefront reads: active rates of published stores only. */
+  published: (storeId: string) =>
+    api.get<{ rates: ShippingRate[] }>(storePath(storeId, "/shipping-rates/published")),
+  publishedGet: (storeId: string, id: string) =>
+    api.get<{ rate: ShippingRate }>(
+      storePath(storeId, `/shipping-rates/published/${encodeURIComponent(id)}`)
+    ),
   create: (
     storeId: string,
     data: {

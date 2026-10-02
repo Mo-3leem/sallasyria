@@ -462,10 +462,11 @@ describe("B5 addresses: session ownership + atomic default swap", () => {
   });
 });
 
-describe("B5 shipping rates: public reads, gated merchant writes", () => {
-  it("reads are public and scoped; writes need auth", async () => {
-    const listed = await api(`${A}/shipping-rates`);
+describe("B5 shipping rates: merchant reads need auth, public reads use published paths", () => {
+  it("reads are merchant-authed; writes need auth", async () => {
+    const listed = await api(`${A}/shipping-rates`, {}, jarA);
     expect(listed.status).toBe(200);
+    expect((await api(`${A}/shipping-rates`)).status).toBe(401);
     expect((await api(`${A}/shipping-rates`, { method: "POST", body: JSON.stringify({}) })).status).toBe(401);
   });
 
@@ -510,7 +511,7 @@ describe("B5 shipping rates: public reads, gated merchant writes", () => {
       body: JSON.stringify({ governorate: "Homs", shipping_method: "X", cost: 1 }),
     }, jarA);
     expect(expired.status).toBe(403);
-    expect((await api(`${EXP}/shipping-rates`)).status).toBe(200);
+    expect((await api(`${EXP}/shipping-rates`, {}, jarA)).status).toBe(200);
   });
 });
 

@@ -9,12 +9,14 @@ import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { idParam, storeIdParam, storeIdParams } from "../openapi/params.js";
 import { GOVERNORATES } from "../lib/governorates.js";
 import { requireAuth } from "../middleware/auth.js";
-import { requireActiveStore, requireStoreAccess, resolveStore } from "../middleware/store.js";
+import { requireActiveStore, requireStoreAccess, resolvePublishedStore, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
 import {
   createRate,
   deleteRate,
+  getPublicRate,
   getRate,
+  listPublicRates,
   listRates,
   updateRate,
 } from "../services/customers.js";
@@ -24,13 +26,13 @@ export const shippingRates = new OpenAPIHono<AppEnv>();
 // NOTE (type-level boundary): zero SQL strings here; scoping only from
 // storeScope(c). Enforced by tests/tenant-conventions.test.ts.
 //
-// PUBLIC / PRIVATE SPLIT: rates carry no secrets and the storefront needs
-// them to quote delivery, so both reads are PUBLIC (scoped by path store,
-// server-resolved as always). All mutations stay merchant-private + gated.
+// PUBLIC / PRIVATE SPLIT (roadmap B13-L4): merchant reads stay
+// authenticated with full visibility (inactive rates included, so edit and
+// reactivate flows keep working); storefront reads use the dedicated
+// /published paths below (active rates of published stores only).
 
 const authed = [requireAuth, resolveStore, requireStoreAccess] as const;
 const merchantMutating = [...authed, requireActiveSubscription, requireActiveStore] as const;
-const scopedRead = [resolveStore] as const;
 
 const flag = z.union([z.literal(0), z.literal(1)]);
 
@@ -66,16 +68,20 @@ const idParams = z.object({ storeId: storeIdParam, id: idParam });
 const listRatesRoute = createRoute({
   method: "get",
   path: "/",
-  summary: "List delivery rates",
-  description: "Public price list: per-governorate delivery fee for the storefront.",
-  middleware: [...scopedRead],
+  summary: "List delivery rates (merchant)",
+  description: "Full rate list including inactive rows, for merchant management. Owner or admin only.",
+  middleware: [...authed],
   request: { params: storeIdParams },
   responses: {
     200: {
       content: {
         "application/json": { schema: okOf(z.object({ rates: z.array(rateDocSchema) })) },
       },
-      description: "Delivery rates of the store (public)",
+      description: "Delivery rates of the store (all rows)",
+    },
+    401: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Unauthenticated",
     },
     404: {
       content: { "application/json": { schema: failEnvelope } },
@@ -89,17 +95,47 @@ shippingRates.openapi(listRatesRoute, async (c) => {
   return ok(c, { rates: await listRates(getDb(c), storeId) });
 }, validationHook);
 
+const publicListRatesRoute = createRoute({
+  method: "get",
+  path: "/published",
+  summary: "List delivery rates (public)",
+  description: "Public price list: active rates of published stores only, for storefront quoting.",
+  middleware: [resolvePublishedStore],
+  request: { params: storeIdParams },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: okOf(z.object({ rates: z.array(rateDocSchema) })) },
+      },
+      description: "Active delivery rates of the published store",
+    },
+    404: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Unknown or unpublished store",
+    },
+  },
+});
+
+shippingRates.openapi(publicListRatesRoute, async (c) => {
+  const { storeId } = storeScope(c);
+  return ok(c, { rates: await listPublicRates(getDb(c), storeId) });
+}, validationHook);
+
 const getRateRoute = createRoute({
   method: "get",
   path: "/:id",
-  summary: "Get one delivery rate",
-  description: "404 for an unknown store or rate.",
-  middleware: [...scopedRead],
+  summary: "Get one delivery rate (merchant)",
+  description: "Full visibility including inactive rows. 404 for an unknown store or rate.",
+  middleware: [...authed],
   request: { params: idParams },
   responses: {
     200: {
       content: { "application/json": { schema: rateOkSchema } },
-      description: "The rate (public)",
+      description: "The rate",
+    },
+    401: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Unauthenticated",
     },
     404: {
       content: { "application/json": { schema: failEnvelope } },
@@ -111,6 +147,32 @@ const getRateRoute = createRoute({
 shippingRates.openapi(getRateRoute, async (c) => {
   const { storeId } = storeScope(c);
   const row = await getRate(getDb(c), storeId, resourceId(c));
+  if (!row) throw new AppError("rate_not_found", 404, "Shipping rate not found.");
+  return ok(c, { rate: row });
+}, validationHook);
+
+const publicGetRateRoute = createRoute({
+  method: "get",
+  path: "/published/:id",
+  summary: "Get one delivery rate (public)",
+  description: "Active rates of published stores only; anything else is 404, identical to unknown.",
+  middleware: [resolvePublishedStore],
+  request: { params: idParams },
+  responses: {
+    200: {
+      content: { "application/json": { schema: rateOkSchema } },
+      description: "The rate (public)",
+    },
+    404: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Unknown, unpublished, or inactive rate",
+    },
+  },
+});
+
+shippingRates.openapi(publicGetRateRoute, async (c) => {
+  const { storeId } = storeScope(c);
+  const row = await getPublicRate(getDb(c), storeId, resourceId(c));
   if (!row) throw new AppError("rate_not_found", 404, "Shipping rate not found.");
   return ok(c, { rate: row });
 }, validationHook);
