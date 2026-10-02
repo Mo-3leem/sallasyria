@@ -186,12 +186,14 @@ export interface StorePatch {
   name?: string;
   slug?: string;
   currency?: string;
+  status?: "active" | "paused" | "archived";
 }
 
 // General store-settings update (PATCH /stores/:storeId). Whitelist =
-// { name, slug, currency } enforced by the route's zod schema plus its
-// immutable-field guard (id/owner_id/store_id/status/order_counter/
-// created_at never reach here). Slug is globally unique: an unchanged slug
+// { name, slug, currency, status } enforced by the route's zod schema plus
+// its immutable-field guard (id/owner_id/store_id/order_counter/created_at
+// never reach here). Status is constrained to the schema CHECK values by
+// the route's enum validation. Slug is globally unique: an unchanged slug
 // is a no-op, a taken slug is a 409 pre-check, and the UNIQUE index stays
 // the race backstop (pattern mirrors createStore above).
 export async function updateStore(
@@ -206,6 +208,7 @@ export async function updateStore(
     name: patch.name ?? current.name,
     slug: patch.slug ?? current.slug,
     currency: patch.currency ?? current.currency,
+    status: patch.status ?? current.status,
   };
   if (next.slug !== current.slug) {
     const clash = await db
@@ -216,8 +219,8 @@ export async function updateStore(
   }
   try {
     await db
-      .prepare("UPDATE stores SET name = ?, slug = ?, currency = ?, updated_at = ? WHERE id = ?")
-      .bind(next.name, next.slug, next.currency, nowIso, storeId)
+      .prepare("UPDATE stores SET name = ?, slug = ?, currency = ?, status = ?, updated_at = ? WHERE id = ?")
+      .bind(next.name, next.slug, next.currency, next.status, nowIso, storeId)
       .run();
   } catch (err) {
     const text = err instanceof Error ? err.message : String(err);

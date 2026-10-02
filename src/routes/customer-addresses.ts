@@ -10,7 +10,7 @@ import { idParam, storeIdParam, storeIdParams } from "../openapi/params.js";
 import { GOVERNORATES } from "../lib/governorates.js";
 import { requireAuth, tryAuthenticate } from "../middleware/auth.js";
 import { limitPublicMutations } from "../middleware/public.js";
-import { requireStoreAccess, resolveStore } from "../middleware/store.js";
+import { requireActiveStore, requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
 import {
   createAddress,
@@ -37,7 +37,7 @@ export const customerAddresses = new OpenAPIHono<AppEnv>();
 // the single-default rule has exactly one writer.
 
 const authed = [requireAuth, resolveStore, requireStoreAccess] as const;
-const merchantMutating = [...authed, requireActiveSubscription] as const;
+const merchantMutating = [...authed, requireActiveSubscription, requireActiveStore] as const;
 const scoped = [resolveStore, limitPublicMutations] as const;
 
 const addressSchema = z.object({

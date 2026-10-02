@@ -10,6 +10,9 @@ import {
   checkPwChangeLimit,
   checkRegisterRateLimit,
   checkResendPubAccountLimit,
+  checkSelfDeleteLimit,
+  checkStatusChangeLimit,
+  checkStoreDeleteLimit,
   checkUploadAvatarLimit,
   checkUploadProductLimit,
   checkWebhookIpLimit,
@@ -27,6 +30,9 @@ import {
   resetPwChangeLimit,
   resetRegisterRateLimit,
   resetResendPubAccountLimit,
+  resetSelfDeleteLimit,
+  resetStatusChangeLimit,
+  resetStoreDeleteLimit,
   resetUploadAvatarLimit,
   resetUploadProductLimit,
 } from "../src/lib/rate-limit.js";
@@ -242,6 +248,27 @@ describe("B7b authenticated-mutation limiting", () => {
       windowMs: 60 * 60_000,
       check: checkUploadAvatarLimit,
       reset: resetUploadAvatarLimit,
+    },
+    {
+      name: "self-delete",
+      cap: 5,
+      windowMs: 60 * 60_000,
+      check: checkSelfDeleteLimit,
+      reset: resetSelfDeleteLimit,
+    },
+    {
+      name: "store-delete",
+      cap: 10,
+      windowMs: 60 * 60_000,
+      check: checkStoreDeleteLimit,
+      reset: resetStoreDeleteLimit,
+    },
+    {
+      name: "status-change",
+      cap: 30,
+      windowMs: 60 * 60_000,
+      check: checkStatusChangeLimit,
+      reset: resetStatusChangeLimit,
     },
   ] as const;
 

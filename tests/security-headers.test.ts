@@ -39,7 +39,7 @@ function stubDb() {
       bind: (..._args: unknown[]) => ({
         first: async () => {
           if (sql.includes("FROM subscriptions")) return { ok: 1 };
-          if (sql.includes("FROM stores")) return { id: "s1" };
+          if (sql.includes("FROM stores")) return { id: "s1", status: "active" };
           return null;
         },
         all: async () => ({ results: [] }),

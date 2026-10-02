@@ -10,7 +10,7 @@ import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { idParam, storeIdParam, storeIdParams } from "../openapi/params.js";
 import { checkPublicFileLimit, checkUploadProductLimit, clientIp } from "../lib/rate-limit.js";
 import { requireAuth } from "../middleware/auth.js";
-import { requireStoreAccess, resolveStore } from "../middleware/store.js";
+import { requireActiveStore, requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
 import {
   createImage,
@@ -48,7 +48,7 @@ export const productImages = new OpenAPIHono<AppEnv>();
 // otherwise, so it can never link across tenants.
 
 const authed = [requireAuth, resolveStore, requireStoreAccess] as const;
-const mutating = [...authed, requireActiveSubscription] as const;
+const mutating = [...authed, requireActiveSubscription, requireActiveStore] as const;
 
 const httpsUrl = z
   .string()

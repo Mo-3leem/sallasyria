@@ -8,7 +8,7 @@ import { assertNoImmutableFields, z, validationHook } from "../http/validate.js"
 import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { idParam, storeIdParam } from "../openapi/params.js";
 import { requireAuth } from "../middleware/auth.js";
-import { requireStoreAccess, resolveStore } from "../middleware/store.js";
+import { requireActiveStore, requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
 import {
   createProduct,
@@ -27,7 +27,7 @@ export const products = new OpenAPIHono<AppEnv>();
 // services/catalog.ts. Enforced by tests/tenant-conventions.test.ts.
 
 const authed = [requireAuth, resolveStore, requireStoreAccess] as const;
-const mutating = [...authed, requireActiveSubscription] as const;
+const mutating = [...authed, requireActiveSubscription, requireActiveStore] as const;
 
 const slugSchema = z
   .string()

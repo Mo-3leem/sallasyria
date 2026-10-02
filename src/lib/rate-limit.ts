@@ -220,6 +220,18 @@ const emailChange = createRateLimiter({ maxAttempts: 5, windowMs: 60 * 60_000 })
 const billingIntent = createRateLimiter({ maxAttempts: 10, windowMs: 60 * 60_000 });
 const uploadProduct = createRateLimiter({ maxAttempts: 60, windowMs: 60 * 60_000 });
 const uploadAvatar = createRateLimiter({ maxAttempts: 20, windowMs: 60 * 60_000 });
+// B10 destructive-operation guards (roadmap B10): per-user buckets for
+// merchant self-delete (account removal) and merchant store deletion
+// (hard delete with cascades). Generous enough for legitimate retries,
+// strict enough to bound hammering of irreversible operations.
+const selfDelete = createRateLimiter({ maxAttempts: 5, windowMs: 60 * 60_000 });
+const storeDelete = createRateLimiter({ maxAttempts: 10, windowMs: 60 * 60_000 });
+// Store-status guard (roadmap B10): per-user bucket for lifecycle writes
+// (POST :storeId/status and status-bearing PATCH). Status is reversible,
+// so the budget is generous — 30/hour leaves room for legitimate retries
+// and UI double-submits — while still bounding audit-spam and
+// storefront-flap loops. Reads are never limited.
+const statusChange = createRateLimiter({ maxAttempts: 30, windowMs: 60 * 60_000 });
 
 export function checkPwChangeLimit(userId: string, nowMs?: number): boolean {
   return pwChange.check(`pw-change:${userId}`, nowMs);
@@ -260,6 +272,32 @@ export function resetUploadProductLimit(storeId: string): void {
 
 export function resetUploadAvatarLimit(userId: string): void {
   uploadAvatar.reset(`upload-avatar:${userId}`);
+}
+
+export function checkSelfDeleteLimit(userId: string, nowMs?: number): boolean {
+  return selfDelete.check(`self-delete:${userId}`, nowMs);
+}
+
+export function checkStoreDeleteLimit(userId: string, nowMs?: number): boolean {
+  return storeDelete.check(`store-delete:${userId}`, nowMs);
+}
+
+export function checkStatusChangeLimit(userId: string, nowMs?: number): boolean {
+  return statusChange.check(`status-change:${userId}`, nowMs);
+}
+
+// Test seams (mirrors the existing seams; never exposed via HTTP).
+export function resetSelfDeleteLimit(userId: string): void {
+  selfDelete.reset(`self-delete:${userId}`);
+}
+
+export function resetStoreDeleteLimit(userId: string): void {
+  storeDelete.reset(`store-delete:${userId}`);
+}
+
+// Test seams (mirrors the existing seams; never exposed via HTTP).
+export function resetStatusChangeLimit(userId: string): void {
+  statusChange.reset(`status-change:${userId}`);
 }
 
 // Test seam for the registration bucket (mirrors the login seam).

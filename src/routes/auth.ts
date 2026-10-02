@@ -7,6 +7,7 @@ import { z, assertNoImmutableFields, validationHook } from "../http/validate.js"
 import {
   clearUserAvatar,
   createMerchant,
+  deleteMerchant,
   emailTaken,
   findMerchantForResend,
   getUserByEmail,
@@ -64,7 +65,7 @@ import {
 import { touch } from "../lib/time.js";
 import { requireTurnstile } from "../middleware/turnstile.js";
 import { appUrl } from "../env.js";
-import { checkEmailChangeLimit, checkLoginRateLimit, checkPublicFileLimit, checkPwChangeLimit, checkRegisterRateLimit, checkResendPubAccountLimit, checkUploadAvatarLimit, clientIp, loginFailKey, LOGIN_FAIL_CHALLENGE_AFTER, loginRateLimitKey, registerRateLimitKey } from "../lib/rate-limit.js";
+import { checkEmailChangeLimit, checkLoginRateLimit, checkPublicFileLimit, checkPwChangeLimit, checkRegisterRateLimit, checkResendPubAccountLimit, checkSelfDeleteLimit, checkUploadAvatarLimit, clientIp, loginFailKey, LOGIN_FAIL_CHALLENGE_AFTER, loginRateLimitKey, registerRateLimitKey } from "../lib/rate-limit.js";
 import {
   currentSessionId,
   currentUser,
@@ -1436,4 +1437,89 @@ auth.openapi(changePasswordRoute, async (c) => {
     // Throttle hygiene never fails a password change.
   }
   return ok(c, { changed: true });
+}, validationHook);
+
+const deleteMeSchema = z.object({
+  current_password: z.string().min(1).max(PASSWORD_RULES.maxChars),
+});
+
+// DELETE /auth/me — merchant self-delete (roadmap B10). The target is always
+// the session user: no id in path or body (nothing to probe, nothing to
+// smuggle). Admins must use the admin console, never this endpoint.
+// Password verification reuses the login 401 (no oracle); only then does
+// deleteMerchant run — its 409 merchant_has_stores guard is authoritative,
+// stores are never cascaded here. Sessions and email tokens disappear with
+// the row via FK cascade; the cookie is cleared so no stale client state
+// survives. Rate-limited per user: deletion is irreversible.
+const deleteMeRoute = createRoute({
+  method: "delete",
+  path: "/me",
+  summary: "Delete own merchant account",
+  description:
+    "Permanently deletes the caller's merchant account after verifying the current password. " +
+    "409 while the merchant owns any store — remove the owned stores first (stores are never removed here; " +
+    "stores holding orders, subscriptions, or dependent data are preserved with their history and keep blocking deletion). " +
+    "Sessions and email tokens cascade with the row; the cookie is cleared. Admins cannot use this endpoint.",
+  middleware: [requireAuth],
+  request: {
+    body: { content: { "application/json": { schema: deleteMeSchema } } },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: okOf(z.object({ deleted: z.string() })) },
+      },
+      description: "Deleted merchant id",
+    },
+    400: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Invalid body",
+    },
+    401: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Unauthenticated or wrong current password",
+    },
+    403: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Admins cannot use merchant self-delete",
+    },
+    409: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Merchant owns stores",
+    },
+    429: {
+      content: { "application/json": { schema: failEnvelope } },
+      description: "Too many attempts",
+    },
+  },
+});
+
+auth.openapi(deleteMeRoute, async (c) => {
+  const user = currentUser(c);
+  if (user.role === "admin") {
+    throw new AppError("forbidden", 403, "Admins cannot use merchant self-delete.");
+  }
+  const { current_password } = c.req.valid("json");
+  // Abuse guard first: deletion is irreversible; per-user bucket. The
+  // ordering is load-bearing: the current-password check below is NOT
+  // covered by the login throttle, so this limiter is the guessing bound
+  // for this endpoint — it must run before verification. Reordering the
+  // two would allow unbounded password guessing on live sessions.
+  if (!checkSelfDeleteLimit(user.id)) {
+    throw new AppError("rate_limited", 429, "Too many attempts. Try again later.");
+  }
+  const stored = await getDb(c)
+    .prepare("SELECT password_hash FROM users WHERE id = ?")
+    .bind(user.id)
+    .first<{ password_hash: string }>();
+  if (!stored || !verifyPassword(current_password, stored.password_hash)) {
+    throw new AppError("invalid_credentials", 401, "Invalid current password.");
+  }
+  const result = await deleteMerchant(getDb(c), user.id);
+  c.header(
+    "Set-Cookie",
+    buildClearCookie({ secure: cookieSecure(c), sameSite: cookieSameSite(c) })
+  );
+  await auditEvent(c, getDb(c), "merchant.self.delete", { actor: user.id, result: result.deleted });
+  return ok(c, result);
 }, validationHook);

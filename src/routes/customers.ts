@@ -10,7 +10,7 @@ import { idParam, storeIdParam, storeIdParams, turnstileTokenHeader } from "../o
 import { requireAuth } from "../middleware/auth.js";
 import { requireTurnstile } from "../middleware/turnstile.js";
 import { limitPublicMutations } from "../middleware/public.js";
-import { requireStoreAccess, resolveStore } from "../middleware/store.js";
+import { requireActiveStore, requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
 import {
   deleteCustomer,
@@ -34,7 +34,7 @@ export const customers = new OpenAPIHono<AppEnv>();
 // - GET /:id, PATCH, DELETE . merchant-private (+ gate on mutations).
 
 const authed = [requireAuth, resolveStore, requireStoreAccess] as const;
-const merchantMutating = [...authed, requireActiveSubscription] as const;
+const merchantMutating = [...authed, requireActiveSubscription, requireActiveStore] as const;
 const buyerMutating = [resolveStore, limitPublicMutations, requireTurnstile()] as const;
 
 const emailSchema = z.string().email().max(254).nullable().default(null);

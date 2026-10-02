@@ -8,10 +8,12 @@ import {
   getFieldErrors,
   NETWORK_ERROR_MESSAGE,
 } from "@/lib/auth-errors";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { RequireAuth } from "@/components/guards/RequireAuth";
 import { AuthCard } from "@/components/auth/AuthCard";
 import { BackButton } from "@/components/common/BackButton";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { TextField } from "@/components/auth/TextField";
 import { PasswordInput } from "@/components/auth/PasswordInput";
 import { FormError } from "@/components/auth/FormError";
@@ -33,6 +35,7 @@ const AVATAR_ACCEPT = "image/jpeg,image/png,image/webp";
 
 function ProfileContent() {
   const { user, refresh, logout } = useAuth();
+  const router = useRouter();
   const [name, setName] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
   const [phone, setPhone] = useState<string | null>(null);
@@ -49,6 +52,10 @@ function ProfileContent() {
   const [preview, setPreview] = useState<string | null>(null);
   const [avatarError, setAvatarError] = useState<string | null>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   function clearPreview() {
@@ -390,6 +397,74 @@ function ProfileContent() {
           {submitting ? <Loading size="sm" text="جاري الحفظ..." /> : "حفظ التغييرات"}
         </Button>
       </form>
+
+      {user.role !== "admin" && (
+        <div className="shell-card" style={{ marginTop: 20 }}>
+          <h2>حذف الحساب</h2>
+          <p>
+            حذف حسابك نهائي ولا يمكن التراجع عنه. لا يمكن الحذف أثناء امتلاكك
+            لأي متجر — احذف متاجرك أولاً من صفحة المتاجر.
+          </p>
+          {deleteError && (
+            <p className="auth-field-error" role="alert">{deleteError}</p>
+          )}
+          <PasswordInput
+            label="كلمة المرور الحالية"
+            autoComplete="current-password"
+            value={deletePassword}
+            onChange={(e) => setDeletePassword(e.target.value)}
+          />
+          <div style={{ marginTop: 12 }}>
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={deleting || deletePassword.trim() === ""}
+              onClick={() => {
+                setDeleteError(null);
+                setConfirmDelete(true);
+              }}
+            >
+              حذف حسابي نهائياً
+            </button>
+          </div>
+        </div>
+      )}
+      <ConfirmDialog
+        open={confirmDelete}
+        title="حذف الحساب نهائياً؟"
+        description="سيتم حذف حسابك وجميع جلساتك نهائياً. لا يمكن التراجع عن هذا الإجراء."
+        confirmLabel={deleting ? "جاري الحذف..." : "حذف نهائي"}
+        confirming={deleting}
+        onConfirm={async () => {
+          if (deleting) return;
+          setDeleting(true);
+          setDeleteError(null);
+          try {
+            const res = await authApi.deleteMe({ current_password: deletePassword });
+            if (!res.ok) {
+              const code = getErrorCode(res);
+              if (code === "merchant_has_stores") {
+                setDeleteError("لا يمكن حذف حسابك لأنك تملك متاجر. احذف متاجرك أولاً ثم أعد المحاولة.");
+              } else {
+                setDeleteError(authErrorMessage(res, 400));
+              }
+              setConfirmDelete(false);
+              return;
+            }
+            setConfirmDelete(false);
+            await refresh();
+            router.replace("/auth/login");
+          } catch {
+            setDeleteError(NETWORK_ERROR_MESSAGE);
+            setConfirmDelete(false);
+          } finally {
+            setDeleting(false);
+          }
+        }}
+        onClose={() => {
+          if (!deleting) setConfirmDelete(false);
+        }}
+      />
     </AuthCard>
     </>
   );

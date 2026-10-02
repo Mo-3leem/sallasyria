@@ -342,12 +342,11 @@ describe("B3 store settings update", () => {
     expect(store.currency).toBe("EUR");
   });
 
-  it("all seven immutable fields are 400", async () => {
+  it("six immutable fields are 400; status is writable", async () => {
     for (const [key, value] of [
       ["id", "forged"],
       ["owner_id", "user_verify_b3_b"],
       ["store_id", "store_verify_b3_b"],
-      ["status", "archived"],
       ["is_published", 1],
       ["order_counter", 1],
       ["created_at", "2020-01-01T00:00:00Z"],
@@ -362,6 +361,18 @@ describe("B3 store settings update", () => {
         error: { code: "immutable_field", message: expect.any(String) },
       });
     }
+    // Status left the forbidden list (B10): merchant-writable enum.
+    const paused = await api("/stores/store_verify_b3_a", {
+      method: "PATCH",
+      body: JSON.stringify({ status: "paused" }),
+    }, jarA);
+    expect(paused.status).toBe(200);
+    expect((paused.body as { data: { store: { status: string } } }).data.store.status).toBe("paused");
+    const resumed = await api("/stores/store_verify_b3_a", {
+      method: "PATCH",
+      body: JSON.stringify({ status: "active" }),
+    }, jarA);
+    expect(resumed.status).toBe(200);
   });
 
   it("session survives store updates", async () => {

@@ -9,7 +9,7 @@ import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { orderDocSchema, orderItemDocSchema } from "../openapi/orders.js";
 import { idParam, storeIdParam, storeIdParams } from "../openapi/params.js";
 import { requireAuth } from "../middleware/auth.js";
-import { requireStoreAccess, resolveStore } from "../middleware/store.js";
+import { requireActiveStore, requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
 import {
   getOrder,
@@ -31,7 +31,7 @@ export const orders = new OpenAPIHono<AppEnv>();
 // Mutations additionally require a covering subscription.
 
 const authed = [requireAuth, resolveStore, requireStoreAccess] as const;
-const merchantMutating = [...authed, requireActiveSubscription] as const;
+const merchantMutating = [...authed, requireActiveSubscription, requireActiveStore] as const;
 
 const FORBIDDEN = ["store_id", "id"] as const;
 

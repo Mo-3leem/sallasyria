@@ -33,7 +33,7 @@ describe("OpenAPI docs", () => {
         documented.add(`${method.toUpperCase()} ${normal}`);
       }
     }
-    // One entry per route in src/routes (health 2, auth 16, stores 5,
+    // One entry per route in src/routes (health 2, auth 17, stores 7,
     // categories 5, products 7, product-images 8, customers 5,
     // customer-addresses 6, shipping-rates 5, checkout 1, orders 4,
     // admin 20, plans 1, buyer 23).
@@ -56,6 +56,7 @@ describe("OpenAPI docs", () => {
       "DELETE /auth/me/avatar",
       "GET /auth/avatar/file/{key}",
       "POST /auth/change-password",
+      "DELETE /auth/me",
       "GET /stores",
       "POST /stores",
       "GET /stores/by-slug/{slug}",
@@ -70,6 +71,8 @@ describe("OpenAPI docs", () => {
       "GET /stores/{storeId}",
       "PATCH /stores/{storeId}",
       "POST /stores/{storeId}/publish",
+      "POST /stores/{storeId}/status",
+      "DELETE /stores/{storeId}",
       "POST /stores/{storeId}/subscriptions/checkout",
       "GET /stores/{storeId}/subscriptions",
       "GET /stores/{storeId}/billing/intents",

@@ -84,7 +84,11 @@ export const api = {
       body: JSON.stringify(body),
       ...(headers ? { headers } : {}),
     }),
-  delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  delete: <T>(path: string, body?: unknown) =>
+    request<T>(path, {
+      method: "DELETE",
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }),
   /** Multipart POST (FormData body passes through unstringified). */
   postForm: <T>(path: string, form: FormData) =>
     request<T>(path, { method: "POST", body: form }),
@@ -150,6 +154,10 @@ export const authApi = {
     logout_other_sessions?: boolean;
   }) => api.post<{ changed: boolean }>("/auth/change-password", data),
 
+  /** Permanently delete own merchant account (password-confirmed). */
+  deleteMe: (data: { current_password: string }) =>
+    api.delete<{ deleted: string }>("/auth/me", data),
+
   verifyEmail: (token: string) =>
     api.post<{ verified: boolean }>("/auth/verify-email", { token }),
 
@@ -165,6 +173,8 @@ export const authApi = {
     logout_other_sessions?: boolean;
   }) => api.post<{ reset: boolean }>("/auth/reset-password", data),
 };
+
+export type StoreStatus = "active" | "paused" | "archived";
 
 export interface PageMeta {
   page: number;
@@ -200,14 +210,27 @@ export const storesApi = {
   create: (data: { name: string; slug: string; currency?: string }) =>
     api.post<{ store: Store }>("/stores", data),
 
-  /** Partial update of name/slug/currency only. */
+  /** Partial update of name/slug/currency/status. */
   update: (
     storeId: string,
-    data: { name?: string; slug?: string; currency?: string }
+    data: { name?: string; slug?: string; currency?: string; status?: StoreStatus }
   ) =>
     api.patch<{ store: Store | null }>(
       `/stores/${encodeURIComponent(storeId)}`,
       data
+    ),
+
+  /** Set store lifecycle status (active/paused/archived). Owner or admin. */
+  setStatus: (storeId: string, status: StoreStatus) =>
+    api.post<{ store: Store | null }>(
+      `/stores/${encodeURIComponent(storeId)}/status`,
+      { status }
+    ),
+
+  /** Permanently delete own store (409 while orders/subscriptions/dependents exist). */
+  remove: (storeId: string) =>
+    api.delete<{ deleted: string }>(
+      `/stores/${encodeURIComponent(storeId)}`
     ),
 
   /** Set store visibility (1 published / 0 draft). Owner or admin. */

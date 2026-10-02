@@ -9,7 +9,7 @@ import { failEnvelope, okOf } from "../openapi/envelope.js";
 import { idParam, storeIdParam, storeIdParams } from "../openapi/params.js";
 import { GOVERNORATES } from "../lib/governorates.js";
 import { requireAuth } from "../middleware/auth.js";
-import { requireStoreAccess, resolveStore } from "../middleware/store.js";
+import { requireActiveStore, requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
 import {
   createRate,
@@ -29,7 +29,7 @@ export const shippingRates = new OpenAPIHono<AppEnv>();
 // server-resolved as always). All mutations stay merchant-private + gated.
 
 const authed = [requireAuth, resolveStore, requireStoreAccess] as const;
-const merchantMutating = [...authed, requireActiveSubscription] as const;
+const merchantMutating = [...authed, requireActiveSubscription, requireActiveStore] as const;
 const scopedRead = [resolveStore] as const;
 
 const flag = z.union([z.literal(0), z.literal(1)]);

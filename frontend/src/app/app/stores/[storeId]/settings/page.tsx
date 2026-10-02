@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { storesApi } from "@/lib/api";
+import { storesApi, type StoreStatus } from "@/lib/api";
 import {
   authErrorMessage,
   getErrorCode,
@@ -13,6 +14,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useStores } from "@/hooks/useStores";
 import { StoreForm, type StoreFormValues } from "@/components/store/StoreForm";
 import { BackButton } from "@/components/common/BackButton";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { EmptyState } from "@/components/common/EmptyState";
 import type { Store } from "@/types/api";
 
@@ -33,6 +35,7 @@ export default function StoreSettingsPage({
   params: { storeId: string };
 }) {
   const { storeId } = params;
+  const router = useRouter();
   const { refresh: refreshAuth } = useAuth();
   const { refresh: refreshStores } = useStores();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
@@ -41,6 +44,11 @@ export default function StoreSettingsPage({
   const [saved, setSaved] = useState(false);
   const [noChanges, setNoChanges] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [statusWorking, setStatusWorking] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -134,6 +142,86 @@ export default function StoreSettingsPage({
     }
   }
 
+  const STATUS_LABELS: Record<StoreStatus, string> = {
+    active: "نشط",
+    paused: "موقوف مؤقتاً",
+    archived: "مؤرشف",
+  };
+
+  async function onStatusChange(next: StoreStatus) {
+    if (state.kind !== "ready" || statusWorking) return;
+    if (next === state.store.status) return;
+    setStatusMsg(null);
+    setStatusWorking(true);
+    try {
+      const res = await storesApi.setStatus(storeId, next);
+      if (!res.ok) {
+        const code = getErrorCode(res);
+        if (code === "unauthorized") {
+          await refreshAuth();
+          return;
+        }
+        if (code === "store_not_found") {
+          setState({ kind: "missing" });
+          return;
+        }
+        setStatusMsg(authErrorMessage(res, 400));
+        return;
+      }
+      if (res.data.store) setState({ kind: "ready", store: res.data.store });
+      await refreshStores();
+      setStatusMsg(
+        next === "active"
+          ? "تم تفعيل المتجر."
+          : next === "paused"
+            ? "تم إيقاف المتجر مؤقتاً — مخفي عن الواجهة ولا يقبل طلبات."
+            : "تمت أرشفة المتجر — للقراءة فقط ويمكن استعادته."
+      );
+    } catch {
+      setStatusMsg("تعذّر الاتصال بالخادم.");
+    } finally {
+      setStatusWorking(false);
+    }
+  }
+
+  function storeDeleteMessage(code: string | null, res: unknown): string {
+    if (code === "store_has_orders")
+      return "لا يمكن حذف هذا المتجر لأنه يحتوي على سجل طلبات. سجل الطلبات محفوظ ولا يُحذف.";
+    if (code === "store_has_subscriptions")
+      return "لا يمكن حذف هذا المتجر لأنه مرتبط باشتراكات. عالج الاشتراكات أولاً ثم أعد المحاولة.";
+    if (code === "store_has_dependents")
+      return "لا يمكن حذف هذا المتجر لأنه يحتوي على بيانات مرتبطة به.";
+    if (code === "store_not_found")
+      return "المتجر غير موجود — ربما حُذف مسبقاً.";
+    return authErrorMessage(res, 400);
+  }
+
+  async function onConfirmDelete() {
+    if (state.kind !== "ready" || deleting) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await storesApi.remove(storeId);
+      if (!res.ok) {
+        const code = getErrorCode(res);
+        if (code === "unauthorized") {
+          await refreshAuth();
+          return;
+        }
+        setDeleteError(storeDeleteMessage(code, res));
+        setConfirmDelete(false);
+        return;
+      }
+      await refreshStores();
+      router.replace("/app/stores");
+    } catch {
+      setDeleteError(NETWORK_ERROR_MESSAGE);
+      setConfirmDelete(false);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   if (state.kind === "loading") {
     return (
       <div className="shell-loading">
@@ -212,6 +300,65 @@ export default function StoreSettingsPage({
           onSubmit={onSubmit}
         />
       </div>
+      <div className="shell-card" style={{ marginTop: 16 }}>
+        <h2>حالة المتجر</h2>
+        <p>
+          المتجر الموقوف مخفي عن الواجهة ولا يقبل طلبات جديدة. المتجر المؤرشف
+          للقراءة فقط. يمكن العودة إلى «نشط» في أي وقت.
+        </p>
+        <p>
+          الحالة الحالية: <strong>{STATUS_LABELS[(state.store.status as StoreStatus) ?? "active"] ?? state.store.status}</strong>
+        </p>
+        {statusMsg && (
+          <p className="auth-field-error" role="status">{statusMsg}</p>
+        )}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {(Object.keys(STATUS_LABELS) as StoreStatus[]).map((s) => (
+            <button
+              key={s}
+              type="button"
+              className={s === state.store.status ? "btn btn-primary" : "btn btn-outline"}
+              disabled={statusWorking || s === state.store.status}
+              onClick={() => onStatusChange(s)}
+            >
+              {STATUS_LABELS[s]}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="shell-card" style={{ marginTop: 16 }}>
+        <h2>منطقة الخطر</h2>
+        <p>
+          حذف المتجر نهائي ولا يمكن التراجع عنه. لا يمكن الحذف أثناء وجود
+          طلبات أو اشتراكات مرتبطة بالمتجر.
+        </p>
+        {deleteError && (
+          <p className="auth-field-error" role="alert">{deleteError}</p>
+        )}
+        <button
+          type="button"
+          className="btn btn-outline"
+          onClick={() => {
+            setDeleteError(null);
+            setConfirmDelete(true);
+          }}
+        >
+          حذف المتجر نهائياً
+        </button>
+      </div>
+      <ConfirmDialog
+        open={confirmDelete}
+        title="حذف المتجر نهائياً؟"
+        description={`سيتم حذف «${state.store.name}» وكل محتوياته (المنتجات، العملاء، السلال) نهائياً. سجل الطلبات يمنع الحذف. أعد كتابة رابط المتجر للتأكيد.`}
+        confirmLabel={deleting ? "جاري الحذف..." : "حذف نهائي"}
+        confirming={deleting}
+        requireConfirmText={state.store.slug}
+        requireConfirmPlaceholder="رابط المتجر"
+        onConfirm={onConfirmDelete}
+        onClose={() => {
+          if (!deleting) setConfirmDelete(false);
+        }}
+      />
     </>
   );
 }

@@ -12,7 +12,7 @@ import { GOVERNORATES } from "../lib/governorates.js";
 import { retryTransient } from "../lib/retry.js";
 import { requireTurnstile } from "../middleware/turnstile.js";
 import { limitPublicMutations } from "../middleware/public.js";
-import { resolveStore } from "../middleware/store.js";
+import { resolveStore, requireActiveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
 import { BUYER_COOKIE, getCookieToken } from "../lib/session.js";
 import { resolveBuyerSession } from "../services/buyers.js";
@@ -30,7 +30,8 @@ export const checkoutRouter = new OpenAPIHono<AppEnv>();
 // PUBLIC buyer endpoint (guest-always: no login required; an optional
 // ss_buyer session identifies the account and fills the customer block):
 // resolveStore scoping + per-store rate limit + subscription gate (expired
-// stores cannot sell) + Turnstile, in that cost order. The whole handler
+// stores cannot sell) + active-status gate (paused/archived stores cannot
+// sell) + Turnstile, in that cost order. The whole handler
 // body is retried on transient D1 contention ONLY — safe because the
 // idempotency key makes repeats resolve to one order (validated H1/H6).
 
@@ -38,6 +39,7 @@ const buyerCheckout = [
   resolveStore,
   limitPublicMutations,
   requireActiveSubscription,
+  requireActiveStore,
   requireTurnstile(),
 ] as const;
 

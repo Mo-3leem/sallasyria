@@ -297,10 +297,14 @@ export async function updateMerchantByAdmin(
 
 /**
  * Permanent merchant deletion. Blocked while the merchant owns any store
- * (stores.owner_id RESTRICT): business history must never be destroyed
- * silently, and no store deletion exists. Sessions and email tokens
- * cascade automatically. Never targets admin rows or the caller's self —
- * routes decide those 404/403s before this runs.
+ * (stores.owner_id RESTRICT): business history is never destroyed
+ * silently — stores holding orders, subscriptions, or dependent data are
+ * preserved with their history, so their owners cannot self-delete until
+ * no stores remain. Store removal itself lives in the store-deletion
+ * paths; this removes only the account row. Sessions and email tokens
+ * cascade automatically. Never targets admin rows — routes decide those
+ * 404/403s (and the self-delete route always targets the caller) before
+ * this runs.
  */
 export async function deleteMerchant(db: D1Database, id: string): Promise<{ deleted: string }> {
   const current = await getMerchantPublic(db, id);
@@ -315,7 +319,7 @@ export async function deleteMerchant(db: D1Database, id: string): Promise<{ dele
     throw new AppError(
       "merchant_has_stores",
       409,
-      "Merchant owns stores and cannot be deleted. Delete or transfer the stores first."
+      "Merchant owns stores and cannot be deleted. Remove the owned stores first; stores holding orders, subscriptions, or dependent data are preserved with their history and keep blocking deletion."
     );
   }
   await db.prepare("DELETE FROM users WHERE id = ? AND role = 'merchant'").bind(id).run();

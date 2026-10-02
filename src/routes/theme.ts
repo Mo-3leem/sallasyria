@@ -10,7 +10,7 @@ import { idParam, storeIdParam } from "../openapi/params.js";
 import { checkPreviewLimit, clientIp } from "../lib/rate-limit.js";
 import { auditEvent } from "../services/audit.js";
 import { currentUser, requireAuth } from "../middleware/auth.js";
-import { requireStoreAccess, resolveStore } from "../middleware/store.js";
+import { requireActiveStore, requireStoreAccess, resolveStore } from "../middleware/store.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
 import { listPublishedCategories, listPublishedProducts } from "../services/storefront.js";
 import { getStoreById } from "../services/stores.js";
@@ -31,7 +31,7 @@ export const themePreview = new OpenAPIHono<AppEnv>();
 // preview endpoint instead of a session.
 
 const authed = [requireAuth, resolveStore, requireStoreAccess] as const;
-const mutating = [...authed, requireActiveSubscription] as const;
+const mutating = [...authed, requireActiveSubscription, requireActiveStore] as const;
 
 const hexColor = z
   .string()

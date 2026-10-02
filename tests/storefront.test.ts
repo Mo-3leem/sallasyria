@@ -15,9 +15,11 @@ import {
 // invisible, retired/hidden rows never serialize. Uses the real service
 // functions against an in-memory row set.
 
-// Minimal in-memory D1 stand-in keyed by SQL shape.
+// Minimal in-memory D1 stand-in keyed by SQL shape. Mirrors the public
+// availability predicate (published AND active); paused/archived rows hide
+// exactly like drafts.
 function fakeDb(tables: {
-  stores: Record<string, { id: string; slug: string; name: string; currency: string; is_published: number }>;
+  stores: Record<string, { id: string; slug: string; name: string; currency: string; is_published: number; status: string }>;
   categories: { id: string; store_id: string; name: string; slug: string; parent_id: string | null; sort_order: number; is_active: number }[];
   products: { id: string; store_id: string; category_id: string | null; name: string; slug: string; price: number; stock_quantity: number | null; is_active: number; deleted_at: string | null }[];
   images: { id: string; store_id: string; product_id: string; url: string; alt_text: string | null; sort_order: number; deleted_at: string | null; created_at: string }[];
@@ -25,12 +27,12 @@ function fakeDb(tables: {
   const pick = (sql: string, id: string | null, slug: string | null) => {
     if (sql.includes("FROM stores WHERE id = ?")) {
       const row = Object.values(tables.stores).find((s) => s.id === id) ?? null;
-      if (!row || row.is_published !== 1) return null;
+      if (!row || row.is_published !== 1 || row.status !== "active") return null;
       return row;
     }
     if (sql.includes("FROM stores WHERE slug = ?")) {
       const row = Object.values(tables.stores).find((s) => s.slug === slug) ?? null;
-      if (!row || row.is_published !== 1) return null;
+      if (!row || row.is_published !== 1 || row.status !== "active") return null;
       return row;
     }
     if (sql.includes("FROM categories")) {
@@ -65,11 +67,12 @@ function fakeDb(tables: {
   };
 }
 
-const pub = { id: "s-pub", slug: "pub", name: "Pub", currency: "SYP", is_published: 1 };
-const draft = { id: "s-draft", slug: "draft", name: "Draft", currency: "SYP", is_published: 0 };
+const pub = { id: "s-pub", slug: "pub", name: "Pub", currency: "SYP", is_published: 1, status: "active" };
+const draft = { id: "s-draft", slug: "draft", name: "Draft", currency: "SYP", is_published: 0, status: "active" };
+const paused = { id: "s-paused", slug: "paused", name: "Paused", currency: "SYP", is_published: 1, status: "paused" };
 
 const tables = {
-  stores: { "s-pub": pub, "s-draft": draft } as Record<string, typeof pub>,
+  stores: { "s-pub": pub, "s-draft": draft, "s-paused": paused } as Record<string, typeof pub>,
   categories: [
     { id: "c1", store_id: "s-pub", name: "Live", slug: "live", parent_id: null, sort_order: 0, is_active: 1 },
     { id: "c2", store_id: "s-pub", name: "Hidden", slug: "hidden", parent_id: null, sort_order: 1, is_active: 0 },
@@ -92,6 +95,7 @@ describe("storefront services", () => {
     const db = fakeDb(tables) as never;
     expect(await getPublicStore(db, "s-pub")).toMatchObject({ slug: "pub" });
     expect(await getPublicStore(db, "s-draft")).toBeNull();
+    expect(await getPublicStore(db, "s-paused")).toBeNull();
     expect(await getPublicStore(db, "s-nope")).toBeNull();
   });
 
@@ -131,10 +135,10 @@ describe("storefront middleware", () => {
     return { app, env: { DB: fakeDb(tables) } as unknown as AppEnv };
   }
 
-  it("draft and missing answer identically (id and slug)", async () => {
+  it("draft, paused, and missing answer identically (id and slug)", async () => {
     const { app, env } = probeApp();
     const bodies: unknown[] = [];
-    for (const path of ["/s/s-nope", "/s/s-draft", "/by-slug/nope", "/by-slug/draft"]) {
+    for (const path of ["/s/s-nope", "/s/s-draft", "/s/s-paused", "/by-slug/nope", "/by-slug/draft", "/by-slug/paused"]) {
       const res = await app.request(path, {}, env);
       expect(res.status).toBe(404);
       bodies.push(await res.json());
