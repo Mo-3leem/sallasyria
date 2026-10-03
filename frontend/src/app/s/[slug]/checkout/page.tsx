@@ -14,6 +14,7 @@ import { GOVERNORATES } from "@/lib/governorates";
 import { TextField } from "@/components/auth/TextField";
 import { FormError } from "@/components/auth/FormError";
 import { TurnstileWidget, TURNSTILE_READY, logCaptchaFailure } from "@/components/auth/TurnstileWidget";
+import { TURNSTILE_E2E_NO_TOKEN, turnstileGate } from "@/components/auth/turnstileGate";
 import { getLastRequestId } from "@/lib/api";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -221,11 +222,18 @@ function CheckoutBody(props: {
       s.setFieldErrors(local);
       return;
     }
-    if (TURNSTILE_READY && !s.captchaToken) {
+    // Captcha gate (turnstileGate: pure, unit-tested). Copy unchanged:
+    // missing token vs missing configuration stay distinct errors.
+    const gate = turnstileGate({
+      ready: TURNSTILE_READY,
+      hasToken: s.captchaToken !== null,
+      e2eAllowMissing: TURNSTILE_E2E_NO_TOKEN,
+    });
+    if (gate === "need-token") {
       s.setFormError("أكمل التحقق الأمني أولاً.");
       return;
     }
-    if (!TURNSTILE_READY) {
+    if (gate === "unavailable") {
       s.setFormError("التحقق الأمني غير مفعّل حالياً — تواصل مع الإدارة.");
       return;
     }

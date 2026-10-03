@@ -113,6 +113,13 @@ function orLike(column, patterns) {
 // delete is blocked and stale rows survive.
 const DELETE_ORDER = [
   ["sessions", "user_id"],
+  // Guest carts (B14-c J4): cart_items references products RESTRICT, so
+  // leftover cart lines block the products delete below with a FOREIGN KEY
+  // failure. cart_items carries no store_id, hence the :carts pseudo-entry
+  // scoping through its parent carts (same mechanism as categories:children
+  // below). Both precede every RESTRICT target (products, customers, stores).
+  ["cart_items:carts", "cart_id"],
+  ["carts", "store_id"],
   ["idempotency_keys", "store_id"],
   ["order_items", "store_id"],
   ["orders", "store_id"],
@@ -176,13 +183,21 @@ function tryCleanVerify() {
   const throttleReset = run("DELETE FROM login_throttle;");
   if (!throttleReset.ok) failures.push(`login_throttle: ${throttleReset.error}`);
   for (const [table, column] of DELETE_ORDER) {
-    // "categories:children" is a pseudo-entry (see DELETE_ORDER comment):
-    // same table, leaf-first predicate.
-    const realTable = table === "categories:children" ? "categories" : table;
+    // Pseudo-entries (see DELETE_ORDER comments): "categories:children" is
+    // the same table with a leaf-first predicate; "cart_items:carts" scopes
+    // through the parent carts table, which owns the store_id marker.
+    const realTable =
+      table === "categories:children"
+        ? "categories"
+        : table === "cart_items:carts"
+          ? "cart_items"
+          : table;
     const where =
       table === "categories:children"
         ? `parent_id IS NOT NULL AND (${orLike("store_id", patternsFor("categories"))})`
-        : orLike(column, patternsFor(table));
+        : table === "cart_items:carts"
+          ? `cart_id IN (SELECT id FROM carts WHERE ${orLike("store_id", patternsFor("carts"))})`
+          : orLike(column, patternsFor(table));
     const res = run(`DELETE FROM ${realTable} WHERE ${where};`);
     if (!res.ok) failures.push(`${realTable}: ${res.error}`);
   }

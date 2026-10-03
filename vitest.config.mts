@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { defineConfig, defaultExclude } from "vitest/config";
 
 // Integration suites share ONE local D1 file and assert exact contents, so
 // test files must NEVER run in parallel (parallel dev servers kill each
@@ -17,5 +17,10 @@ export default defineConfig({
     sequence: {
       shuffle: false,
     },
+    // e2e/** holds Playwright specs (run via `npm run test:e2e`), not
+    // Vitest suites — without this, the default include pattern collects
+    // them and every file fails with "Playwright Test did not expect
+    // test.beforeAll()". defaultExclude keeps the stock ignores intact.
+    exclude: [...defaultExclude, "e2e/**"],
   },
 });

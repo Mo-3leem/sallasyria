@@ -2,10 +2,12 @@
   "name": "sallasyria",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "Salla Syria — multi-tenant e-commerce platform (Hono + D1)",
   "scripts": {
     "dev": "wrangler dev",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "check": "tsc --noEmit && npm run check:frontend",
     "check:frontend": "npm run typecheck --prefix frontend",
     "deploy": "wrangler deploy",
@@ -28,6 +30,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260915.1",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^26.6.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1",
