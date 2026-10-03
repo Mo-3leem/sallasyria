@@ -77,6 +77,44 @@ jobs:
       - name: Frontend unit test suite (pure logic, no DOM)
         run: npm test --prefix frontend
 
+  test-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - name: Install backend dependencies
+        run: npm ci
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+      - name: Install Playwright Chromium and OS dependencies
+        run: npx playwright install --with-deps chromium
+      # E2E frontend build: the guest-checkout submit gate needs the opt-in
+      # Turnstile flag baked in (documented in frontend/.env.example). The
+      # stock `build` job above intentionally stays flag-free.
+      - name: Frontend E2E production build
+        run: NEXT_PUBLIC_E2E_ALLOW_MISSING_TURNSTILE=1 npm run build --prefix frontend
+      # The E2E lifecycle (e2e/helpers.mjs) owns local D1 migration, backend
+      # :8787 + frontend :3000 startup, fixture seeding, and teardown —
+      # nothing is started manually here. No secrets: backend Turnstile uses
+      # its existing local development behavior.
+      - name: Playwright E2E suite (Chromium, local D1/workerd, no secrets)
+        run: npm run test:e2e
+      - name: Upload Playwright report and traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+
   secrets:
     runs-on: ubuntu-latest
     # Least privilege: only this job needs repo/PR read access (Gitleaks v3
