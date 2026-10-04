@@ -20,7 +20,10 @@ export default defineConfig({
     // e2e/** holds Playwright specs (run via `npm run test:e2e`), not
     // Vitest suites — without this, the default include pattern collects
     // them and every file fails with "Playwright Test did not expect
-    // test.beforeAll()". defaultExclude keeps the stock ignores intact.
-    exclude: [...defaultExclude, "e2e/**"],
+    // test.beforeAll()". frontend/** is a separate package with its own
+    // vitest config, jsdom, and `test-frontend` CI job — the root runner
+    // (backend suites) must not collect it either. defaultExclude keeps
+    // the stock ignores intact.
+    exclude: [...defaultExclude, "e2e/**", "frontend/**"],
   },
 });
